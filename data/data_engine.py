@@ -14,22 +14,6 @@ class DataEngine:
         """Get the latest candle for a specific symbol-timeframe pair"""
         return self.data_fetcher.get_latest_candle(symbol, timeframe)
     
-    """ def print_all_deques(self):
-
-        processor = self.data_fetcher.data_processor
-        for key, deque in processor.symbol_candles.items():
-            print(f"\nDeque for {key}:")
-            for candle in deque:
-                print(candle)
-            print(f"Total candles: {len(deque)}")
-            
-    def print_symbols_summary(self):
-
-        processor = self.data_fetcher.data_processor
-        print("\nSymbol-Timeframe Summary:")
-        for key, deque in processor.symbol_candles.items():
-            print(f"{key}: {len(deque)} candles") """
-
     async def run(self):
         await self.data_fetcher.run()
 
@@ -43,9 +27,6 @@ if __name__ == "__main__":
         asyncio.run(data_engine.run())
 
     except KeyboardInterrupt:
-        # After stopping data collection, print the deques
+        # Stopping the data collection
         print("\nStopped data collection.")
-        #data_engine.print_symbols_summary()
-        
-        # Uncomment the next line to print full deque contents
-        #data_engine.print_all_deques()
+
