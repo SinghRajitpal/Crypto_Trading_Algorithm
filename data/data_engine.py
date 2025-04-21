@@ -3,8 +3,8 @@ from data_fetcher import DataFetcher
 
 
 class DataEngine:
-    def __init__(self, max_candles=3):
-        self.data_fetcher = DataFetcher(max_candles=max_candles)
+    def __init__(self, max_candles=30, testnet = True):
+        self.data_fetcher = DataFetcher(max_candles=max_candles, testnet = testnet)
 
     def get_candles(self, symbol, timeframe):
         """Get all candles for a specific symbol-timeframe pair"""
@@ -19,7 +19,7 @@ class DataEngine:
 
 
 if __name__ == "__main__":
-    data_engine = DataEngine(max_candles=30)  # You can adjust this number based on your needs
+    data_engine = DataEngine(max_candles=30, testnet = True)  # You can adjust this number based on your needs
     
     # Run this to collect some data first
     print("Starting data collection. Press Ctrl+C to stop and print deques...")

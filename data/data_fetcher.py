@@ -13,8 +13,10 @@ from processor import DataProcessor
 
 
 class DataFetcher:
-    def __init__(self, max_candles=1000):
+    def __init__(self, max_candles=1000, testnet = True):
         self.exchange = ccxt.binanceusdm()
+        if testnet:
+            self.exchange.set_sandbox_mode(True)
         self.symbol_timeframes = config.symbols
         self.data_processor = DataProcessor(max_candles=max_candles)
 
