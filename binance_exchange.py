@@ -55,10 +55,35 @@ class BinanceClient:
     
     async def get_open_positions(self, symbol=None):
         """Get all open positions or filter by symbol"""
-        if symbol:
-            symbol = self._format_symbol(symbol)
-        positions = await self.exchange.fetch_positions(symbol)
-        return [p for p in positions if float(p['contracts']) != 0]
+        try:
+            formatted_symbol = self._format_symbol(symbol) if symbol else None
+            if formatted_symbol:
+                positions = await self.exchange.fetch_positions([formatted_symbol])
+            else:
+                positions = await self.exchange.fetch_positions()
+                
+            # Filter for non-zero positions and convert symbols back to standard format
+            open_positions = []
+            for p in positions:
+                if float(p['contracts']) != 0:
+                    p['symbol'] = self._unformat_symbol(p['symbol'])
+                    open_positions.append(p)
+            
+            # Only log when there are actual positions
+            if open_positions:
+                if symbol:
+                    pos = open_positions[0]
+                    print(f"\n[{symbol}] 📈 Active Position:")
+                    print(f"Size: {pos['contracts']} contracts")
+                    print(f"Entry Price: {pos.get('entryPrice', 'N/A')}")
+                    print(f"Unrealized PnL: {pos.get('unrealizedPnl', 'N/A')}")
+                else:
+                    print(f"\n📈 Found {len(open_positions)} active position(s)")
+                
+            return open_positions
+        except Exception as e:
+            print(f"\n❌ Error fetching positions: {e}")
+            return []
     
     async def get_leverage(self, symbol):
         """Get current leverage for a specific symbol"""
@@ -290,21 +315,42 @@ class BinanceClient:
     # ===== Helper Methods =====
     
     def _format_symbol(self, symbol):
-        """Format symbol to ensure it matches exchange requirements"""
-        # If symbol doesn't contain '/', assume it's a symbol like "BTCUSDT"
-        if '/' not in symbol:
-            # Add a slash before the last 4 characters (for USDT pairs)
-            if symbol.endswith('USDT'):
-                return f"{symbol[:-4]}/USDT"
-            # Add a slash before the last 3 characters (for BTC or ETH pairs)
-            elif symbol.endswith('BTC'):
-                return f"{symbol[:-3]}/BTC"
-            elif symbol.endswith('ETH'):
-                return f"{symbol[:-3]}/ETH"
-            else:
-                # Assume it's a USDT pair if we can't determine
-                return symbol
-        return symbol
+        """
+        Format symbol to ensure it matches exchange requirements.
+        Handles both formats: with slash (BTC/USDT) and without (BTCUSDT).
+        
+        Args:
+            symbol (str): Symbol in either format
+            
+        Returns:
+            str: Symbol in exchange format (with slash)
+        """
+        # If symbol already contains '/', return as is
+        if '/' in symbol:
+            return symbol
+            
+        # Add slash before the quote currency
+        if symbol.endswith('USDT'):
+            return f"{symbol[:-4]}/USDT"
+        elif symbol.endswith('BTC'):
+            return f"{symbol[:-3]}/BTC"
+        elif symbol.endswith('ETH'):
+            return f"{symbol[:-3]}/ETH"
+        else:
+            # Default to USDT pair if we can't determine
+            return f"{symbol}/USDT"
+            
+    def _unformat_symbol(self, symbol):
+        """
+        Convert exchange symbol format back to standard format.
+        
+        Args:
+            symbol (str): Symbol with slash (e.g., "BTC/USDT")
+            
+        Returns:
+            str: Symbol without slash (e.g., "BTCUSDT")
+        """
+        return symbol.replace('/', '') if symbol else ''
         
     async def close(self):
         """Close the exchange connection"""

@@ -12,9 +12,10 @@ binance_futures_testnet = {
 # Symbol-timeframe pairs to monitor
 symbols = [
     ("BTCUSDT", "1m"),
-    ("ETHUSDT", "1m"),
-    ("SOLUSDT", "1m"),
-    ("XRPUSDT", "1m"),
-    ("ADAUSDT", "1m"),
-    ("DOGEUSDT", "1m"),
+    ("ETHUSDT", "1m")
 ]
+
+""" ("SOLUSDT", "1m"),
+("XRPUSDT", "1m"),
+("ADAUSDT", "1m"),
+("DOGEUSDT", "1m") """

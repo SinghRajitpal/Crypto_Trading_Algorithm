@@ -23,6 +23,9 @@ class DataFetcher:
  
     async def watch_ohlcv(self, symbol, timeframe):
         last_printed = None
+        candle_count = 0
+        
+        print(f"\n[{symbol}] Starting data collection for {timeframe} timeframe...")
         
         while True:
             try:
@@ -33,9 +36,14 @@ class DataFetcher:
                 
                 # Check if this is a closed candle
                 if latest[0] != last_printed and now - latest[0] > self.binance.exchange.parse_timeframe(timeframe) * 1000:
+                    candle_count += 1
                     # Convert millisecond timestamp to readable date format
                     readable_time = datetime.fromtimestamp(latest[0]/1000).strftime('%H:%M:%S %d/%m/%Y')
-                    print(f"{symbol} ({timeframe}) | Time: {readable_time} | Open: {latest[1]} | High: {latest[2]} | Low: {latest[3]} | Close: {latest[4]} | Volume: {latest[5]}")
+                    
+                    print(f"\n📊 {symbol} ({timeframe}) Candle #{candle_count}")
+                    print(f"Time: {readable_time}")
+                    print(f"Open: {latest[1]:.2f} | High: {latest[2]:.2f} | Low: {latest[3]:.2f} | Close: {latest[4]:.2f}")
+                    print(f"Volume: {latest[5]:.3f}")
 
                     # Update the tracked candles for this specific symbol-timeframe pair
                     await self.data_processor.update_tracked_candles(symbol, timeframe, latest)
@@ -43,7 +51,7 @@ class DataFetcher:
                     last_printed = latest[0]
                     
             except Exception as e:
-                print(f"Error: {symbol}/{timeframe} - {e}")
+                print(f"\n❌ Error collecting data for {symbol}/{timeframe}: {e}")
                 await asyncio.sleep(1)
 
     def get_candles(self, symbol, timeframe):
