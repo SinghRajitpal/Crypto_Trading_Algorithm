@@ -13,7 +13,27 @@ from binance_exchange import BinanceClient
 
 
 class DataFetcher:
+    """Data Fetcher for retrieving real-time market data from exchanges.
+    
+    This class handles the communication with exchanges to fetch candle data
+    and provides it to the processor for storage and retrieval.
+    
+    Attributes:
+        binance: Binance client instance for API communication.
+        symbol_timeframes: List of symbol-timeframe pairs to monitor.
+        data_processor: Processor for storing and managing candle data.
+        should_close_client: Whether to close the client when done.
+    """
+    
     def __init__(self, binance_client=None, max_candles=1000, testnet=True):
+        """Initializes the Data Fetcher.
+        
+        Args:
+            binance_client: Optional Binance client instance. If not provided,
+                a new one will be created.
+            max_candles: Maximum number of candles to store in memory.
+            testnet: Whether to use testnet (default: True).
+        """
         # Use provided client or create a new one
         self.binance = binance_client if binance_client else BinanceClient(testnet=testnet)
         self.symbol_timeframes = config.symbols
@@ -22,6 +42,18 @@ class DataFetcher:
         self.should_close_client = binance_client is None
  
     async def watch_ohlcv(self, symbol, timeframe):
+        """Watches for OHLCV (candle) data for a specific symbol-timeframe pair.
+        
+        This method continuously monitors for new candles from the exchange
+        and updates the data processor when a closed candle is received.
+        
+        Args:
+            symbol: Trading pair symbol.
+            timeframe: Candle timeframe (e.g., "1m", "5m", "1h").
+            
+        Raises:
+            Exception: Any exceptions are caught, logged, and the method continues.
+        """
         last_printed = None
         candle_count = 0
         
@@ -55,14 +87,38 @@ class DataFetcher:
                 await asyncio.sleep(1)
 
     def get_candles(self, symbol, timeframe):
-        """Helper method to get candles for a specific symbol-timeframe pair"""
+        """Gets all candles for a specific symbol-timeframe pair.
+        
+        Args:
+            symbol: Trading pair symbol.
+            timeframe: Candle timeframe (e.g., "1m", "5m", "1h").
+            
+        Returns:
+            List of candles for the specified symbol and timeframe.
+        """
         return self.data_processor.get_candles(symbol, timeframe)
     
     def get_latest_candle(self, symbol, timeframe):
-        """Helper method to get the latest candle for a specific symbol-timeframe pair"""
+        """Gets the latest candle for a specific symbol-timeframe pair.
+        
+        Args:
+            symbol: Trading pair symbol.
+            timeframe: Candle timeframe (e.g., "1m", "5m", "1h").
+            
+        Returns:
+            Latest candle for the specified symbol and timeframe or None if unavailable.
+        """
         return self.data_processor.get_latest_candle(symbol, timeframe)
 
     async def run(self):
+        """Runs the data fetcher to collect data for all configured symbol-timeframe pairs.
+        
+        This method starts separate monitoring tasks for each symbol-timeframe pair
+        and manages their execution.
+        
+        Raises:
+            Exception: Exceptions from individual tasks are caught and the client is closed if needed.
+        """
         tasks = []
     
         # Create a task for each symbol-timeframe pair

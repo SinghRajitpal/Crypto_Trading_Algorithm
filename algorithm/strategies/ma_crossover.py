@@ -5,47 +5,35 @@ from .base_strategy import BaseStrategy
 from ..trade_signal import TradeSignal
 
 class MACrossoverStrategy(BaseStrategy):
-    """
-    Moving Average Crossover Strategy for crypto futures trading.
+    """Moving Average Crossover Strategy for crypto futures trading.
     
     This strategy generates trading signals based on the crossover of two moving averages:
     - A fast moving average (shorter period)
     - A slow moving average (longer period)
     
+    Attributes:
+        params: Dictionary containing strategy parameters:
+            - fast_ma_period: Period for fast moving average
+            - slow_ma_period: Period for slow moving average
+            - leverage: Trading leverage
+            - position_threshold: Minimum position size to consider as open
+    
     Trading Rules:
-    1. Buy Signal: Fast MA crosses above Slow MA (bullish crossover)
-    2. Sell Signal: Fast MA crosses below Slow MA (bearish crossover)
-    3. Close Signal: When no crossover is detected and position is open
-    
-    Key Features:
-    - Configurable MA periods
-    - Position size management
-    - Error handling and validation
-    - Detailed signal metadata
-    
-    Usage:
-        strategy = MACrossoverStrategy(
-            params={
-                'fast_ma_period': 9,
-                'slow_ma_period': 21,
-                'leverage': 1.0,
-                'position_threshold': 0.0001
-            },
-            strategy_id='ma_crossover_1'
-        )
+        1. Buy Signal: Fast MA crosses above Slow MA (bullish crossover)
+        2. Sell Signal: Fast MA crosses below Slow MA (bearish crossover)
+        3. Exit Signal: When no crossover is detected and position is open
     """
     
     def __init__(self, params: Dict[str, Any] = None, strategy_id: str = "ma_crossover"):
-        """
-        Initialize the MA Crossover strategy.
+        """Initializes the MA Crossover strategy.
         
         Args:
-            params (Dict[str, Any]): Strategy parameters:
-                - fast_ma_period (int): Period for fast moving average (default: 2)
-                - slow_ma_period (int): Period for slow moving average (default: 4)
-                - leverage (float): Trading leverage (default: 1.0)
-                - position_threshold (float): Minimum position size to consider as open (default: 0.0001)
-            strategy_id (str): Unique identifier for this strategy instance
+            params: Strategy parameters:
+                - fast_ma_period: Period for fast moving average (default: 2)
+                - slow_ma_period: Period for slow moving average (default: 4)
+                - leverage: Trading leverage (default: 1.0)
+                - position_threshold: Minimum position size to consider as open (default: 0.0001)
+            strategy_id: Unique identifier for this strategy instance
             
         Raises:
             ValueError: If parameters are invalid:
@@ -54,15 +42,6 @@ class MACrossoverStrategy(BaseStrategy):
                 - fast_ma_period must be less than slow_ma_period
                 - leverage must be a positive number
                 - position_threshold must be a positive number
-                
-        Example:
-            strategy = MACrossoverStrategy(
-                params={
-                    'fast_ma_period': 9,
-                    'slow_ma_period': 21,
-                    'leverage': 1.0
-                }
-            )
         """
         default_params = {
             'fast_ma_period': 2,
@@ -89,22 +68,16 @@ class MACrossoverStrategy(BaseStrategy):
         super().__init__(default_params, strategy_id)
         
     def get_required_indicators(self) -> List[str]:
-        """
-        Get the list of indicators required by this strategy.
+        """Gets the list of indicators required by this strategy.
         
         This strategy requires two simple moving averages:
         - A fast MA with period specified in params
         - A slow MA with period specified in params
         
         Returns:
-            List[str]: List of indicator names:
-                - sma_{fast_ma_period}
-                - sma_{slow_ma_period}
-                
-        Example:
-            strategy = MACrossoverStrategy(params={'fast_ma_period': 9, 'slow_ma_period': 21})
-            indicators = strategy.get_required_indicators()
-            # Returns: ['sma_9', 'sma_21']
+            List of indicator names required for this strategy:
+            - sma_{fast_ma_period}
+            - sma_{slow_ma_period}
         """
         return [
             f'sma_{self.params["fast_ma_period"]}',
@@ -112,8 +85,7 @@ class MACrossoverStrategy(BaseStrategy):
         ]
     
     async def _generate_signals(self, data: Dict[str, np.ndarray], indicator_data: Dict[str, np.ndarray], symbol: str) -> TradeSignal:
-        """
-        Generate trading signals based on MA crossover.
+        """Generates trading signals based on MA crossover.
         
         This method implements the core trading logic:
         1. Checks for bullish crossover (fast MA crosses above slow MA)
@@ -121,31 +93,21 @@ class MACrossoverStrategy(BaseStrategy):
         3. Manages position opening and closing
         
         Args:
-            data (Dict[str, np.ndarray]): Dictionary of numpy arrays for each price component
-            indicator_data (Dict[str, np.ndarray]): Dictionary of calculated indicators
-            symbol (str): Trading pair symbol
+            data: Dictionary of numpy arrays for each price component
+            indicator_data: Dictionary of calculated indicators
+            symbol: Trading pair symbol
             
         Returns:
-            TradeSignal: A TradeSignal object containing:
-                - action: "open" or "close"
-                - side: "buy" or "sell"
+            A TradeSignal object containing:
+                - action: "open", "exit", or "hold"
+                - side: "buy", "sell", or "none" (for hold)
                 - symbol: Trading pair
                 - strategy_id: Strategy identifier
-                - metadata: Additional information including:
-                    - reason: Signal generation reason
-                    - fast_ma: Current fast MA value
-                    - slow_ma: Current slow MA value
-                    - current_price: Latest closing price
-                    - current_position: Current position size
-                    - fast_ma_period: Fast MA period
-                    - slow_ma_period: Slow MA period
-                    - position_threshold: Position threshold
-                    
-        Example:
-            signal = await strategy._generate_signals(data, indicator_data, "BTCUSDT")
-            if signal.action == "open":
-                print(f"Opening {signal.side} position for {signal.symbol}")
-                print(f"Reason: {signal.metadata['reason']}")
+                - metadata: Additional signal information
+                - signal_confidence: Confidence level (0.0 to 1.0)
+                
+        Raises:
+            Exception: Any exceptions are caught, logged, and exit signal is returned
         """
         try:
             # Check if we have enough data
@@ -155,7 +117,7 @@ class MACrossoverStrategy(BaseStrategy):
             if len(data['close']) < min_candles_needed:
                 print(f"\n[{symbol}] 📊 Data Collection Progress: {len(data['close'])}/{min_candles_needed} candles")
                 return TradeSignal(
-                    action="close",
+                    action="exit",
                     side="sell" if await self.get_position(symbol) > 0 else "buy",
                     symbol=symbol,
                     strategy_id=self.strategy_id,
@@ -170,7 +132,7 @@ class MACrossoverStrategy(BaseStrategy):
             if fast_ma_key not in indicator_data or slow_ma_key not in indicator_data:
                 print(f"\n[{symbol}] ⚠️ Missing indicators: {fast_ma_key} or {slow_ma_key}")
                 return TradeSignal(
-                    action="close",
+                    action="exit",
                     side="sell" if await self.get_position(symbol) > 0 else "buy",
                     symbol=symbol,
                     strategy_id=self.strategy_id,
@@ -185,7 +147,7 @@ class MACrossoverStrategy(BaseStrategy):
             if np.isnan(fast_ma[-1]) or np.isnan(slow_ma[-1]):
                 print(f"\n[{symbol}] ⚠️ Invalid indicator values detected (current)")
                 return TradeSignal(
-                    action="close",
+                    action="exit",
                     side="sell" if await self.get_position(symbol) > 0 else "buy",
                     symbol=symbol,
                     strategy_id=self.strategy_id,
@@ -197,7 +159,7 @@ class MACrossoverStrategy(BaseStrategy):
             if len(fast_ma) < 2 or len(slow_ma) < 2 or np.isnan(fast_ma[-2]) or np.isnan(slow_ma[-2]):
                 print(f"\n[{symbol}] ⚠️ Missing previous indicator values for crossover detection")
                 return TradeSignal(
-                    action="close",
+                    action="exit",
                     side="sell" if await self.get_position(symbol) > 0 else "buy",
                     symbol=symbol,
                     strategy_id=self.strategy_id,
@@ -267,7 +229,7 @@ class MACrossoverStrategy(BaseStrategy):
             if abs(current_position) > self.position_threshold:
                 metadata["reason"] = "Managing existing position"
                 return TradeSignal(
-                    action="close",
+                    action="exit",
                     side="sell" if current_position > 0 else "buy",
                     symbol=symbol,
                     strategy_id=self.strategy_id,
@@ -275,19 +237,21 @@ class MACrossoverStrategy(BaseStrategy):
                     signal_confidence=0.5
                 )
             
+            # No position and no new signals - explicit HOLD
+            metadata["reason"] = "Market conditions stable - holding"
             return TradeSignal(
-                action="close",
-                side="sell" if current_position > 0 else "buy",
+                action="hold",
+                side="none",
                 symbol=symbol,
                 strategy_id=self.strategy_id,
                 metadata=metadata,
-                signal_confidence=0.0
+                signal_confidence=0.7
             )
             
         except Exception as e:
             print(f"\n[{symbol}] ❌ Error: {e}")
             return TradeSignal(
-                action="close",
+                action="exit",
                 side="sell" if await self.get_position(symbol) > 0 else "buy",
                 symbol=symbol,
                 strategy_id=self.strategy_id,

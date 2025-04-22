@@ -3,23 +3,38 @@ import numpy as np
 from typing import Dict, List, Any, Union
 
 class Indicators:
+    """Technical indicators calculator for trading strategies.
+    
+    This class provides methods to calculate various technical indicators
+    commonly used in trading strategies, utilizing the TA-Lib library.
+    
+    Indicators include:
+    - Moving Averages (SMA, EMA)
+    - Oscillators (RSI, MACD, Stochastic)
+    - Volatility Indicators (Bollinger Bands, ATR)
+    - Volume Indicators (OBV, MFI, VWAP)
+    - Trend Indicators (ADX, Ichimoku Cloud)
+    - Candlestick Patterns (Heikin-Ashi)
+    """
+    
     def __init__(self):
-        """Initialize the Indicators class."""
+        """Initializes the Indicators class."""
         pass
         
     async def calculate_indicators(self, required_indicators: List[str], numpy_array: np.ndarray) -> Dict[str, Union[np.ndarray, Dict[str, np.ndarray]]]:
-        """
-        Calculate all required indicators based on OHLCV data.
+        """Calculates all required indicators based on OHLCV data.
         
         Args:
-            required_indicators (List[str]): List of indicator names to calculate
-            numpy_array (np.ndarray): Array of OHLCV data in order: [open, high, low, close, volume]
+            required_indicators: List of indicator names to calculate.
+            numpy_array: Array of OHLCV data in order: [open, high, low, close, volume].
             
         Returns:
-            Dict[str, Union[np.ndarray, Dict[str, np.ndarray]]]: Dictionary of calculated indicators
+            Dictionary of calculated indicators where keys are indicator names and
+            values are either numpy arrays or dictionaries of arrays for multi-value indicators.
             
         Raises:
-            ValueError: If data is invalid or indicator calculation fails
+            ValueError: If data is invalid or indicator calculation fails.
+            Exception: Any other exceptions are caught, logged, and empty dict is returned.
         """
         results = {}
         
@@ -106,26 +121,72 @@ class Indicators:
             
     # Moving Averages
     def sma(self, prices, period=14):
-        """Simple Moving Average"""
+        """Calculates Simple Moving Average.
+        
+        Args:
+            prices: Price data (usually close prices).
+            period: Period for calculation (default: 14).
+            
+        Returns:
+            Numpy array of SMA values.
+        """
         return talib.SMA(prices, timeperiod=period)
     
     def ema(self, prices, period=14):
-        """Exponential Moving Average"""
+        """Calculates Exponential Moving Average.
+        
+        Args:
+            prices: Price data (usually close prices).
+            period: Period for calculation (default: 14).
+            
+        Returns:
+            Numpy array of EMA values.
+        """
         return talib.EMA(prices, timeperiod=period)
     
     # Oscillators
     def rsi(self, prices, period=14):
-        """Relative Strength Index"""
+        """Calculates Relative Strength Index.
+        
+        Args:
+            prices: Price data (usually close prices).
+            period: Period for calculation (default: 14).
+            
+        Returns:
+            Numpy array of RSI values (0-100).
+        """
         return talib.RSI(prices, timeperiod=period)
     
     def macd(self, prices, fast_period=12, slow_period=26, signal_period=9):
-        """Moving Average Convergence Divergence"""
+        """Calculates Moving Average Convergence Divergence.
+        
+        Args:
+            prices: Price data (usually close prices).
+            fast_period: Fast EMA period (default: 12).
+            slow_period: Slow EMA period (default: 26).
+            signal_period: Signal line period (default: 9).
+            
+        Returns:
+            Dictionary containing 'macd', 'signal', and 'histogram' arrays.
+        """
         macd, signal, hist = talib.MACD(prices, fastperiod=fast_period, 
                                       slowperiod=slow_period, signalperiod=signal_period)
         return {'macd': macd, 'signal': signal, 'histogram': hist}
     
     def stochastic(self, high, low, close, k_period=14, d_period=3, slowing=3):
-        """Stochastic Oscillator"""
+        """Calculates Stochastic Oscillator.
+        
+        Args:
+            high: High prices.
+            low: Low prices.
+            close: Close prices.
+            k_period: %K period (default: 14).
+            d_period: %D period (default: 3).
+            slowing: Slowing period (default: 3).
+            
+        Returns:
+            Dictionary containing 'k' and 'd' arrays.
+        """
         k, d = talib.STOCH(high, low, close, fastk_period=k_period, 
                           slowk_period=slowing, slowk_matype=0, 
                           slowd_period=d_period, slowd_matype=0)
@@ -133,38 +194,114 @@ class Indicators:
     
     # Volatility Indicators
     def bollinger_bands(self, prices, period=20, std_dev=2):
-        """Bollinger Bands"""
+        """Calculates Bollinger Bands.
+        
+        Args:
+            prices: Price data (usually close prices).
+            period: Period for calculation (default: 20).
+            std_dev: Number of standard deviations (default: 2).
+            
+        Returns:
+            Dictionary containing 'upper', 'middle', and 'lower' band arrays.
+        """
         upper, middle, lower = talib.BBANDS(prices, timeperiod=period, 
                                           nbdevup=std_dev, nbdevdn=std_dev)
         return {'upper': upper, 'middle': middle, 'lower': lower}
     
     def atr(self, high, low, close, period=14):
-        """Average True Range"""
+        """Calculates Average True Range.
+        
+        Args:
+            high: High prices.
+            low: Low prices.
+            close: Close prices.
+            period: Period for calculation (default: 14).
+            
+        Returns:
+            Numpy array of ATR values.
+        """
         return talib.ATR(high, low, close, timeperiod=period)
     
     # Volume Indicators
     def obv(self, close, volume):
-        """On Balance Volume"""
+        """Calculates On Balance Volume.
+        
+        Args:
+            close: Close prices.
+            volume: Volume data.
+            
+        Returns:
+            Numpy array of OBV values.
+        """
         return talib.OBV(close, volume)
     
     def mfi(self, high, low, close, volume, period=14):
-        """Money Flow Index"""
+        """Calculates Money Flow Index.
+        
+        Args:
+            high: High prices.
+            low: Low prices.
+            close: Close prices.
+            volume: Volume data.
+            period: Period for calculation (default: 14).
+            
+        Returns:
+            Numpy array of MFI values (0-100).
+        """
         return talib.MFI(high, low, close, volume, timeperiod=period)
     
     def vwap(self, high, low, close, volume):
-        """Volume Weighted Average Price (intraday)"""
+        """Calculates Volume Weighted Average Price.
+        
+        Args:
+            high: High prices.
+            low: Low prices.
+            close: Close prices.
+            volume: Volume data.
+            
+        Returns:
+            Numpy array of VWAP values.
+        """
         typical_price = (high + low + close) / 3
         return np.cumsum(typical_price * volume) / np.cumsum(volume)
     
     # Trend Indicators
     def adx(self, high, low, close, period=14):
-        """Average Directional Index"""
+        """Calculates Average Directional Index.
+        
+        Args:
+            high: High prices.
+            low: Low prices.
+            close: Close prices.
+            period: Period for calculation (default: 14).
+            
+        Returns:
+            Numpy array of ADX values (0-100).
+        """
         return talib.ADX(high, low, close, timeperiod=period)
     
     def ichimoku(self, high, low, close, 
                 conversion_period=9, base_period=26, 
                 span_b_period=52, displacement=26):
-        """Ichimoku Cloud"""
+        """Calculates Ichimoku Cloud.
+        
+        Args:
+            high: High prices.
+            low: Low prices.
+            close: Close prices.
+            conversion_period: Conversion line period (default: 9).
+            base_period: Base line period (default: 26).
+            span_b_period: Span B period (default: 52).
+            displacement: Cloud displacement (default: 26).
+            
+        Returns:
+            Dictionary containing Ichimoku components:
+            - conversion_line: Tenkan-sen
+            - base_line: Kijun-sen
+            - span_a: Senkou Span A
+            - span_b: Senkou Span B
+            - lagging_span: Chikou Span
+        """
         conversion = (talib.MAX(high, conversion_period) + 
                      talib.MIN(low, conversion_period)) / 2
         
@@ -194,7 +331,17 @@ class Indicators:
     
     # Candlestick Patterns
     def heikin_ashi(self, open_prices, high, low, close):
-        """Heikin-Ashi Candles"""
+        """Calculates Heikin-Ashi Candles.
+        
+        Args:
+            open_prices: Open prices.
+            high: High prices.
+            low: Low prices.
+            close: Close prices.
+            
+        Returns:
+            Dictionary containing Heikin-Ashi OHLC values.
+        """
         ha_close = (open_prices + high + low + close) / 4
         
         # First HA open equals first open

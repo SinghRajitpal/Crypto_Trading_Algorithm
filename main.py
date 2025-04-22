@@ -5,13 +5,35 @@ from algorithm.strategies.base_strategy import BaseStrategy
 from binance_exchange import BinanceClient
 
 class TradingAlgorithm:
+    """Main trading algorithm class that orchestrates the entire trading system.
+    
+    This class brings together all components of the trading system:
+    - Data collection and processing
+    - Strategy implementation
+    - Signal generation
+    - Execution handling
+    
+    It manages the lifecycle of the trading bot and provides a simple interface
+    for starting and stopping the trading process.
+    
+    Attributes:
+        binance_client: Binance client for API communication.
+        data_engine: Data engine for market data.
+        algo_engine: Algorithm engine for signal generation.
+        strategy: Trading strategy to use.
+        running: Boolean indicating if the algorithm is running.
+        data_task: Asyncio task for data collection.
+    """
+    
     def __init__(self, strategy: BaseStrategy, testnet=True):
-        """
-        Initialize the trading algorithm with a specific strategy.
+        """Initializes the trading algorithm with a specific strategy.
         
         Args:
-            strategy (BaseStrategy): The trading strategy to use
-            testnet (bool): Whether to use testnet or live trading
+            strategy: The trading strategy to use.
+            testnet: Whether to use testnet or live trading (default: True).
+            
+        Raises:
+            ValueError: If strategy is not an instance of BaseStrategy.
         """
         if not isinstance(strategy, BaseStrategy):
             raise ValueError("strategy must be an instance of BaseStrategy")
@@ -35,7 +57,14 @@ class TradingAlgorithm:
         self.data_task = None
     
     async def start(self):
-        """Start the trading algorithm"""
+        """Starts the trading algorithm.
+        
+        This method initiates the data collection process and begins
+        processing trading signals from the strategy.
+        
+        Raises:
+            Exception: Any exceptions are caught, logged, and cleanup is performed.
+        """
         if self.running:
             print("Trading algorithm is already running")
             return
@@ -67,7 +96,14 @@ class TradingAlgorithm:
             raise  # Re-raise the exception after cleanup
     
     async def stop(self):
-        """Stop the trading algorithm and clean up resources"""
+        """Stops the trading algorithm and cleans up resources.
+        
+        This method cancels all running tasks, closes positions if needed,
+        and ensures proper shutdown of all components.
+        
+        Raises:
+            Exception: Exceptions during cleanup are caught and logged.
+        """
         if not self.running:
             return
             

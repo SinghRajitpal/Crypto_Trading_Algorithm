@@ -8,50 +8,39 @@ if TYPE_CHECKING:
     from ..algo_engine import AlgoEngine
 
 class BaseStrategy(ABC):
-    """
-    Base class for all trading strategies.
+    """Base class for all trading strategies.
     
-    This class defines the interface that all strategies must implement and provides common
-    functionality for data processing, indicator calculation, and position management.
+    This class defines the interface that all strategies must implement and provides
+    common functionality for data processing, indicator calculation, and position management.
     
-    Key Features:
-    - Abstract interface for strategy implementation
-    - Common data processing and validation
-    - Indicator calculation management
-    - Position tracking and management
-    - Error handling and logging
-    
-    Usage:
-        class MyStrategy(BaseStrategy):
-            def get_required_indicators(self) -> List[str]:
-                return ['sma_9', 'sma_21']
-                
-            async def _generate_signals(self, data, indicator_data, symbol) -> TradeSignal:
-                # Implement your strategy logic here
-                pass
+    Attributes:
+        params (Dict[str, Any]): Strategy-specific parameters.
+        strategy_id (str): Unique identifier for this strategy instance.
+        algo_engine (Optional[AlgoEngine]): Reference to the algorithm engine.
+        position_threshold (float): Minimum position size to consider as open.
+        
+    Signal Types:
+        - open/buy: Enter a long position
+        - open/sell: Enter a short position
+        - exit/buy: Exit a short position
+        - exit/sell: Exit a long position
+        - hold/none: No action needed, maintain current state
     """
     
     # Default constants
     DEFAULT_POSITION_THRESHOLD = 0.0001  # Consider position as 0 if smaller than this
     
     def __init__(self, params: Dict[str, Any], strategy_id: str):
-        """
-        Initialize the strategy with parameters.
+        """Initializes the strategy with parameters.
         
         Args:
-            params (Dict[str, Any]): Strategy-specific parameters
-                - position_threshold (float): Minimum position size to consider as open
-                - Other strategy-specific parameters
-            strategy_id (str): Unique identifier for this strategy instance
+            params: Strategy-specific parameters including:
+                position_threshold (float): Minimum position size to consider as open.
+                Other strategy-specific parameters.
+            strategy_id: Unique identifier for this strategy instance.
                 
         Raises:
-            ValueError: If params is not a dictionary or strategy_id is not a string
-            
-        Example:
-            strategy = MyStrategy(
-                params={'position_threshold': 0.001},
-                strategy_id='my_strategy_1'
-            )
+            ValueError: If params is not a dictionary or strategy_id is not a string.
         """
         if not isinstance(params, dict):
             raise ValueError("params must be a dictionary")
@@ -64,21 +53,17 @@ class BaseStrategy(ABC):
         self.position_threshold = float(params.get('position_threshold', self.DEFAULT_POSITION_THRESHOLD))
         
     def set_algo_engine(self, algo_engine: 'AlgoEngine') -> None:
-        """
-        Set the algo engine instance for this strategy.
+        """Sets the algo engine instance for this strategy.
         
         This method is called by the algo engine when the strategy is registered.
         It provides the strategy with access to the Binance client and other
         trading functionality.
         
         Args:
-            algo_engine: The algo engine instance
+            algo_engine: The algo engine instance.
             
         Raises:
-            ValueError: If algo_engine is not an instance of AlgoEngine
-            
-        Example:
-            strategy.set_algo_engine(algo_engine)
+            ValueError: If algo_engine is not an instance of AlgoEngine.
         """
         # Instead of using isinstance, we'll check the class name
         if not hasattr(algo_engine, '__class__') or algo_engine.__class__.__name__ != 'AlgoEngine':
@@ -87,31 +72,28 @@ class BaseStrategy(ABC):
         
     @abstractmethod
     def get_required_indicators(self) -> List[str]:
-        """
-        Get the list of indicators required by this strategy.
+        """Gets the list of indicators required by this strategy.
         
         This method must be implemented by all strategies to specify which
         technical indicators they need for signal generation.
         
         Returns:
-            List[str]: List of indicator names required by the strategy.
-                      These should match the indicator names in data/indicators.py.
-                      
-        Example:
-            def get_required_indicators(self) -> List[str]:
-                return ['sma_9', 'sma_21', 'rsi_14']
+            List of indicator names required by the strategy.
+            These should match the indicator names in data/indicators.py.
         """
         pass
     
     def _convert_deque_to_numpy(self, data: Deque) -> Dict[str, np.ndarray]:
-        """
-        Convert deque of candles to numpy arrays for indicator calculation.
+        """Converts deque of candles to numpy arrays for indicator calculation.
         
         Args:
-            data (Deque): Deque of candle data [timestamp, open, high, low, close, volume]
+            data: Deque of candle data [timestamp, open, high, low, close, volume].
             
         Returns:
-            Dict[str, np.ndarray]: Dictionary of numpy arrays for each price component
+            Dictionary of numpy arrays for each price component.
+            
+        Raises:
+            Exception: If there's an error during conversion, logs the error and returns empty dict.
         """
         if not data:
             return {}
@@ -134,24 +116,21 @@ class BaseStrategy(ABC):
             return {}
     
     async def _calculate_indicators(self, data: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-        """
-        Calculate all required indicators for the strategy.
+        """Calculates all required indicators for the strategy.
         
         This method orchestrates the calculation of all indicators required by
         the strategy. It ensures all required indicators are available and handles
         any calculation errors.
         
         Args:
-            data (Dict[str, np.ndarray]): Dictionary of numpy arrays for each price component
+            data: Dictionary of numpy arrays for each price component.
             
         Returns:
-            Dict[str, np.ndarray]: Dictionary of calculated indicators
+            Dictionary of calculated indicators.
             
         Raises:
-            ValueError: If required indicators are not available
-            
-        Example:
-            indicator_data = await strategy._calculate_indicators(numpy_data)
+            ValueError: If required indicators are not available.
+            Exception: Any other exceptions are caught, logged, and empty dict is returned.
         """
         if not data:
             print("No data provided for indicator calculation")
@@ -208,27 +187,24 @@ class BaseStrategy(ABC):
             return {}
     
     async def get_position(self, symbol: str) -> float:
-        """
-        Get the current position for a specific symbol from Binance.
+        """Gets the current position for a specific symbol from Binance.
         
         This method retrieves the current position size for a trading pair from
         the Binance exchange. It handles errors and returns 0 if the position
         cannot be retrieved.
         
         Args:
-            symbol (str): Trading pair symbol (e.g., "BTCUSDT")
+            symbol: Trading pair symbol (e.g., "BTCUSDT").
             
         Returns:
-            float: Current position size:
+            Current position size:
                 - Positive: Long position
                 - Negative: Short position
                 - Zero: No position
                 
         Raises:
-            RuntimeError: If algo_engine is not set
-            
-        Example:
-            position = await strategy.get_position("BTCUSDT")
+            RuntimeError: If algo_engine is not set.
+            Exception: Other exceptions are caught, logged, and 0.0 is returned.
         """
         if not self.algo_engine:
             raise RuntimeError("algo_engine not set. Call set_algo_engine first.")
@@ -244,23 +220,20 @@ class BaseStrategy(ABC):
             return 0.0
     
     async def can_open_position(self, symbol: str) -> bool:
-        """
-        Check if a new position can be opened for a specific symbol.
+        """Checks if a new position can be opened for a specific symbol.
         
         This method determines if a new position can be opened by checking if
         the current position is below the threshold. It's used to prevent
         opening multiple positions for the same symbol.
         
         Args:
-            symbol (str): Trading pair symbol
+            symbol: Trading pair symbol.
             
         Returns:
-            bool: True if a new position can be opened, False otherwise
+            True if a new position can be opened, False otherwise.
             
-        Example:
-            if await strategy.can_open_position("BTCUSDT"):
-                # Open new position
-                pass
+        Raises:
+            Exception: Any exceptions are caught, logged, and False is returned.
         """
         try:
             # Get current position from Binance
@@ -271,8 +244,7 @@ class BaseStrategy(ABC):
             return False
     
     async def calculate_signals(self, data: Deque, symbol: str) -> TradeSignal:
-        """
-        Calculate trading signals based on the input data.
+        """Calculates trading signals based on the input data.
         
         This is the main method that orchestrates the signal generation process:
         1. Converts raw data to numpy arrays
@@ -280,21 +252,28 @@ class BaseStrategy(ABC):
         3. Generates trading signals based on the strategy logic
         
         Args:
-            data (Deque): Deque of candle data [timestamp, open, high, low, close, volume]
-            symbol (str): Trading pair symbol (e.g., "BTCUSDT")
+            data: Deque of candle data [timestamp, open, high, low, close, volume].
+            symbol: Trading pair symbol (e.g., "BTCUSDT").
             
         Returns:
-            TradeSignal: A TradeSignal object containing:
-                - action: "open" or "close"
-                - side: "buy" or "sell"
+            A TradeSignal object containing:
+                - action: Action to take ("open", "exit", or "hold")
+                - side: Direction of the trade ("buy", "sell", or "none" for hold)
                 - symbol: Trading pair
                 - strategy_id: Strategy identifier
                 - metadata: Additional information about the signal
                 - signal_confidence: Confidence level of the signal (0.0 to 1.0)
+                
+        Signal combinations for futures trading:
+            - open/buy: Enter a long position
+            - open/sell: Enter a short position  
+            - exit/sell: Exit a long position
+            - exit/buy: Exit a short position
+            - hold/none: No action needed (market conditions stable)
         """
         if not self.algo_engine:
             return TradeSignal(
-                action="close",
+                action="exit",
                 side="sell",
                 symbol=symbol,
                 strategy_id=self.strategy_id,
@@ -307,7 +286,7 @@ class BaseStrategy(ABC):
         
         if not numpy_data:
             return TradeSignal(
-                action="close",
+                action="exit",
                 side="sell" if await self.get_position(symbol) > 0 else "buy",
                 symbol=symbol,
                 strategy_id=self.strategy_id,
@@ -320,7 +299,7 @@ class BaseStrategy(ABC):
         
         if not indicator_data:
             return TradeSignal(
-                action="close",
+                action="exit",
                 side="sell" if await self.get_position(symbol) > 0 else "buy",
                 symbol=symbol,
                 strategy_id=self.strategy_id,
@@ -333,42 +312,28 @@ class BaseStrategy(ABC):
     
     @abstractmethod
     async def _generate_signals(self, data: Dict[str, np.ndarray], indicator_data: Dict[str, np.ndarray], symbol: str) -> TradeSignal:
-        """
-        Generate trading signals based on the calculated indicators.
+        """Generates trading signals based on the calculated indicators.
         
         This method must be implemented by each strategy to define its specific
         trading logic. It should analyze the indicators and current position to
         determine the appropriate trading action.
         
         Args:
-            data (Dict[str, np.ndarray]): Dictionary of numpy arrays for each price component
-            indicator_data (Dict[str, np.ndarray]): Dictionary of calculated indicators
-            symbol (str): Trading pair symbol
+            data: Dictionary of numpy arrays for each price component.
+            indicator_data: Dictionary of calculated indicators.
+            symbol: Trading pair symbol.
             
         Returns:
-            TradeSignal: A TradeSignal object containing the trading action
+            A TradeSignal object containing the trading action.
             
-        Example:
-            async def _generate_signals(self, data, indicator_data, symbol):
-                # Get current position
-                position = await self.get_position(symbol)
-                
-                # Analyze indicators
-                if indicator_data['sma_9'][-1] > indicator_data['sma_21'][-1]:
-                    if position <= 0 and await self.can_open_position(symbol):
-                        return TradeSignal(
-                            action="open",
-                            side="buy",
-                            symbol=symbol,
-                            strategy_id=self.strategy_id,
-                            metadata={"reason": "Bullish crossover"}
-                        )
-                return TradeSignal(
-                    action="close",
-                    side="sell" if position > 0 else "buy",
-                    symbol=symbol,
-                    strategy_id=self.strategy_id,
-                    metadata={"reason": "No signal"}
-                )
+        Possible Signal Types:
+            1. Enter a position:
+               - action="open", side="buy" (go long)
+               - action="open", side="sell" (go short)
+            2. Exit a position:
+               - action="exit", side="sell" (exit long position)
+               - action="exit", side="buy" (exit short position)
+            3. Hold current state:
+               - action="hold", side="none" (no action needed)
         """
         pass
