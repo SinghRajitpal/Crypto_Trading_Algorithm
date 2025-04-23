@@ -4,7 +4,9 @@ import config
 
 class BinanceClient:
     """
-    A professional client for Binance Futures trading via ccxt.pro.
+    A client for Binance Futures trading via ccxt.pro.
+
+    Needs a REVISION !
     
     Provides access to:
     - Account and position management

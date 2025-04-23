@@ -21,7 +21,8 @@ class MACrossoverStrategy(BaseStrategy):
     Trading Rules:
         1. Buy Signal: Fast MA crosses above Slow MA (bullish crossover)
         2. Sell Signal: Fast MA crosses below Slow MA (bearish crossover)
-        3. Exit Signal: When no crossover is detected and position is open
+        3. Hold Signal: When no crossover is detected and position is open
+
     """
     
     def __init__(self, params: Dict[str, Any] = None, strategy_id: str = "ma_crossover"):
@@ -115,13 +116,12 @@ class MACrossoverStrategy(BaseStrategy):
             min_candles_needed = self.params['slow_ma_period'] + 1
             
             if len(data['close']) < min_candles_needed:
-                print(f"\n[{symbol}] 📊 Data Collection Progress: {len(data['close'])}/{min_candles_needed} candles")
                 return TradeSignal(
-                    action="exit",
-                    side="sell" if await self.get_position(symbol) > 0 else "buy",
+                    action="hold",
+                    side="none",
                     symbol=symbol,
                     strategy_id=self.strategy_id,
-                    metadata={"reason": "Insufficient data"},
+                    metadata={"reason": f"Insufficient data: {len(data['close'])}/{min_candles_needed} candles collected"},
                     signal_confidence=0.0
                 )
             
@@ -130,13 +130,12 @@ class MACrossoverStrategy(BaseStrategy):
             slow_ma_key = f'sma_{self.params["slow_ma_period"]}'
             
             if fast_ma_key not in indicator_data or slow_ma_key not in indicator_data:
-                print(f"\n[{symbol}] ⚠️ Missing indicators: {fast_ma_key} or {slow_ma_key}")
                 return TradeSignal(
-                    action="exit",
-                    side="sell" if await self.get_position(symbol) > 0 else "buy",
+                    action="hold",
+                    side="none",
                     symbol=symbol,
                     strategy_id=self.strategy_id,
-                    metadata={"reason": "Missing indicator data"},
+                    metadata={"reason": f"Missing indicators: {fast_ma_key} or {slow_ma_key}"},
                     signal_confidence=0.0
                 )
             
@@ -145,22 +144,20 @@ class MACrossoverStrategy(BaseStrategy):
             
             # Check for NaN values
             if np.isnan(fast_ma[-1]) or np.isnan(slow_ma[-1]):
-                print(f"\n[{symbol}] ⚠️ Invalid indicator values detected (current)")
                 return TradeSignal(
-                    action="exit",
-                    side="sell" if await self.get_position(symbol) > 0 else "buy",
+                    action="hold",
+                    side="none",
                     symbol=symbol,
                     strategy_id=self.strategy_id,
-                    metadata={"reason": "Invalid indicator values"},
+                    metadata={"reason": "Invalid indicator values detected (current)"},
                     signal_confidence=0.0
                 )
                 
             # Make sure we have previous values for crossover detection
             if len(fast_ma) < 2 or len(slow_ma) < 2 or np.isnan(fast_ma[-2]) or np.isnan(slow_ma[-2]):
-                print(f"\n[{symbol}] ⚠️ Missing previous indicator values for crossover detection")
                 return TradeSignal(
-                    action="exit",
-                    side="sell" if await self.get_position(symbol) > 0 else "buy",
+                    action="hold",
+                    side="none",
                     symbol=symbol,
                     strategy_id=self.strategy_id,
                     metadata={"reason": "Insufficient data for crossover detection"},
@@ -175,13 +172,6 @@ class MACrossoverStrategy(BaseStrategy):
             
             # Get current position from Binance
             current_position = await self.get_position(symbol)
-            
-            # Print strategy state (only when values change significantly)
-            if abs(current_fast_ma - prev_fast_ma) > 0.001 or abs(current_slow_ma - prev_slow_ma) > 0.001:
-                print(f"\n=== {symbol} Strategy Update ===")
-                print(f"Price: {current_price:.2f} | Position: {current_position}")
-                print(f"Fast MA ({self.params['fast_ma_period']}): {current_fast_ma:.2f}")
-                print(f"Slow MA ({self.params['slow_ma_period']}): {current_slow_ma:.2f}")
             
             # Create base metadata
             metadata = {
@@ -198,8 +188,6 @@ class MACrossoverStrategy(BaseStrategy):
             # Bullish crossover
             if prev_fast_ma <= prev_slow_ma and current_fast_ma > current_slow_ma:
                 if current_position <= 0 and await self.can_open_position(symbol):
-                    print(f"\n[{symbol}] 🚀 BULLISH SIGNAL")
-                    print(f"Fast MA ({current_fast_ma:.2f}) crossed above Slow MA ({current_slow_ma:.2f})")
                     metadata["reason"] = "Bullish crossover"
                     return TradeSignal(
                         action="open",
@@ -213,8 +201,6 @@ class MACrossoverStrategy(BaseStrategy):
             # Bearish crossover
             elif prev_fast_ma >= prev_slow_ma and current_fast_ma < current_slow_ma:
                 if current_position >= 0 and await self.can_open_position(symbol):
-                    print(f"\n[{symbol}] 📉 BEARISH SIGNAL")
-                    print(f"Fast MA ({current_fast_ma:.2f}) crossed below Slow MA ({current_slow_ma:.2f})")
                     metadata["reason"] = "Bearish crossover"
                     return TradeSignal(
                         action="open",
@@ -249,7 +235,6 @@ class MACrossoverStrategy(BaseStrategy):
             )
             
         except Exception as e:
-            print(f"\n[{symbol}] ❌ Error: {e}")
             return TradeSignal(
                 action="exit",
                 side="sell" if await self.get_position(symbol) > 0 else "buy",

@@ -112,7 +112,7 @@ class BaseStrategy(ABC):
                 'volume': candles[:, 5].astype(float)
             }
         except Exception as e:
-            print(f"Error converting candle data: {e}")
+            print(f"[ERROR] Failed to convert candle data: {e}")
             return {}
     
     async def _calculate_indicators(self, data: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
@@ -133,7 +133,7 @@ class BaseStrategy(ABC):
             Exception: Any other exceptions are caught, logged, and empty dict is returned.
         """
         if not data:
-            print("No data provided for indicator calculation")
+            print("[WARNING] No data provided for indicator calculation")
             return {}
             
         try:
@@ -151,7 +151,7 @@ class BaseStrategy(ABC):
                                 for ind in required_indicators])
                                 
             if len(data['close']) < min_data_points:
-                print(f"Insufficient data for indicator calculation. Need at least {min_data_points} points, have {len(data['close'])}")
+                print(f"[INFO] Insufficient data for indicator calculation. Need {min_data_points} points, have {len(data['close'])}.")
                 return {}
                 
             # Create OHLCV array in the correct order for indicator calculation
@@ -169,7 +169,7 @@ class BaseStrategy(ABC):
             # Validate that all required indicators were calculated
             missing_indicators = [ind for ind in required_indicators if ind not in indicator_data]
             if missing_indicators:
-                print(f"Missing required indicators: {missing_indicators}")
+                print(f"[WARNING] Missing required indicators: {missing_indicators}")
                 return {}
                 
             # Check for NaN values in final (most recent) indicator values
@@ -179,11 +179,11 @@ class BaseStrategy(ABC):
                              or (not isinstance(indicator_data[ind], dict) and np.isnan(indicator_data[ind][-1])))]
                              
             if nan_indicators:
-                print(f"Warning: NaN values in latest data points for indicators: {nan_indicators}")
+                print(f"[WARNING] NaN values detected in indicator(s): {nan_indicators}")
             
             return indicator_data
         except Exception as e:
-            print(f"Error calculating indicators: {e}")
+            print(f"[ERROR] Failed to calculate indicators: {e}")
             return {}
     
     async def get_position(self, symbol: str) -> float:
@@ -216,7 +216,7 @@ class BaseStrategy(ABC):
                 return 0.0
             return float(positions[0].get('contracts', 0))
         except Exception as e:
-            print(f"Error getting position for {symbol}: {e}")
+            print(f"[ERROR] Failed to get position for {symbol}: {e}")
             return 0.0
     
     async def can_open_position(self, symbol: str) -> bool:
@@ -240,7 +240,7 @@ class BaseStrategy(ABC):
             position = await self.get_position(symbol)
             return abs(position) < self.position_threshold
         except Exception as e:
-            print(f"Error checking position for {symbol}: {e}")
+            print(f"[ERROR] Failed to check if position can be opened for {symbol}: {e}")
             return False
     
     async def calculate_signals(self, data: Deque, symbol: str) -> TradeSignal:
@@ -273,8 +273,8 @@ class BaseStrategy(ABC):
         """
         if not self.algo_engine:
             return TradeSignal(
-                action="exit",
-                side="sell",
+                action="hold",
+                side="none",
                 symbol=symbol,
                 strategy_id=self.strategy_id,
                 metadata={"reason": "algo_engine not set"},
@@ -286,8 +286,8 @@ class BaseStrategy(ABC):
         
         if not numpy_data:
             return TradeSignal(
-                action="exit",
-                side="sell" if await self.get_position(symbol) > 0 else "buy",
+                action="hold",
+                side="none",
                 symbol=symbol,
                 strategy_id=self.strategy_id,
                 metadata={"reason": "No data available"},
@@ -299,8 +299,8 @@ class BaseStrategy(ABC):
         
         if not indicator_data:
             return TradeSignal(
-                action="exit",
-                side="sell" if await self.get_position(symbol) > 0 else "buy",
+                action="hold",
+                side="none",
                 symbol=symbol,
                 strategy_id=self.strategy_id,
                 metadata={"reason": "Failed to calculate indicators"},

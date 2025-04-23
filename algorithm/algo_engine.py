@@ -146,7 +146,7 @@ class AlgoEngine:
             return None
             
         except Exception as e:
-            print(f"Error processing signals for {symbol}/{timeframe}: {e}")
+            print(f"[ERROR] Failed to process signals for {symbol}/{timeframe}: {e}")
             return None
             
     async def run(self, strategy: BaseStrategy):
@@ -179,7 +179,7 @@ class AlgoEngine:
                 await asyncio.sleep(1)
                 
             except Exception as e:
-                print(f"Error in algorithm engine: {e}")
+                print(f"[ERROR] Algorithm engine execution failed: {e}")
                 await asyncio.sleep(5)  # Sleep longer on error
                 
     async def stop(self):
