@@ -5,7 +5,7 @@ from .base_strategy import BaseStrategy
 from ..trade_signal import TradeSignal
 
 class MACrossoverStrategy(BaseStrategy):
-    """Moving Average Crossover Strategy for crypto futures trading.
+    """Moving Average Crossover Strategy for crypto futures trading in hedge mode.
     
     This strategy generates trading signals based on the crossover of two moving averages:
     - A fast moving average (shorter period)
@@ -20,9 +20,16 @@ class MACrossoverStrategy(BaseStrategy):
     
     Trading Rules:
         1. Buy Signal: Fast MA crosses above Slow MA (bullish crossover)
+           - Enter long position if no long position exists
+           - Maintain existing long position
         2. Sell Signal: Fast MA crosses below Slow MA (bearish crossover)
-        3. Hold Signal: When no crossover is detected and position is open
+           - Enter short position if no short position exists
+           - Maintain existing short position
+        3. Hold Signal: When no crossover is detected
+           - Maintain existing positions without changes
 
+    Note: This strategy is designed for Binance Futures in hedge mode, where you can
+    have at most one long and one short position simultaneously.
     """
     
     def __init__(self, params: Dict[str, Any] = None, strategy_id: str = "ma_crossover"):
@@ -86,12 +93,14 @@ class MACrossoverStrategy(BaseStrategy):
         ]
     
     async def _generate_signals(self, data: Dict[str, np.ndarray], indicator_data: Dict[str, np.ndarray], symbol: str) -> TradeSignal:
-        """Generates trading signals based on MA crossover.
+        """Generates trading signals based on MA crossover for hedge mode.
         
         This method implements the core trading logic:
         1. Checks for bullish crossover (fast MA crosses above slow MA)
+           - Enter long position if none exists or maintain current long
         2. Checks for bearish crossover (fast MA crosses below slow MA)
-        3. Manages position opening and closing
+           - Enter short position if none exists or maintain current short
+        3. Holds positions when no crossover is detected
         
         Args:
             data: Dictionary of numpy arrays for each price component
@@ -100,7 +109,7 @@ class MACrossoverStrategy(BaseStrategy):
             
         Returns:
             A TradeSignal object containing:
-                - action: "open", "exit", or "hold"
+                - action: "open", "hold", or "exit"
                 - side: "buy", "sell", or "none" (for hold)
                 - symbol: Trading pair
                 - strategy_id: Strategy identifier
@@ -187,8 +196,9 @@ class MACrossoverStrategy(BaseStrategy):
             
             # Bullish crossover
             if prev_fast_ma <= prev_slow_ma and current_fast_ma > current_slow_ma:
-                if current_position <= 0 and await self.can_open_position(symbol):
-                    metadata["reason"] = "Bullish crossover"
+                # For hedge mode: if we have no long position, enter long
+                if current_position <= self.position_threshold:
+                    metadata["reason"] = "Bullish crossover - entering long position"
                     return TradeSignal(
                         action="open",
                         side="buy",
@@ -197,11 +207,23 @@ class MACrossoverStrategy(BaseStrategy):
                         metadata=metadata,
                         signal_confidence=0.8
                     )
+                else:
+                    # Already in a long position, maintain it
+                    metadata["reason"] = "Bullish crossover - maintaining existing long position"
+                    return TradeSignal(
+                        action="hold",
+                        side="none",
+                        symbol=symbol,
+                        strategy_id=self.strategy_id,
+                        metadata=metadata,
+                        signal_confidence=0.7
+                    )
             
             # Bearish crossover
             elif prev_fast_ma >= prev_slow_ma and current_fast_ma < current_slow_ma:
-                if current_position >= 0 and await self.can_open_position(symbol):
-                    metadata["reason"] = "Bearish crossover"
+                # For hedge mode: if we have no short position, enter short
+                if current_position >= -self.position_threshold:
+                    metadata["reason"] = "Bearish crossover - entering short position"
                     return TradeSignal(
                         action="open",
                         side="sell",
@@ -210,21 +232,44 @@ class MACrossoverStrategy(BaseStrategy):
                         metadata=metadata,
                         signal_confidence=0.8
                     )
+                else:
+                    # Already in a short position, maintain it
+                    metadata["reason"] = "Bearish crossover - maintaining existing short position"
+                    return TradeSignal(
+                        action="hold",
+                        side="none",
+                        symbol=symbol,
+                        strategy_id=self.strategy_id,
+                        metadata=metadata,
+                        signal_confidence=0.7
+                    )
             
-            # No signal or can't open new position
-            if abs(current_position) > self.position_threshold:
-                metadata["reason"] = "Managing existing position"
+            # No crossover signal - maintain existing position
+            if current_position > self.position_threshold:
+                # Long position, maintain it
+                metadata["reason"] = "Maintaining long position - no crossover signal"
                 return TradeSignal(
-                    action="exit",
-                    side="sell" if current_position > 0 else "buy",
+                    action="hold",
+                    side="none",
                     symbol=symbol,
                     strategy_id=self.strategy_id,
                     metadata=metadata,
-                    signal_confidence=0.5
+                    signal_confidence=0.7
+                )
+            elif current_position < -self.position_threshold:
+                # Short position, maintain it
+                metadata["reason"] = "Maintaining short position - no crossover signal"
+                return TradeSignal(
+                    action="hold",
+                    side="none",
+                    symbol=symbol,
+                    strategy_id=self.strategy_id,
+                    metadata=metadata,
+                    signal_confidence=0.7
                 )
             
             # No position and no new signals - explicit HOLD
-            metadata["reason"] = "Market conditions stable - holding"
+            metadata["reason"] = "Market conditions stable - no position"
             return TradeSignal(
                 action="hold",
                 side="none",
