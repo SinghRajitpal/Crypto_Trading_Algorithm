@@ -1,10 +1,12 @@
 import asyncio
 from data.data_engine import DataEngine
 from algorithm.algo_engine import AlgoEngine
+from execution.execution_engine import ExecutionEngine
 from algorithm.strategies.base_strategy import BaseStrategy
 from binance_exchange import BinanceClient
 import time
 from datetime import datetime
+import traceback
 
 class TradingAlgorithm:
     """Main trading algorithm class that orchestrates the entire trading system.
@@ -22,17 +24,19 @@ class TradingAlgorithm:
         binance_client: Binance client for API communication.
         data_engine: Data engine for market data.
         algo_engine: Algorithm engine for signal generation.
+        execution_engine: Execution engine for order execution and risk management.
         strategy: Trading strategy to use.
         running: Boolean indicating if the algorithm is running.
         data_task: Asyncio task for data collection.
     """
     
-    def __init__(self, strategy: BaseStrategy, testnet=True):
+    def __init__(self, strategy: BaseStrategy, testnet=True, total_capital=1000.0):
         """Initializes the trading algorithm with a specific strategy.
         
         Args:
             strategy: The trading strategy to use.
             testnet: Whether to use testnet or live trading (default: True).
+            total_capital: Total capital in USDT for portfolio management.
             
         Raises:
             ValueError: If strategy is not an instance of BaseStrategy.
@@ -48,8 +52,20 @@ class TradingAlgorithm:
         max_candles = max(100, 5 * strategy.params.get('slow_ma_period', 20))
         # Make sure we have additional candles for crossover detection
         max_candles += 5
+        
+        print(f"[TradingAlgorithm] Initializing with {max_candles} candles per symbol")
+        
+        # Initialize data engine for market data collection
         self.data_engine = DataEngine(binance_client=self.binance_client, max_candles=max_candles)
-        self.algo_engine = AlgoEngine(data_engine=self.data_engine, binance_client=self.binance_client)
+        
+        # Initialize algo engine for signal generation only
+        self.algo_engine = AlgoEngine(data_engine=self.data_engine)
+        
+        # Initialize execution engine with portfolio and risk management
+        self.execution_engine = ExecutionEngine(
+            binance_client=self.binance_client,
+            total_capital=total_capital
+        )
         
         # Set the algo engine on the strategy
         strategy.set_algo_engine(self.algo_engine)
@@ -57,6 +73,8 @@ class TradingAlgorithm:
         
         self.running = False
         self.data_task = None
+        
+        print(f"[TradingAlgorithm] Initialized with {strategy.strategy_id} strategy")
     
     async def start(self):
         """Starts the trading algorithm.
@@ -68,7 +86,7 @@ class TradingAlgorithm:
             Exception: Any exceptions are caught, logged, and cleanup is performed.
         """
         if self.running:
-            print("Trading algorithm is already running")
+            print("[TradingAlgorithm] Already running")
             return
             
         self.running = True
@@ -76,12 +94,32 @@ class TradingAlgorithm:
         try:
             # Start data collection
             self.data_task = asyncio.create_task(self.data_engine.run())
+            print("[TradingAlgorithm] Started data collection task")
+            
+            # Wait briefly for initial data to be collected
+            await asyncio.sleep(2)
             
             # Print header
             print("\n" + "=" * 80)
             print(f"{'CRYPTO TRADING BOT':^80}")
             print(f"{'Strategy: ' + self.strategy.strategy_id:^80}")
             print("=" * 80)
+            
+            # Display portfolio and risk information
+            portfolio_summary = self.execution_engine.get_portfolio_summary()
+            risk_metrics = self.execution_engine.get_risk_metrics()
+            
+            print("\nPORTFOLIO INITIALIZATION:")
+            print(f"Total Capital: ${portfolio_summary['total_capital']:.2f}")
+            print(f"Max Allocation: {portfolio_summary['allocation_percentage']*100:.1f}%")
+            print(f"Risk Status: {risk_metrics['risk_status'].upper()}")
+            
+            # Display strategy risk parameters
+            print("\nSTRATEGY RISK PARAMETERS:")
+            print(f"Stop Loss: {self.strategy.stop_loss_pct*100:.1f}%")
+            print(f"Take Profit: {self.strategy.take_profit_pct*100:.1f}%")
+            print(f"Reward/Risk Ratio: {self.strategy.take_profit_pct/self.strategy.stop_loss_pct:.2f}")
+            print("-" * 80)
             
             # Track the last processed time to avoid redundant updates
             last_processed_time = {}
@@ -101,11 +139,14 @@ class TradingAlgorithm:
                         last_processed_time[symbol] = current_time
                         
                         # Get latest candle data
-                        candles = self.data_engine.get_candles(symbol, "1m")
-                        if not candles:
+                        latest_candle = self.data_engine.get_latest_candle(symbol, "1m")
+                        if not latest_candle:
+                            print(f"[TradingAlgorithm] No candle data available for {symbol}, skipping")
                             continue
                             
-                        latest_candle = candles[-1]
+                        # Extract OHLCV values using the utility method
+                        candle_data = self.data_engine.extract_ohlcv(latest_candle)
+                        current_price = candle_data["close"]
                         
                         # Get current position info
                         position = await self.binance_client.get_open_positions(symbol)
@@ -117,27 +158,40 @@ class TradingAlgorithm:
                             'unrealized_pnl': position[0].get('unrealizedPnl', 'N/A') if position else 'N/A'
                         }
                         
+                        # Validate the signal with risk management
+                        if signal.action == "open":
+                            risk_result = await self.execution_engine.validate_signal(signal, current_price)
+                            signal.metadata['risk_valid'] = risk_result.get('valid', False)
+                            signal.metadata['risk_reason'] = risk_result.get('reason', 'Unknown reason')
+                        
+                        # Process trade execution using execution engine
+                        # Update the signal with current_price since process_signal no longer accepts it as a parameter
+                        signal.metadata['price'] = current_price
+                        execution_result = await self.execution_engine.process_signal(signal)
+                        
                         # Output border
                         print("\n" + "-" * 80)
                         
                         # 1. Symbol and timestamp
-                        readable_time = datetime.fromtimestamp(latest_candle[0]/1000).strftime('%H:%M:%S %d/%m/%Y')
+                        readable_time = datetime.fromtimestamp(candle_data["timestamp"]/1000).strftime('%H:%M:%S %d/%m/%Y')
                         print(f"{symbol:^15} | {readable_time:^25} | Status: {'🟢 ACTIVE':^15}")
                         print("-" * 80)
                         
                         # 2. OHLCV Price Data
+                        price_change = self.data_engine.get_candle_change_pct(latest_candle)
                         print("PRICE DATA:")
-                        print(f"Open: {latest_candle[1]:.2f} | High: {latest_candle[2]:.2f} | Low: {latest_candle[3]:.2f} | Close: {latest_candle[4]:.2f}")
-                        print(f"Volume: {latest_candle[5]:.3f} | Change: {((latest_candle[4]-latest_candle[1])/latest_candle[1]*100):.2f}%")
+                        print(f"Open: {candle_data['open']:.2f} | High: {candle_data['high']:.2f} | Low: {candle_data['low']:.2f} | Close: {candle_data['close']:.2f}")
+                        print(f"Volume: {candle_data['volume']:.3f} | Change: {price_change:.2f}%")
                         
                         # 3. Data Collection Progress
+                        candles = self.data_engine.get_candles(symbol, "1m")
                         max_candles = self.data_engine.data_fetcher.data_processor.max_candles
                         current_candles = len(candles)
                         required_indicator_candles = max(self.strategy.params.get('slow_ma_period', 0), 
                                                      self.strategy.params.get('fast_ma_period', 0)) + 1
                         
                         print("\nDATA STATUS:")
-                        print(f"Candles Collected: {current_candles}/{max_candles} | " +
+                        print(f"Candles Collected: {current_candles}/{max_candles} | "
                               f"Required for Indicators: {required_indicator_candles}")
                         
                         # 4. Signal Information
@@ -171,29 +225,121 @@ class TradingAlgorithm:
                             print(f"Entry Price: {positions_info[symbol]['entry_price']}")
                             print(f"Leverage: {positions_info[symbol]['leverage']}x")
                             print(f"Unrealized PnL: {positions_info[symbol]['unrealized_pnl']}")
+                            
+                            # Find stop loss and take profit orders in open orders
+                            try:
+                                open_orders = await self.binance_client.get_open_orders(symbol)
+                                sl_order = next((o for o in open_orders if o.get('type', '').startswith('STOP')), None)
+                                tp_order = next((o for o in open_orders if o.get('type', '').startswith('TAKE_PROFIT')), None)
+                                
+                                # Display Stop Loss and Take Profit with clear formatting
+                                print("\nRISK MANAGEMENT ORDERS:")
+                                if sl_order:
+                                    sl_price = float(sl_order.get('stopPrice', 0))
+                                    entry_price = float(positions_info[symbol]['entry_price']) if positions_info[symbol]['entry_price'] != 'N/A' else current_price
+                                    sl_pct = abs(sl_price - entry_price) / entry_price * 100
+                                    print(f"Stop Loss: ${sl_price:.2f} ({sl_pct:.2f}% from entry)")
+                                else:
+                                    print("Stop Loss: Not set")
+                                    
+                                if tp_order:
+                                    tp_price = float(tp_order.get('stopPrice', 0))
+                                    entry_price = float(positions_info[symbol]['entry_price']) if positions_info[symbol]['entry_price'] != 'N/A' else current_price
+                                    tp_pct = abs(tp_price - entry_price) / entry_price * 100
+                                    print(f"Take Profit: ${tp_price:.2f} ({tp_pct:.2f}% from entry)")
+                                else:
+                                    print("Take Profit: Not set")
+                                
+                                # Calculate and display reward-to-risk ratio if both orders are set
+                                if sl_order and tp_order and position_type == "LONG":
+                                    sl_price = float(sl_order.get('stopPrice', 0))
+                                    tp_price = float(tp_order.get('stopPrice', 0))
+                                    entry_price = float(positions_info[symbol]['entry_price']) if positions_info[symbol]['entry_price'] != 'N/A' else current_price
+                                    
+                                    risk = entry_price - sl_price
+                                    reward = tp_price - entry_price
+                                    
+                                    if risk > 0:
+                                        reward_risk_ratio = reward / risk
+                                        print(f"Reward/Risk Ratio: {reward_risk_ratio:.2f}")
+                            except Exception as e:
+                                print(f"Could not retrieve open orders: {e}")
+                            
+                            # Update daily PnL for risk tracking
+                            if positions_info[symbol]['unrealized_pnl'] != 'N/A':
+                                self.execution_engine.update_daily_pnl(
+                                    symbol, 
+                                    float(positions_info[symbol]['unrealized_pnl'])
+                                )
                         else:
                             print("Status: CLOSED | No open position")
                             
+                        # 7. Risk and Portfolio Information
+                        current_portfolio = self.execution_engine.get_portfolio_summary()
+                        current_risk = self.execution_engine.get_risk_metrics()
+                        
+                        print("\nRISK & PORTFOLIO:")
+                        print(f"Allocation: {current_portfolio['allocation_percentage']*100:.1f}% | "
+                              f"Positions: {current_portfolio['active_positions']}")
+                        print(f"Available Capital: ${current_portfolio['total_capital'] - current_portfolio['allocated_capital']:.2f} | "
+                              f"Daily PnL: ${current_risk.get('daily_pnl', 0):.2f}")
+                        
+                        # 8. Risk Assessment for Open Signals
+                        if signal.action == "open":
+                            print("\nRISK ASSESSMENT:")
+                            if signal.metadata.get('risk_valid', False):
+                                print(f"✅ Trade meets risk criteria.")
+                                if 'position_size' in signal.metadata:
+                                    print(f"Position Size: {signal.metadata['position_size']:.6f} | "
+                                          f"Leverage: {signal.metadata.get('position_leverage', 'N/A')}x")
+                                    
+                                    # Display stop loss and take profit with percentages
+                                    if 'stop_loss_price' in signal.metadata:
+                                        sl_price = signal.metadata['stop_loss_price']
+                                        sl_pct = abs(sl_price - current_price) / current_price * 100
+                                        print(f"Stop Loss: ${sl_price:.2f} ({sl_pct:.2f}% from entry)")
+                                    
+                                    if 'take_profit_price' in signal.metadata:
+                                        tp_price = signal.metadata['take_profit_price']
+                                        tp_pct = abs(tp_price - current_price) / current_price * 100
+                                        print(f"Take Profit: ${tp_price:.2f} ({tp_pct:.2f}% from entry)")
+                                    
+                                    # Show reward-to-risk ratio
+                                    if 'reward_risk_ratio' in signal.metadata:
+                                        print(f"Reward/Risk Ratio: {signal.metadata['reward_risk_ratio']:.2f}")
+                            else:
+                                print(f"❌ Trade rejected: {signal.metadata.get('risk_reason', 'Unknown reason')}")
+                        
+                        # 9. Execution Result
+                        if execution_result:
+                            print("\nEXECUTION RESULT:")
+                            print(f"Status: {execution_result.get('status', 'N/A')}")
+                            if 'reason' in execution_result:
+                                print(f"Reason: {execution_result['reason']}")
+                            
                 except Exception as e:
-                    print(f"\n❌ Error processing signal: {e}")
+                    print(f"\n❌ [TradingAlgorithm] Error processing signal: {e}")
+                    traceback.print_exc()
                     continue
                     
         except KeyboardInterrupt:
-            print("\nShutdown requested by user")
+            print("\n[TradingAlgorithm] Shutdown requested by user")
             await self.stop()
         except asyncio.CancelledError:
-            print("\nTask cancelled")
+            print("\n[TradingAlgorithm] Task cancelled")
             await self.stop()
         except Exception as e:
-            print(f"\nUnexpected error in trading loop: {e}")
+            print(f"\n❌ [TradingAlgorithm] Unexpected error in trading loop: {e}")
+            traceback.print_exc()
             await self.stop()
             raise  # Re-raise the exception after cleanup
     
     async def stop(self):
         """Stops the trading algorithm and cleans up resources.
         
-        This method cancels all running tasks, closes positions if needed,
-        and ensures proper shutdown of all components.
+        This method cancels all running tasks and ensures proper shutdown
+        of all components while preserving any open positions and their
+        associated stop loss and take profit orders.
         
         Raises:
             Exception: Exceptions during cleanup are caught and logged.
@@ -209,25 +355,51 @@ class TradingAlgorithm:
         try:
             # Cancel data task if it exists
             if self.data_task and not self.data_task.done():
-                print("Cancelling data collection task...")
+                print("[TradingAlgorithm] Cancelling data collection task...")
                 self.data_task.cancel()
                 try:
                     await self.data_task
                 except asyncio.CancelledError:
                     pass
                     
-            # Close all open positions if needed
-            # TODO: Implement position closing logic here
+            # Display current positions that will be preserved
+            try:
+                positions = await self.binance_client.get_all_positions()
+                active_positions = [p for p in positions if float(p.get('contracts', 0)) != 0]
+                
+                if active_positions:
+                    print("\n[TradingAlgorithm] Preserving open positions:")
+                    for position in active_positions:
+                        symbol = position.get('symbol', 'UNKNOWN')
+                        size = float(position.get('contracts', 0))
+                        entry_price = position.get('entryPrice', 'N/A')
+                        pnl = position.get('unrealizedPnl', 'N/A')
+                        
+                        position_type = "LONG" if size > 0 else "SHORT"
+                        print(f"- {symbol}: {position_type} {abs(size)} contracts @ {entry_price} (PnL: {pnl})")
+                        
+                        # Display associated SL/TP orders
+                        orders = await self.binance_client.get_open_orders(symbol)
+                        sl_order = next((o for o in orders if o.get('type', '').startswith('STOP')), None)
+                        tp_order = next((o for o in orders if o.get('type', '').startswith('TAKE_PROFIT')), None)
+                        
+                        if sl_order:
+                            print(f"  Stop Loss: ${float(sl_order.get('stopPrice', 0)):.2f}")
+                        if tp_order:
+                            print(f"  Take Profit: ${float(tp_order.get('stopPrice', 0)):.2f}")
+            except Exception as e:
+                print(f"[TradingAlgorithm] Error displaying positions: {e}")
             
             # Close Binance client connection
-            print("Closing exchange connection...")
+            print("\n[TradingAlgorithm] Closing exchange connection...")
             await self.binance_client.close()
             
         except Exception as e:
-            print(f"Error during cleanup: {e}")
+            print(f"❌ [TradingAlgorithm] Error during cleanup: {e}")
+            traceback.print_exc()
         finally:
             print("-" * 80)
-            print("Shutdown complete")
+            print("SHUTDOWN COMPLETE - Positions and SL/TP orders preserved")
             print("-" * 80)
 
 if __name__ == "__main__":
@@ -237,10 +409,17 @@ if __name__ == "__main__":
     # Create strategy with custom parameters
     strategy = MACrossoverStrategy(params={
         'fast_ma_period': 9,
-        'slow_ma_period': 21
+        'slow_ma_period': 21,
+        'stop_loss_pct': 0.002,  # 2% stop loss
+        'take_profit_pct': 0.003,  # 4% take profit
+        'leverage': 7  # Setting leverage to 20x
     })
     
     # Create and run the trading algorithm with the strategy
-    algorithm = TradingAlgorithm(strategy=strategy, testnet=True)
+    algorithm = TradingAlgorithm(
+        strategy=strategy, 
+        testnet=True,
+        total_capital=5500.0  # Starting with 1000 USDT
+    )
     
     asyncio.run(algorithm.start())

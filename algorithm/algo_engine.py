@@ -1,8 +1,7 @@
 # Placeholder for the algorithm engine
 
 import asyncio
-from typing import Dict, List, Optional
-from collections import defaultdict
+from typing import Dict, Optional
 from .strategies.base_strategy import BaseStrategy
 from .trade_signal import TradeSignal
 from data.data_engine import DataEngine
@@ -19,26 +18,28 @@ class AlgoEngine:
     
     Attributes:
         data_engine: Data engine instance for market data access.
-        binance_client: Binance client for portfolio data access.
         running: Boolean indicating if the engine is currently running.
         _last_signal_states: Dictionary tracking signal states by symbol.
         _min_signal_interval: Minimum seconds between signals for same symbol.
     """
     
-    def __init__(self, data_engine: DataEngine, binance_client):
+    def __init__(self, data_engine: DataEngine):
         """Initializes the Algorithm Engine.
         
         Args:
             data_engine: Data engine instance for market data.
-            binance_client: Binance client for portfolio data.
         """
         self.data_engine = data_engine
-        self.binance_client = binance_client
         self.running = False
+        
+        # Get the binance_client from data_engine
+        self.binance_client = data_engine.binance_client if hasattr(data_engine, 'binance_client') else None
         
         # Signal state tracking
         self._last_signal_states = {}  # {symbol: {timestamp, signal_type, data_hash}}
         self._min_signal_interval = 60  # Minimum seconds between signals for same symbol
+        
+        print("[AlgoEngine] Initialized")
         
     def _get_data_hash(self, candles) -> str:
         """Generates a hash of the latest candle data to detect changes.
@@ -49,7 +50,7 @@ class AlgoEngine:
         Returns:
             String hash of the latest candle timestamp and close price.
         """
-        if not candles:
+        if not candles or len(candles) == 0:
             return ""
         latest = candles[-1]
         # Hash the relevant parts of the latest candle
@@ -121,7 +122,7 @@ class AlgoEngine:
         # Get latest candles
         candles = self.data_engine.get_candles(symbol, timeframe)
         
-        if not candles:
+        if not candles or len(candles) == 0:
             return None
             
         try:
@@ -136,56 +137,59 @@ class AlgoEngine:
             signal = await strategy.calculate_signals(candles, symbol)
             
             if signal:
-                # Update state tracking
-                self._update_signal_state(symbol, current_time, data_hash, 
-                                       f"{signal.action}_{signal.side}")
-                # For hold signals, we still want to return them for logging purposes
-                # but the caller might handle them differently
-                return signal
+                # Update signal state
+                self._update_signal_state(
+                    symbol=symbol,
+                    current_time=current_time,
+                    data_hash=data_hash,
+                    signal_type=f"{signal.action}/{signal.side}"
+                )
                 
-            return None
+                # Set timestamp if not already set
+                if not signal.timestamp:
+                    signal.timestamp = current_time * 1000  # Convert to milliseconds for consistency
+                
+                print(f"[AlgoEngine] Generated {signal.action}/{signal.side} signal for {symbol} with confidence {signal.signal_confidence:.2f}")
+                
+            return signal
             
         except Exception as e:
-            print(f"[ERROR] Failed to process signals for {symbol}/{timeframe}: {e}")
+            print(f"[AlgoEngine] Error processing signals for {symbol}/{timeframe}: {e}")
             return None
-            
+    
     async def run(self, strategy: BaseStrategy):
-        """Runs the algorithm engine with a single strategy.
+        """Run the algorithm engine with the specified strategy.
         
-        This method continuously processes all symbol-timeframe pairs using the
-        provided strategy, yielding signals when they are generated.
+        This method continuously processes signals for all configured
+        symbol-timeframe pairs in the strategy.
         
         Args:
-            strategy: Strategy to use for signal generation.
+            strategy: Trading strategy to use.
             
         Yields:
-            TradeSignal: Signal objects with actions "open", "exit", or "hold".
-            
-        Raises:
-            Exception: Any exceptions are caught, logged, and processing continues.
+            Generated trade signals as they are calculated.
         """
-        self.running = True
+        import config
+        if not hasattr(self, 'running') or not self.running:
+            self.running = True
+            print(f"[AlgoEngine] Starting with strategy: {strategy.strategy_id}")
         
         while self.running:
             try:
-                # Process each symbol-timeframe pair
-                for symbol, timeframe in self.data_engine.data_fetcher.symbol_timeframes:
+                for symbol, timeframe in config.symbols:
                     signal = await self.process_signals(symbol, timeframe, strategy)
-                    # Yield all signals including "hold" signals for monitoring
+                    
                     if signal:
                         yield signal
-                    
-                # Sleep to avoid excessive processing
-                await asyncio.sleep(1)
+                        
+                # Throttle processing speed
+                await asyncio.sleep(1)  # Check for new signals every second
                 
             except Exception as e:
-                print(f"[ERROR] Algorithm engine execution failed: {e}")
+                print(f"[AlgoEngine] Error in main processing loop: {e}")
                 await asyncio.sleep(5)  # Sleep longer on error
-                
+    
     async def stop(self):
-        """Stops the algorithm engine.
-        
-        Sets the running flag to False, which will cause the run method to exit
-        after the current iteration completes.
-        """
+        """Stop the algorithm engine."""
         self.running = False
+        print("[AlgoEngine] Stopped")

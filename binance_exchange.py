@@ -1,6 +1,7 @@
 import ccxt.pro as ccxt
 import time
 import config
+import asyncio
 
 class BinanceClient:
     """
@@ -58,7 +59,12 @@ class BinanceClient:
     async def get_open_positions(self, symbol=None):
         """Get all open positions or filter by symbol"""
         try:
+            # Store original symbol for logging
+            original_symbol = symbol
+            
+            # Format symbol for API call
             formatted_symbol = self._format_symbol(symbol) if symbol else None
+            
             if formatted_symbol:
                 positions = await self.exchange.fetch_positions([formatted_symbol])
             else:
@@ -73,9 +79,9 @@ class BinanceClient:
             
             # Only log when there are actual positions
             if open_positions:
-                if symbol:
+                if original_symbol:
                     pos = open_positions[0]
-                    print(f"\n[{symbol}] 📈 Active Position:")
+                    print(f"\n[{original_symbol}] 📈 Active Position:")
                     print(f"Size: {pos['contracts']} contracts")
                     print(f"Entry Price: {pos.get('entryPrice', 'N/A')}")
                     print(f"Unrealized PnL: {pos.get('unrealizedPnl', 'N/A')}")
@@ -191,37 +197,151 @@ class BinanceClient:
     
     async def close_position(self, symbol, side=None):
         """Close an open position for a symbol"""
+        # Import debug settings
+        import config
+        debug_settings = getattr(config, 'debug', {})
+        verbose = debug_settings.get('verbose_logging', False)
+        
+        # Track original symbol for logging
+        original_symbol = symbol
+        
+        # Ensure symbol is correctly formatted
         symbol = self._format_symbol(symbol)
-        positions = await self.get_open_positions(symbol)
+        
+        # Get existing positions
+        positions = await self.get_open_positions(original_symbol)
         
         if not positions:
-            return {"status": "no_position", "symbol": symbol}
+            print(f"[Binance] No positions found for {original_symbol}")
+            return {"status": "no_position", "symbol": original_symbol}
+        
+        # First, cancel any open orders for this symbol
+        try:
+            print(f"[Binance] Canceling any open orders for {original_symbol}")
+            await self.exchange.cancel_all_orders(symbol)
+        except Exception as e:
+            print(f"[Binance] ⚠️ Warning: Failed to cancel open orders: {e}")
+            # Continue anyway to close the position
         
         orders = []
+        
+        # Check if we're in hedge mode
+        try:
+            position_mode = await self.exchange.fapiPrivateGet_positionSide_dual()
+            is_hedge_mode = position_mode.get('dualSidePosition', False)
+            print(f"[Binance] Hedge mode is {'enabled' if is_hedge_mode else 'disabled'}")
+        except Exception as e:
+            print(f"[Binance] ⚠️ Warning: Error checking hedge mode: {e}")
+            is_hedge_mode = True  # Assume hedge mode by default to be safe
+        
         for position in positions:
-            position_side = 'long' if float(position['contracts']) > 0 else 'short'
+            contracts = float(position.get('contracts', 0))
             
+            if contracts == 0:
+                continue
+                
+            position_side = 'long' if contracts > 0 else 'short'
+            
+            # Skip if we're only closing one side and this isn't it
             if side and position_side != side:
                 continue
                 
+            # Determine the appropriate side for closing
             close_side = 'sell' if position_side == 'long' else 'buy'
-            amount = abs(float(position['contracts']))
+            amount = abs(contracts)
+            
+            # Look for hedge mode position side in the position data
+            hedge_position_side = None
+            if is_hedge_mode:
+                if 'positionSide' in position:
+                    hedge_position_side = position['positionSide']
+                else:
+                    hedge_position_side = 'LONG' if position_side == 'long' else 'SHORT'
+                print(f"[Binance] Position side: {hedge_position_side}")
             
             if amount > 0:
                 try:
-                    order = await self.exchange.create_order(
+                    print(f"[Binance] Closing {position_side.upper()} position for {original_symbol}")
+                    print(f"[Binance] Position size: {amount:.6f} contracts")
+                    
+                    # Use reduce only for safety
+                    params = {
+                        'reduceOnly': True
+                    }
+                    
+                    # Add position side if in hedge mode
+                    if is_hedge_mode and hedge_position_side:
+                        params['positionSide'] = hedge_position_side
+                    
+                    order = await self.exchange.create_market_order(
                         symbol=symbol,
-                        order_type='market',
                         side=close_side,
                         amount=amount,
-                        params={'reduceOnly': True}
+                        params=params
                     )
+                    
                     orders.append(order)
+                    print(f"[Binance] ✅ Successfully closed position with order: {order.get('id', 'Unknown')}")
+                
                 except Exception as e:
-                    return {"status": "error", "symbol": symbol, "error": str(e)}
+                    error_str = str(e)
+                    print(f"[Binance] ❌ Error closing position: {error_str}")
+                    
+                    # Try alternative methods if first attempt fails
+                    if "close position" in error_str.lower() or "reduce" in error_str.lower():
+                        try:
+                            print("[Binance] Trying alternative closing method...")
+                            
+                            # Try using CLOSE_POSITION which doesn't need amount
+                            close_params = {
+                                'closePosition': True
+                            }
+                            
+                            # Add position side if in hedge mode
+                            if is_hedge_mode and hedge_position_side:
+                                close_params['positionSide'] = hedge_position_side
+                            
+                            order = await self.exchange.create_market_order(
+                                symbol=symbol,
+                                side=close_side,
+                                amount=0,  # Not needed with closePosition
+                                params=close_params
+                            )
+                            
+                            orders.append(order)
+                            print(f"[Binance] ✅ Successfully closed position with alternative method")
+                        
+                        except Exception as alt_e:
+                            alt_error = str(alt_e)
+                            print(f"[Binance] ❌ Alternative closing method also failed: {alt_error}")
+                            
+                            # Last resort: try a third method
+                            try:
+                                print("[Binance] Trying third closing method (exact amount)...")
+                                
+                                # Try getting more precise position size
+                                exact_amount = float(position.get('contracts', amount))
+                                
+                                order = await self.exchange.create_market_order(
+                                    symbol=symbol,
+                                    side=close_side,
+                                    amount=exact_amount
+                                )
+                                
+                                orders.append(order)
+                                print(f"[Binance] ✅ Successfully closed position with third method")
+                                
+                            except Exception as third_e:
+                                return {"status": "error", "symbol": original_symbol, 
+                                       "error": f"All closing methods failed: {str(third_e)}"}
+                    else:
+                        return {"status": "error", "symbol": original_symbol, "error": error_str}
         
         if not orders:
-            return {"status": "no_matching_position", "symbol": symbol, "side": side}
+            if side:
+                return {"status": "no_matching_position", "symbol": original_symbol, "side": side}
+            else:
+                return {"status": "no_position", "symbol": original_symbol}
         
         return {"status": "closed", "orders": orders}
     
@@ -238,7 +358,7 @@ class BinanceClient:
     
     
     
-    async def open_position(self, symbol, side, amount, price=None, stop_loss=None, take_profit=None, leverage=None, margin_type=None):
+    async def open_position(self, symbol: str, side: str, amount: float, price=None, stop_loss=None, take_profit=None, leverage=None, margin_type=None):
         """
         Open a position with integrated risk management
         
@@ -259,59 +379,257 @@ class BinanceClient:
             Dictionary with order information
         """
         try:
+            # Import debug settings
+            import config
+            debug_settings = getattr(config, 'debug', {})
+            verbose = debug_settings.get('verbose_logging', False)
+            
+            # Track original symbol for logging
+            original_symbol = symbol
+            
             # Ensure symbol is correctly formatted
             symbol = self._format_symbol(symbol)
             
+            print(f"\n[Binance] Opening {side.upper()} position for {original_symbol}")
+            print(f"[Binance] Details: Size={amount:.6f}, Leverage={leverage}x")
+            if stop_loss is not None:
+                print(f"[Binance] Stop Loss: {stop_loss:.2f}")
+            if take_profit is not None:
+                print(f"[Binance] Take Profit: {take_profit:.2f}")
+            
+            # Check if we're in hedge mode
+            try:
+                position_mode = await self.exchange.fapiPrivateGet_positionSide_dual()
+                is_hedge_mode = position_mode.get('dualSidePosition', False)
+                print(f"[Binance] Hedge mode is {'enabled' if is_hedge_mode else 'disabled'}")
+            except Exception as e:
+                print(f"[Binance] Error checking hedge mode: {e}")
+                is_hedge_mode = True  # Assume hedge mode by default to be safe
+            
+            # Determine position side based on side
+            position_side = 'LONG' if side == 'buy' else 'SHORT'
+            print(f"[Binance] Position side: {position_side}")
+                
             # Set leverage if provided
             if leverage is not None:
-                await self.set_leverage(symbol, leverage)
+                try:
+                    leverage_result = await self.set_leverage(symbol, leverage)
+                    print(f"[Binance] Leverage set to {leverage}x")
+                except Exception as e:
+                    print(f"[Binance] ⚠️ Warning: Could not set leverage to {leverage}x: {e}")
+                    # Continue with default leverage
                 
             # Set margin type if provided
             if margin_type is not None:
-                await self.set_margin_type(symbol, margin_type)
+                try:
+                    margin_result = await self.set_margin_type(symbol, margin_type)
+                    print(f"[Binance] Margin type set to {margin_type}")
+                except Exception as e:
+                    print(f"[Binance] ⚠️ Warning: Could not set margin type to {margin_type}: {e}")
+                    # Continue with default margin type
                 
             # Determine order type based on price
             order_type = 'limit' if price is not None else 'market'
             
-            # Prepare parameters including risk management
+            # Prepare parameters for the main order
             params = {}
             
-            # Add stop loss to params if provided
-            if stop_loss is not None:
-                params['stopLoss'] = {'stopLossPrice': stop_loss}
+            # Add position side for hedge mode
+            if is_hedge_mode:
+                params['positionSide'] = position_side
             
-            # Add take profit to params if provided
-            if take_profit is not None:
-                params['takeProfit'] = {'takeProfitPrice': take_profit}
+            print(f"[Binance] Sending {order_type} {side} order to exchange...")
+            
+            # Calculate estimated notional value
+            estimated_notional = amount * (price if price is not None else 
+                                          (await self.exchange.fetch_ticker(symbol))['last'])
+            print(f"[Binance] Estimated order notional value: ${estimated_notional:.2f}")
+            
+            # Check minimum notional requirement
+            if estimated_notional < 100:
+                error_msg = (f"Order notional value (${estimated_notional:.2f}) is below the minimum "
+                             f"requirement of $100.00. Consider increasing position size or leverage.")
+                print(f"[Binance] ❌ Error: {error_msg}")
+                return {
+                    "status": "error",
+                    "symbol": original_symbol,
+                    "error": error_msg
+                }
+            
+            try:
+                # Place the main position order
+                main_order = await self.exchange.create_order(
+                    symbol=symbol,
+                    type=order_type,
+                    side=side,
+                    amount=amount,
+                    price=price,
+                    params=params
+                )
                 
-            # Create the order with all parameters
-            order = await self.exchange.create_order(
-                symbol=symbol,
-                order_type=order_type,
-                side=side,
-                amount=amount,
-                price=price,
-                params=params
-            )
+                print(f"[Binance] ✅ Main order successful!")
+                print(f"[Binance] Order ID: {main_order.get('id', 'Unknown')}")
+                print(f"[Binance] Order price: {main_order.get('price', 'Market price')}")
+            except Exception as e:
+                error_str = str(e)
+                # Handle common Binance errors with more helpful messages
+                if "Order's notional must be no smaller than 100" in error_str:
+                    error_msg = ("Order notional value too small. Binance requires a minimum order value of $100. "
+                                "Try increasing position size or leverage.")
+                elif "LOT_SIZE" in error_str:
+                    error_msg = (f"Invalid lot size for {original_symbol}. The amount must be a multiple "
+                                f"of the minimum lot size. Please adjust your position size.")
+                elif "PRICE_FILTER" in error_str:
+                    error_msg = (f"Invalid price for {original_symbol}. The price doesn't conform to "
+                                f"the exchange's price filters. Try using a market order instead.")
+                else:
+                    error_msg = f"Error opening position: {error_str}"
+                
+                print(f"[Binance] ❌ {error_msg}")
+                return {
+                    "status": "error",
+                    "symbol": original_symbol,
+                    "error": error_msg
+                }
             
+            # Wait a moment for the order to be processed
+            await asyncio.sleep(1)
+            
+            # Calculate opposite side for closing orders
+            close_side = 'sell' if side == 'buy' else 'buy'
+            
+            # Place stop loss order if price is provided
+            stop_loss_order = None
+            if stop_loss is not None:
+                try:
+                    # Use direct Binance API parameters for stop loss
+                    print(f"[Binance] Creating stop loss order at price: {stop_loss:.2f}")
+                    
+                    # For Binance Futures, we need to use specific parameter format
+                    stop_loss_params = {
+                        'stopPrice': stop_loss,
+                    }
+                    
+                    # Add position side if in hedge mode
+                    if is_hedge_mode:
+                        stop_loss_params['positionSide'] = position_side
+                    
+                    stop_loss_order = await self.exchange.create_order(
+                        symbol=symbol,
+                        type='STOP_MARKET',
+                        side=close_side,
+                        amount=amount,
+                        params=stop_loss_params
+                    )
+                    
+                    print(f"[Binance] ✅ Stop loss order created: {stop_loss_order.get('id', 'Unknown')}")
+                    
+                except Exception as e:
+                    print(f"[Binance] ⚠️ Failed to create stop loss order: {e}")
+                    
+                    # Try alternative method directly with Binance's API structure
+                    try:
+                        print(f"[Binance] Attempting alternative stop loss method...")
+                        # Use closePosition parameter for simplicity
+                        stop_loss_params = {
+                            'closePosition': 'true',
+                            'stopPrice': stop_loss,
+                        }
+                        
+                        # Add position side if in hedge mode
+                        if is_hedge_mode:
+                            stop_loss_params['positionSide'] = position_side
+                        
+                        stop_loss_order = await self.exchange.create_order(
+                            symbol=symbol,
+                            type='STOP_MARKET',
+                            side=close_side,
+                            amount=0,  # Amount is not needed with closePosition=true
+                            params=stop_loss_params
+                        )
+                        
+                        print(f"[Binance] ✅ Stop loss order created with alternative method: {stop_loss_order.get('id', 'Unknown')}")
+                    except Exception as alt_e:
+                        print(f"[Binance] ⚠️ Failed to create stop loss with alternative method: {alt_e}")
+                        # Continue with the main order even if SL failed
+            
+            # Place take profit order if price is provided
+            take_profit_order = None
+            if take_profit is not None:
+                try:
+                    # Use direct Binance API parameters for take profit
+                    print(f"[Binance] Creating take profit order at price: {take_profit:.2f}")
+                    
+                    # For Binance Futures, we need to use specific parameter format
+                    take_profit_params = {
+                        'stopPrice': take_profit,
+                    }
+                    
+                    # Add position side if in hedge mode
+                    if is_hedge_mode:
+                        take_profit_params['positionSide'] = position_side
+                    
+                    take_profit_order = await self.exchange.create_order(
+                        symbol=symbol,
+                        type='TAKE_PROFIT_MARKET',
+                        side=close_side,
+                        amount=amount,
+                        params=take_profit_params
+                    )
+                    
+                    print(f"[Binance] ✅ Take profit order created: {take_profit_order.get('id', 'Unknown')}")
+                    
+                except Exception as e:
+                    print(f"[Binance] ⚠️ Failed to create take profit order: {e}")
+                    
+                    # Try alternative method directly with Binance's API structure
+                    try:
+                        print(f"[Binance] Attempting alternative take profit method...")
+                        # Use closePosition parameter for simplicity
+                        take_profit_params = {
+                            'closePosition': 'true',
+                            'stopPrice': take_profit,
+                        }
+                        
+                        # Add position side if in hedge mode
+                        if is_hedge_mode:
+                            take_profit_params['positionSide'] = position_side
+                        
+                        take_profit_order = await self.exchange.create_order(
+                            symbol=symbol,
+                            type='TAKE_PROFIT_MARKET',
+                            side=close_side,
+                            amount=0,  # Amount is not needed with closePosition=true
+                            params=take_profit_params
+                        )
+                        
+                        print(f"[Binance] ✅ Take profit order created with alternative method: {take_profit_order.get('id', 'Unknown')}")
+                    except Exception as alt_e:
+                        print(f"[Binance] ⚠️ Failed to create take profit with alternative method: {alt_e}")
+                        # Continue with the main order even if TP failed
+            
+            # Prepare the result with all order information
             return {
                 "status": "success",
-                "order": order,
+                "order": main_order,
                 "position": {
-                    "symbol": symbol,
+                    "symbol": original_symbol,
                     "side": side,
                     "size": amount,
                     "leverage": leverage,
                     "margin_type": margin_type,
-                    "stop_loss": stop_loss,
-                    "take_profit": take_profit
+                    "stop_loss": stop_loss_order,
+                    "take_profit": take_profit_order
                 }
             }
         except Exception as e:
+            error_message = f"Error opening position: {str(e)}"
+            print(f"[Binance] ❌ {error_message}")
+            
             return {
                 "status": "error",
                 "symbol": symbol,
-                "error": str(e)
+                "error": error_message
             }
     
     # ===== Helper Methods =====
@@ -327,21 +645,78 @@ class BinanceClient:
         Returns:
             str: Symbol in exchange format (with slash)
         """
-        # If symbol already contains '/', return as is
+        # If symbol already contains '/' or is None, return as is
+        if not symbol:
+            return symbol
+            
         if '/' in symbol:
             return symbol
             
-        # Add slash before the quote currency
-        if symbol.endswith('USDT'):
-            return f"{symbol[:-4]}/USDT"
-        elif symbol.endswith('BTC'):
-            return f"{symbol[:-3]}/BTC"
-        elif symbol.endswith('ETH'):
-            return f"{symbol[:-3]}/ETH"
-        else:
-            # Default to USDT pair if we can't determine
-            return f"{symbol}/USDT"
+        # Import debug settings
+        import config
+        debug_settings = getattr(config, 'debug', {})
+        verbose = debug_settings.get('verbose_logging', False)
+        print_format = debug_settings.get('print_symbol_format', False)
+        
+        original_symbol = symbol
+        formatted_symbol = None
             
+        # For USDT pairs (most common)
+        if symbol.endswith('USDT'):
+            base = symbol[:-4]  # Remove USDT
+            quote = 'USDT'
+            formatted_symbol = f"{base}/{quote}"
+            
+        # For BTC pairs
+        elif symbol.endswith('BTC'):
+            base = symbol[:-3]  # Remove BTC
+            quote = 'BTC'
+            formatted_symbol = f"{base}/{quote}"
+            
+        # For ETH pairs
+        elif symbol.endswith('ETH'):
+            base = symbol[:-3]  # Remove ETH
+            quote = 'ETH'
+            formatted_symbol = f"{base}/{quote}"
+            
+        # For BUSD pairs
+        elif symbol.endswith('BUSD'):
+            base = symbol[:-4]  # Remove BUSD
+            quote = 'BUSD'
+            formatted_symbol = f"{base}/{quote}"
+        
+        # Default case - try to detect quote currency or use USDT as default
+        else:
+            # Common quote currencies and their lengths
+            quote_currencies = {
+                'USDT': 4,
+                'BUSD': 4,
+                'USDC': 4,
+                'BTC': 3,
+                'ETH': 3,
+                'BNB': 3,
+                'USD': 3,
+                'EUR': 3
+            }
+            
+            # Try to find a matching quote currency
+            for quote, length in quote_currencies.items():
+                if len(symbol) > length and symbol.endswith(quote):
+                    base = symbol[:-length]
+                    formatted_symbol = f"{base}/{quote}"
+                    break
+            
+            # If we can't determine, default to symbol/USDT
+            if not formatted_symbol:
+                print(f"⚠️ Couldn't parse symbol format for {symbol}, using {symbol}/USDT")
+                formatted_symbol = f"{symbol}/USDT"
+        
+        # Print symbol format conversion if enabled
+        if print_format:
+            print(f"Symbol format: {original_symbol} -> {formatted_symbol}")
+            
+        return formatted_symbol
+    
     def _unformat_symbol(self, symbol):
         """
         Convert exchange symbol format back to standard format.

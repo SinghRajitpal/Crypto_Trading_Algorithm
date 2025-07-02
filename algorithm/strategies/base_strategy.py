@@ -18,6 +18,9 @@ class BaseStrategy(ABC):
         strategy_id (str): Unique identifier for this strategy instance.
         algo_engine (Optional[AlgoEngine]): Reference to the algorithm engine.
         position_threshold (float): Minimum position size to consider as open.
+        stop_loss_pct (float): Default stop loss percentage.
+        take_profit_pct (float): Default take profit percentage.
+        max_positions (int): Maximum number of positions allowed.
         
     Signal Types:
         - open/buy: Enter a long position
@@ -36,6 +39,9 @@ class BaseStrategy(ABC):
         Args:
             params: Strategy-specific parameters including:
                 position_threshold (float): Minimum position size to consider as open.
+                stop_loss_pct (float): Default stop loss percentage.
+                take_profit_pct (float): Default take profit percentage.
+                max_positions (int): Maximum number of positions allowed.
                 Other strategy-specific parameters.
             strategy_id: Unique identifier for this strategy instance.
                 
@@ -51,6 +57,9 @@ class BaseStrategy(ABC):
         self.strategy_id = strategy_id
         self.algo_engine: Optional['AlgoEngine'] = None  # Will be set by algo_engine
         self.position_threshold = float(params.get('position_threshold', self.DEFAULT_POSITION_THRESHOLD))
+        self.stop_loss_pct = float(params.get('stop_loss_pct', 0.02))
+        self.take_profit_pct = float(params.get('take_profit_pct', 0.04))
+        self.max_positions = int(params.get('max_positions', 1))
         
     def set_algo_engine(self, algo_engine: 'AlgoEngine') -> None:
         """Sets the algo engine instance for this strategy.
@@ -133,7 +142,7 @@ class BaseStrategy(ABC):
             Exception: Any other exceptions are caught, logged, and empty dict is returned.
         """
         if not data:
-            print("[WARNING] No data provided for indicator calculation")
+            print(f"[{self.strategy_id}] ⚠️ No data provided for indicator calculation")
             return {}
             
         try:
@@ -144,14 +153,17 @@ class BaseStrategy(ABC):
             # Get the required indicators
             required_indicators = self.get_required_indicators()
             if not required_indicators:
+                print(f"[{self.strategy_id}] ❌ No indicators required by strategy")
                 raise ValueError("No indicators required by strategy")
+            
+            print(f"[{self.strategy_id}] Calculating indicators: {', '.join(required_indicators)}")
             
             # Check if we have enough data points for the indicators
             min_data_points = max([int(ind.split('_')[1]) if '_' in ind and ind.split('_')[1].isdigit() else 1 
                                 for ind in required_indicators])
                                 
             if len(data['close']) < min_data_points:
-                print(f"[INFO] Insufficient data for indicator calculation. Need {min_data_points} points, have {len(data['close'])}.")
+                print(f"[{self.strategy_id}] ⚠️ Insufficient data for indicator calculation. Need {min_data_points} points, have {len(data['close'])}.")
                 return {}
                 
             # Create OHLCV array in the correct order for indicator calculation
@@ -163,13 +175,15 @@ class BaseStrategy(ABC):
                 data['volume']
             ))
             
+            print(f"[{self.strategy_id}] Processing {len(ohlcv_data)} candles for indicator calculation")
+            
             # Calculate indicators
             indicator_data = await indicators.calculate_indicators(required_indicators, ohlcv_data)
             
             # Validate that all required indicators were calculated
             missing_indicators = [ind for ind in required_indicators if ind not in indicator_data]
             if missing_indicators:
-                print(f"[WARNING] Missing required indicators: {missing_indicators}")
+                print(f"[{self.strategy_id}] ⚠️ Missing required indicators: {missing_indicators}")
                 return {}
                 
             # Check for NaN values in final (most recent) indicator values
@@ -179,11 +193,21 @@ class BaseStrategy(ABC):
                              or (not isinstance(indicator_data[ind], dict) and np.isnan(indicator_data[ind][-1])))]
                              
             if nan_indicators:
-                print(f"[WARNING] NaN values detected in indicator(s): {nan_indicators}")
+                print(f"[{self.strategy_id}] ⚠️ NaN values detected in indicator(s): {nan_indicators}")
+            
+            # Print the latest values of each indicator for debugging
+            print(f"[{self.strategy_id}] Latest indicator values:")
+            for ind in required_indicators:
+                if ind in indicator_data:
+                    if isinstance(indicator_data[ind], dict):
+                        print(f"  - {ind}: " + ", ".join([f"{k}={v[-1]:.4f}" for k, v in indicator_data[ind].items() if not np.isnan(v[-1])]))
+                    else:
+                        if not np.isnan(indicator_data[ind][-1]):
+                            print(f"  - {ind}: {indicator_data[ind][-1]:.4f}")
             
             return indicator_data
         except Exception as e:
-            print(f"[ERROR] Failed to calculate indicators: {e}")
+            print(f"[{self.strategy_id}] ❌ Failed to calculate indicators: {e}")
             return {}
     
     async def get_position(self, symbol: str) -> float:
@@ -207,7 +231,12 @@ class BaseStrategy(ABC):
             Exception: Other exceptions are caught, logged, and 0.0 is returned.
         """
         if not self.algo_engine:
-            raise RuntimeError("algo_engine not set. Call set_algo_engine first.")
+            print(f"[ERROR] algo_engine not set for {self.strategy_id}. Call set_algo_engine first.")
+            return 0.0
+            
+        if not hasattr(self.algo_engine, 'binance_client') or self.algo_engine.binance_client is None:
+            print(f"[ERROR] binance_client not available in algo_engine for {self.strategy_id}")
+            return 0.0
             
         try:
             # Get position from Binance using get_open_positions
@@ -244,71 +273,88 @@ class BaseStrategy(ABC):
             return False
     
     async def calculate_signals(self, data: Deque, symbol: str) -> TradeSignal:
-        """Calculates trading signals based on the input data.
+        """Calculates trading signals based on candle data.
         
-        This is the main method that orchestrates the signal generation process:
-        1. Converts raw data to numpy arrays
-        2. Calculates required indicators
-        3. Generates trading signals based on the strategy logic
+        This is the main entry point for signal generation. It processes
+        the raw candle data, calculates indicators, and delegates to the
+        strategy-specific signal generation logic.
         
         Args:
             data: Deque of candle data [timestamp, open, high, low, close, volume].
-            symbol: Trading pair symbol (e.g., "BTCUSDT").
+            symbol: Trading pair symbol.
             
         Returns:
-            A TradeSignal object containing:
-                - action: Action to take ("open", "exit", or "hold")
-                - side: Direction of the trade ("buy", "sell", or "none" for hold)
-                - symbol: Trading pair
-                - strategy_id: Strategy identifier
-                - metadata: Additional information about the signal
-                - signal_confidence: Confidence level of the signal (0.0 to 1.0)
-                
-        Signal combinations for futures trading:
-            - open/buy: Enter a long position
-            - open/sell: Enter a short position  
-            - exit/sell: Exit a long position
-            - exit/buy: Exit a short position
-            - hold/none: No action needed (market conditions stable)
+            A TradeSignal object with trading instructions.
         """
-        if not self.algo_engine:
-            return TradeSignal(
-                action="hold",
-                side="none",
-                symbol=symbol,
-                strategy_id=self.strategy_id,
-                metadata={"reason": "algo_engine not set"},
-                signal_confidence=0.0
-            )
+        try:
+            # Skip if we don't have any data
+            if not data:
+                print(f"[{self.strategy_id}] No candle data available for {symbol}")
+                return TradeSignal(
+                    action="hold",
+                    side="none",
+                    symbol=symbol,
+                    strategy_id=self.strategy_id,
+                    metadata={"reason": "No candle data available"},
+                    signal_confidence=0.0
+                )
+                
+            print(f"[{self.strategy_id}] Calculating signals for {symbol} using {len(data)} candles")
+                
+            # Convert candle data to numpy arrays
+            np_data = self._convert_deque_to_numpy(data)
+            if not np_data:
+                print(f"[{self.strategy_id}] Failed to convert candle data for {symbol}")
+                return TradeSignal(
+                    action="hold",
+                    side="none",
+                    symbol=symbol,
+                    strategy_id=self.strategy_id,
+                    metadata={"reason": "Failed to convert candle data"},
+                    signal_confidence=0.0
+                )
+                
+            # Calculate technical indicators
+            indicator_data = await self._calculate_indicators(np_data)
+            if not indicator_data:
+                print(f"[{self.strategy_id}] No indicator data available for {symbol}")
+                return TradeSignal(
+                    action="hold",
+                    side="none",
+                    symbol=symbol,
+                    strategy_id=self.strategy_id,
+                    metadata={"reason": "Failed to calculate indicators"},
+                    signal_confidence=0.0
+                )
+                
+            # Generate signals based on indicator data
+            signal = await self._generate_signals(np_data, indicator_data, symbol)
             
-        # Convert data to numpy arrays
-        numpy_data = self._convert_deque_to_numpy(data)
-        
-        if not numpy_data:
+            # Ensure the symbol is set on the signal
+            signal.symbol = symbol
+            
+            # Set the strategy ID
+            signal.strategy_id = self.strategy_id
+            
+            # Set timestamp
+            if not signal.timestamp and len(np_data['timestamp']) > 0:
+                signal.timestamp = int(np_data['timestamp'][-1])
+                
+            print(f"[{self.strategy_id}] Generated signal for {symbol}: {signal.action}/{signal.side} (confidence: {signal.signal_confidence:.2f})")
+                
+            return signal
+            
+        except Exception as e:
+            print(f"[{self.strategy_id}] ❌ Error during signal calculation for {symbol}: {e}")
+            # Return hold signal on error
             return TradeSignal(
                 action="hold",
                 side="none",
                 symbol=symbol,
                 strategy_id=self.strategy_id,
-                metadata={"reason": "No data available"},
+                metadata={"reason": f"Error during signal calculation: {str(e)}"},
                 signal_confidence=0.0
             )
-        
-        # Calculate indicators
-        indicator_data = await self._calculate_indicators(numpy_data)
-        
-        if not indicator_data:
-            return TradeSignal(
-                action="hold",
-                side="none",
-                symbol=symbol,
-                strategy_id=self.strategy_id,
-                metadata={"reason": "Failed to calculate indicators"},
-                signal_confidence=0.0
-            )
-        
-        # Generate signals using the calculated indicators
-        return await self._generate_signals(numpy_data, indicator_data, symbol)
     
     @abstractmethod
     async def _generate_signals(self, data: Dict[str, np.ndarray], indicator_data: Dict[str, np.ndarray], symbol: str) -> TradeSignal:

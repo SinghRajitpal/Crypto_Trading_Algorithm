@@ -41,6 +41,7 @@ class Indicators:
         try:
             # Extract OHLCV components
             if numpy_array.shape[1] < 5:  # Ensure we have enough columns
+                print(f"[Indicators] ❌ Invalid data shape: {numpy_array.shape}. Expected at least 5 columns for OHLCV")
                 raise ValueError(f"Invalid data shape: {numpy_array.shape}. Expected at least 5 columns for OHLCV")
                 
             # Data is already in OHLCV order from BaseStrategy._calculate_indicators
@@ -50,9 +51,14 @@ class Indicators:
             close_prices = numpy_array[:, 3]  # Close
             volume = numpy_array[:, 4]        # Volume
             
+            data_points = len(close_prices)
+            print(f"[Indicators] Calculating {len(required_indicators)} indicators using {data_points} data points")
+            
             # Calculate each required indicator
             for indicator in required_indicators:
                 try:
+                    print(f"[Indicators] Calculating {indicator}...")
+                    
                     if indicator.startswith('sma_'):
                         period = int(indicator.split('_')[1])
                         if period <= 0:
@@ -60,7 +66,7 @@ class Indicators:
                         
                         # Check if we have enough data for SMA calculation
                         if len(close_prices) < period:
-                            print(f"Warning: Not enough data for {indicator}. Need {period} points, have {len(close_prices)}")
+                            print(f"[Indicators] ⚠️ Not enough data for {indicator}. Need {period} points, have {len(close_prices)}")
                             results[indicator] = np.full_like(close_prices, np.nan)
                         else:
                             # Calculate SMA
@@ -68,55 +74,90 @@ class Indicators:
                             
                             # Validate the output - sometimes talib returns NaN for the first 'period' elements
                             if np.isnan(results[indicator][-1]):
-                                print(f"Warning: SMA calculation returned NaN for most recent value of {indicator}")
+                                print(f"[Indicators] ⚠️ SMA calculation returned NaN for most recent value of {indicator}")
+                            else:
+                                print(f"[Indicators] SMA({period}) = {results[indicator][-1]:.4f} (latest value)")
+                                
                     elif indicator.startswith('ema_'):
                         period = int(indicator.split('_')[1])
                         if period <= 0:
                             raise ValueError(f"Invalid period for EMA: {period}")
                         results[indicator] = talib.EMA(close_prices, timeperiod=period)
+                        print(f"[Indicators] EMA({period}) = {results[indicator][-1]:.4f} (latest value)")
+                        
                     elif indicator.startswith('rsi_'):
                         period = int(indicator.split('_')[1])
                         if period <= 0:
                             raise ValueError(f"Invalid period for RSI: {period}")
                         results[indicator] = self.rsi(close_prices, period)
+                        print(f"[Indicators] RSI({period}) = {results[indicator][-1]:.2f} (latest value)")
+                        
                     elif indicator == 'macd':
                         results[indicator] = self.macd(close_prices)
+                        print(f"[Indicators] MACD = {results[indicator]['macd'][-1]:.4f}, Signal = {results[indicator]['signal'][-1]:.4f}")
+                        
                     elif indicator == 'bollinger_bands':
                         results[indicator] = self.bollinger_bands(close_prices)
+                        latest = results[indicator]
+                        print(f"[Indicators] Bollinger Bands: Upper = {latest['upper'][-1]:.2f}, Middle = {latest['middle'][-1]:.2f}, Lower = {latest['lower'][-1]:.2f}")
+                        
                     elif indicator == 'atr':
                         results[indicator] = self.atr(high_prices, low_prices, close_prices)
+                        print(f"[Indicators] ATR = {results[indicator][-1]:.4f} (latest value)")
+                        
                     elif indicator == 'obv':
                         if volume is not None:
                             results[indicator] = self.obv(close_prices, volume)
+                            print(f"[Indicators] OBV = {results[indicator][-1]:.0f} (latest value)")
                         else:
+                            print("[Indicators] ❌ Volume data required for OBV calculation")
                             raise ValueError("Volume data required for OBV calculation")
+                            
                     elif indicator == 'stoch':
                         results[indicator] = self.stochastic(high_prices, low_prices, close_prices)
+                        print(f"[Indicators] Stochastic: %K = {results[indicator]['k'][-1]:.2f}, %D = {results[indicator]['d'][-1]:.2f}")
+                        
                     elif indicator == 'adx':
                         results[indicator] = self.adx(high_prices, low_prices, close_prices)
+                        print(f"[Indicators] ADX = {results[indicator][-1]:.2f} (latest value)")
+                        
                     elif indicator == 'ichimoku':
                         results[indicator] = self.ichimoku(high_prices, low_prices, close_prices)
+                        
                     elif indicator == 'mfi':
                         if volume is not None:
                             results[indicator] = self.mfi(high_prices, low_prices, close_prices, volume)
+                            print(f"[Indicators] MFI = {results[indicator][-1]:.2f} (latest value)")
                         else:
+                            print("[Indicators] ❌ Volume data required for MFI calculation")
                             raise ValueError("Volume data required for MFI calculation")
+                            
                     elif indicator == 'vwap':
                         if volume is not None:
                             results[indicator] = self.vwap(high_prices, low_prices, close_prices, volume)
+                            print(f"[Indicators] VWAP = {results[indicator][-1]:.4f} (latest value)")
                         else:
+                            print("[Indicators] ❌ Volume data required for VWAP calculation")
                             raise ValueError("Volume data required for VWAP calculation")
+                            
                     elif indicator == 'heikin_ashi':
                         results[indicator] = self.heikin_ashi(open_prices, high_prices, low_prices, close_prices)
+                        latest = results[indicator]
+                        print(f"[Indicators] Heikin-Ashi: O={latest['open'][-1]:.2f}, H={latest['high'][-1]:.2f}, L={latest['low'][-1]:.2f}, C={latest['close'][-1]:.2f}")
+                        
                     else:
+                        print(f"[Indicators] ❌ Unknown indicator: {indicator}")
                         raise ValueError(f"Unknown indicator: {indicator}")
+                        
                 except Exception as e:
-                    print(f"Error calculating {indicator}: {e}")
+                    print(f"[Indicators] ❌ Error calculating {indicator}: {e}")
                     results[indicator] = np.full_like(close_prices, np.nan)
             
+            print(f"[Indicators] Successfully calculated {len(results)} indicators")
             return results
+            
         except Exception as e:
-            print(f"Error in calculate_indicators: {e}")
+            print(f"[Indicators] ❌ Error in calculate_indicators: {e}")
             return {}
             
     # Moving Averages
