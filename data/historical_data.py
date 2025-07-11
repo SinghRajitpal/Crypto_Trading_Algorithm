@@ -118,7 +118,22 @@ class HistoricalDataFetcher:
         # Determine existing cached range (if any)
         existing_df: Optional[pd.DataFrame] = None
         if os.path.exists(file_path) and not force:
-            existing_df = pd.read_csv(file_path, parse_dates=["timestamp"], index_col="timestamp")
+            try:
+                # Preferred format with explicit header
+                existing_df = pd.read_csv(
+                    file_path,
+                    parse_dates=["timestamp"],
+                    index_col="timestamp",
+                )
+            except ValueError:
+                # Fallback for older cache files missing the header on index
+                existing_df = pd.read_csv(
+                    file_path,
+                    parse_dates=[0],
+                    index_col=0,
+                )
+                existing_df.index.name = "timestamp"
+
             existing_df.index = pd.to_datetime(existing_df.index, utc=True)
 
         since_ms = _to_ms(start)
@@ -194,7 +209,12 @@ class HistoricalDataFetcher:
             combined = new_df
 
         # Persist
-        combined.to_csv(file_path, index=True, date_format="%Y-%m-%dT%H:%M:%S.%fZ")
+        combined.to_csv(
+            file_path,
+            index=True,
+            date_format="%Y-%m-%dT%H:%M:%S.%fZ",
+            index_label="timestamp",
+        )
         print(f"[HistoricalData] Saved {len(new_df)} rows → {file_path}")
 
         return combined
@@ -206,9 +226,134 @@ class HistoricalDataFetcher:
         end: Union[str, datetime, int, None] = None,
         force: bool = False,
     ) -> pd.Series:
-        """Placeholder for funding-rate download (Binance endpoint)."""
-        # TODO: implement using self.exchange.fapiPublic_get_fundingrate if needed
-        raise NotImplementedError("Funding-rate fetch not implemented yet.")
+        """Download Binance USD-M funding rates and cache to CSV.
+
+        Parameters
+        ----------
+        symbol : str
+            Futures symbol, e.g. ``BTCUSDT`` (case-insensitive).
+        start / end : str | datetime | int | None
+            Optional date bounds.  If omitted, downloads full available history
+            or appends the missing tail if cached.
+        force : bool, default False
+            If *True* the cache will be ignored and the full date range will be
+            redownloaded.
+        """
+        symbol_uc = symbol.upper()
+        file_path = os.path.join(self.data_dir, f"{symbol_uc}-funding.csv")
+
+        # Load existing cache if present ------------------------------------------------
+        existing: Optional[pd.Series] = None
+        if os.path.exists(file_path) and not force:
+            try:
+                existing = pd.read_csv(
+                    file_path,
+                    parse_dates=["timestamp"],
+                    index_col="timestamp",
+                )["rate"]
+            except ValueError:
+                # Legacy file without explicit index header
+                existing = pd.read_csv(file_path, parse_dates=[0], index_col=0)["rate"]
+                existing.index.name = "timestamp"
+            # Ensure datetime index regardless of csv quirks
+            if existing.index.inferred_type != "datetime64" and existing.index.dtype.kind != "M":
+                existing.index = pd.to_datetime(existing.index, utc=True, errors="coerce", format="ISO8601")
+            existing = existing[existing.index.notnull()]
+
+        since_ms = _to_ms(start)
+        end_ms = _to_ms(end)
+
+        # Determine the starting point we still need to query ---------------------------
+        if existing is not None and not existing.empty:
+            earliest_cached = int(existing.index[0].timestamp() * 1000)
+            latest_cached = int(existing.index[-1].timestamp() * 1000)
+
+            if since_ms is None or since_ms < earliest_cached:
+                since_needed = since_ms  # need data before cache start
+            else:
+                since_needed = latest_cached + 1  # append tail only
+
+            # already fully covered by cache?
+            if end_ms is not None and end_ms <= latest_cached:
+                print(f"[HistoricalData] Funding cache hit – returning {file_path}")
+                return existing
+        else:
+            since_needed = since_ms
+
+        # Binance API returns max 1000 rows – loop until range covered ---------------
+        print(
+            f"[HistoricalData] Downloading funding rates for {symbol_uc} starting "
+            f"{datetime.fromtimestamp(since_needed/1000, UTC) if since_needed else 'from earliest'}"
+            f" → {'up to ' + str(datetime.fromtimestamp(end_ms/1000, UTC)) if end_ms else 'latest'}"
+        )
+
+        all_rows: List[List] = []  # [timestamp, rate]
+        fetch_since = since_needed
+        while True:
+            params = {
+                "symbol": symbol_uc,
+                "limit": 1000,
+            }
+            if fetch_since is not None:
+                params["startTime"] = fetch_since
+            if end_ms is not None:
+                params["endTime"] = end_ms
+
+            try:
+                # Raw endpoint: ccxt uses camel-case 'fundingRate' (capital R)
+                if hasattr(self.exchange, "fapiPublic_get_fundingRate"):
+                    batch = await getattr(self.exchange, "fapiPublic_get_fundingRate")(params)
+                elif hasattr(self.exchange, "fapiPublic_get_fundingrate"):
+                    batch = await getattr(self.exchange, "fapiPublic_get_fundingrate")(params)
+                else:
+                    # Fallback: direct REST call to Binance fundingRate endpoint
+                    import aiohttp
+                    async with aiohttp.ClientSession() as session:
+                        url = "https://fapi.binance.com/fapi/v1/fundingRate"
+                        async with session.get(url, params=params) as resp:
+                            batch = await resp.json()
+            except Exception as e:
+                await self.exchange.close()
+                raise e
+
+            if not batch:
+                break
+
+            for item in batch:
+                # Binance returns strings – convert
+                ts = int(item["fundingTime"])
+                rate = float(item["fundingRate"])
+                all_rows.append([ts, rate])
+
+            last_ts = all_rows[-1][0]
+            if end_ms is not None and last_ts >= end_ms:
+                break
+
+            # next page starts 1 ms after last
+            fetch_since = last_ts + 1
+            await asyncio.sleep(self.exchange.rateLimit / 1000)
+
+        # Build DataFrame/Series --------------------------------------------------------
+        if not all_rows:
+            empty = pd.Series(name="rate", dtype=float)
+            return empty
+
+        df = pd.DataFrame(all_rows, columns=["timestamp", "rate"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+        df.set_index("timestamp", inplace=True)
+        new_series: pd.Series = df["rate"].astype(float)
+
+        if existing is not None:
+            combined = pd.concat([existing, new_series])
+            combined = combined[~combined.index.duplicated(keep="last")]
+        else:
+            combined = new_series
+
+        # Persist
+        combined.to_csv(file_path, index=True, header=True, index_label="timestamp")
+        print(f"[HistoricalData] Saved {len(new_series)} funding rows → {file_path}")
+
+        return combined
 
     async def close(self):
         await self.exchange.close()
@@ -219,6 +364,10 @@ class HistoricalDataFetcher:
         file_safe = symbol.replace("/", "")
         file_name = f"{file_safe}-{timeframe}.csv"
         return os.path.join(self.data_dir, file_name)
+
+    def _funding_cache_path(self, symbol: str) -> str:
+        symbol_uc = symbol.upper()
+        return os.path.join(self.data_dir, f"{symbol_uc}-funding.csv")
 
     @staticmethod
     def _rows_to_df(rows: List[List]) -> pd.DataFrame:
