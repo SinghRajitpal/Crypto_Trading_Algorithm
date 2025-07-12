@@ -116,19 +116,34 @@ class SimBroker:
 
         notional = amount * px
         fee = notional * TAKER_FEE
-        self._cash -= fee  # debit fee only (margin handled by RiskManager)
+        # ------------------------------------------------------------------
+        # Margin handling ----------------------------------------------------
+        # Futures trading requires posting margin equal to *notional / leverage*.
+        # We therefore:
+        #   1. Deduct *margin* from available cash when the position is opened.
+        #   2. Return the same *margin* to cash when the position is closed.
+        # This ensures that :pyfunc:`equity` (cash + unrealised PnL) matches the
+        # economic reality and aligns with vectorbtʼs equity curve.
+        # ------------------------------------------------------------------
+
+        leverage_eff = leverage or 1
+        margin_required = notional / leverage_eff
+
+        # Deduct fee **and** margin from cash balance
+        self._cash -= fee + margin_required
 
         contracts = amount if side == "buy" else -amount
         self._positions[symbol] = {
             "symbol": symbol,
             "contracts": contracts,
             "entryPrice": px,
-            "leverage": leverage or 1,
+            "leverage": leverage_eff,
             "marginType": margin_type or "isolated",
             "positionSide": "LONG" if contracts > 0 else "SHORT",
             "unrealizedPnl": 0.0,
             "stop_loss": stop_loss,
             "take_profit": take_profit,
+            "margin": margin_required,
         }
 
         self._trade_log.append(
@@ -140,8 +155,8 @@ class SimBroker:
                 "contracts": amount,
                 "price": px,
                 "notional": notional,
-                "leverage": leverage or 1,
-                "margin": notional / (leverage or 1),
+                "leverage": leverage_eff,
+                "margin": margin_required,
                 "fee": fee,
             }
         )
@@ -162,7 +177,13 @@ class SimBroker:
         fee = notional * TAKER_FEE
         pnl = (px - pos["entryPrice"]) * contracts  # long +ve, short -ve
 
-        self._cash += pnl - fee
+        # ------------------------------------------------------------------
+        # Release previously locked margin and realise PnL minus fee
+        # ------------------------------------------------------------------
+
+        margin_released = pos.get("margin", notional / max(pos.get("leverage", 1), 1))
+
+        self._cash += margin_released + pnl - fee
 
         self._trade_log.append(
             {
@@ -174,7 +195,7 @@ class SimBroker:
                 "price": px,
                 "notional": notional,
                 "leverage": pos.get("leverage", 1),
-                "margin": notional / pos.get("leverage", 1),
+                "margin": margin_released,
                 "fee": fee,
                 "pnl": pnl,
             }
@@ -261,7 +282,12 @@ class SimBroker:
 
             contracts = pos["contracts"]
             pnl = (price - pos["entryPrice"]) * contracts
-            equity += pnl
+
+            # Add back margin currently locked in this position so that equity
+            # represents *cash + margin + PnL* (matching exchange definition).
+            margin_locked = pos.get("margin", 0.0)
+
+            equity += margin_locked + pnl
 
         return equity
 

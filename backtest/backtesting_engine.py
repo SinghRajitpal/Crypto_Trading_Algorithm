@@ -204,7 +204,7 @@ class BacktestingEngine:
         return {
             "trades": trades,
             "final_cash": final_equity,  # kept key name for CLI compatibility
-            "trade_count": len(trades),
+            "trade_count": int((trades["type"] == "close").sum()),
             "summary": summary,
             "equity_curve": equity_curve,
         }
@@ -243,45 +243,92 @@ if __name__ == "__main__":
     # Visualisation / stats -------------------------------------------------------
     try:
         import vectorbt as vbt  # noqa: F401
-        from backtest.vectorbt_adapter import load_close_series, portfolio_from_trades
+        from backtest.vectorbt_adapter import (
+            load_close_dataframe,
+            portfolio_from_trades_multi,
+        )
 
-        first_sym = symbols[0][0]
+        # ------------------------------------------------------------------
+        # Load close-price history for *all* requested symbols so that the
+        # resulting vectorbt Portfolio represents the whole portfolio rather
+        # than just the first asset.
+        # ------------------------------------------------------------------
 
-        # Load price data limited to the requested --days window so that
-        # vectorbt statistics match the user-specified period.
-        close_ser = load_close_series(first_sym, args.tf, start=start_dt, end=end_dt)
-        pf = portfolio_from_trades(result["trades"], close_ser, 10_000)
-        print(pf.stats())
+        close_df = load_close_dataframe(symbols, start=start_dt, end=end_dt)
 
-        # ----------------------------------------------------------
-        # Which subplots we want
+        pf = portfolio_from_trades_multi(result["trades"], close_df, 10_000)
+
+        print("\nPORTFOLIO STATISTICS (all assets):")
+
+        # ------------------------------------------------------------------
+        # Stats – for multi-asset portfolios we ask vectorbt to aggregate
+        # across the first-level (asset) dimension by passing ``group_by=True``.
+        # For single-asset, the default behaviour is fine.
+        # ------------------------------------------------------------------
+
+        try:
+            stats_ser = pf.stats(group_by=True) if close_df.shape[1] > 1 else pf.stats()
+        except Exception:
+            stats_ser = pf.stats()
+        print(stats_ser)
+
         wanted = [
-            'orders',      # individual order markers
-            'trades',      # entry/exit markers
-            'value',       # cumulative equity curve (cum-returns)
-            'assets',      # asset market value
-            'drawdowns'    # under-water curve
+            "orders",      # individual order markers per asset
+            "trades",      # entry/exit markers
+            "value",       # cumulative equity curve (cum-returns)
+            "assets",      # per-asset market value
+            "drawdowns",   # under-water curve
         ]
 
-        # Only keep names that exist in this vbt version
+        # Only keep names that exist in this version of vectorbt
         available = set(pf.subplots.keys())
         subplots = [s for s in wanted if s in available]
 
-        # Build figure   (group_by=False avoids the "does not support grouped
-        #                 data" warnings you saw for orders/trades panels)
-        fig = pf.plots(subplots=subplots, group_by=False)
+        multi_asset = close_df.shape[1] > 1
+
+        # For multi-asset portfolios vectorbt panels like 'orders', 'trades',
+        # and even 'value' expect a single column.  The recommended approach is
+        # to plot with ``group_by='group'`` which aggregates all columns into
+        # one virtual group (the full portfolio).  We therefore:
+        #   • Drop orders / trades panels (they are per-asset and noisy).
+        #   • Plot using group_by='group' so that 'value' and others work.
+
+        if multi_asset:
+            # Aggregate across assets using vectorbt's built-in grouping
+            group_by_opt = True  # use first level of column MultiIndex
+            # Detailed per-order panels and 'assets' don't support grouped data well
+            subplots = [s for s in subplots if s not in {"orders", "trades", "assets"}]
+        else:
+            # Single-asset plotting: keep all subplots and don't group columns
+            group_by_opt = None
+
+        # Build figure – show immediately or write to HTML
+        fig = pf.plots(subplots=subplots, group_by=group_by_opt)
 
         fig.show()                       # or fig.write_html("report.html")
-        # ----------------------------------------------------------
     except ImportError:
         print("[Vectorbt] vectorbt not installed – install with 'pip install vectorbt' to view plots and stats")
     except Exception as e:
         print(f"[Vectorbt] Could not build or plot portfolio: {e}")
 
+    # ------------------------------------------------------------------
+    # Consistent final-equity display ----------------------------------
+    # Use vectorbt Portfolio end value when available so that the printed
+    # figure matches the stats table (avoids confusion with SimBroker
+    # cash balance which ignores leverage effects).
+    # ------------------------------------------------------------------
+
+    final_equity_vbt = None
+    try:
+        final_equity_vbt = float(pf.value().iloc[-1])
+    except Exception:
+        # Fallback to SimBroker equity if vectorbt failed
+        final_equity_vbt = result["final_cash"]
+
     print("\nBack-test complete")
     print(f"Trades executed : {result['trade_count']}")
-    print(f"Final equity    : {result['final_cash']:.2f} USDT")
+    print(f"Final equity    : {final_equity_vbt:.2f} USDT")
     if result['trade_count']:
         print("Last trades:\n", result['trades'].tail())
 
-    print(pf.subplots.keys())
+    # Finished – plots shown above. No extra debug prints.

@@ -285,3 +285,140 @@ def portfolio_from_trades(
     )
 
     return pf
+
+# ===========================================================================
+# Multi-asset helpers (experimental) ========================================
+# ===========================================================================
+
+
+def load_close_dataframe(symbol_pairs, start=None, end=None):
+    """Load close-price history for *multiple* symbol / timeframe pairs.
+
+    Parameters
+    ----------
+    symbol_pairs : list[tuple[str, str]]
+        Sequence of ``(symbol, timeframe)`` pairs, e.g. ``[("BTCUSDT", "5m"), ("ETHUSDT", "5m")]``.
+        All series will be aligned to a **union** index and forward-filled so that vectorbt
+        receives a dense price matrix.
+    start, end : datetime | str | None, optional
+        Optional date bounds identical to :pyfunc:`load_close_series`.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns named by *symbol* (string) and a UTC-indexed DateTimeIndex.
+    """
+
+    close_sers = {}
+    for sym, tf in symbol_pairs:
+        try:
+            close_sers[sym] = load_close_series(sym, tf, start=start, end=end)
+        except FileNotFoundError as exc:
+            print(f"[VectorbtAdapter] ⚠️  Price cache missing for {sym} {tf}: {exc}")
+            continue
+
+    if not close_sers:
+        raise ValueError("No close-price series available – check cache downloads.")
+
+    # Build DataFrame on the *union* of all indices – then fill tiny gaps.
+    df = pd.concat(close_sers, axis=1).sort_index()
+
+    # Forward-fill, then back-fill to remove leading NaNs that would otherwise
+    # propagate into vectorbt and show up as NaNs in statistics.
+    df = df.ffill().bfill().dropna(how="all")
+
+    # Flatten the column MultiIndex (if any) to simple symbol names.
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    return df
+
+
+def portfolio_from_trades_multi(trades, close_df, init_cash=10_000.0):
+    """Build a *vectorbt* Portfolio for **multiple** assets simultaneously.
+
+    This mirrors :pyfunc:`portfolio_from_trades` but accepts:
+
+    * ``close_df`` – *DataFrame* with one column per symbol.
+    * Trades for *all* symbols.
+
+    Each symbol column is treated as a separate asset; cash is shared across all.
+    """
+
+    import numpy as np
+
+    # Ensure chronological order & unique index
+    close_df = close_df.sort_index()
+
+    # ------------------------------------------------------------------
+    # Build MultiIndex columns (symbol, field)
+    # ------------------------------------------------------------------
+
+    symbols = list(close_df.columns)
+    close_df.columns = pd.MultiIndex.from_product([symbols, ["close"]])
+    close_df.columns.set_names(["asset", "field"], inplace=True)
+
+    price_index = close_df.index
+
+    # Empty matrices
+    size_df = pd.DataFrame(0.0, index=price_index, columns=close_df.columns, dtype=float)
+    fixed_fee_df = pd.DataFrame(0.0, index=price_index, columns=close_df.columns, dtype=float)
+
+    if not trades.empty:
+        for _, row in trades.iterrows():
+            sym = row.get("symbol")
+            if sym not in symbols:
+                continue
+
+            ts_raw = pd.to_datetime(row["timestamp"], utc=True)
+            # Map to nearest previous bar
+            if ts_raw in price_index:
+                ts_bar = ts_raw
+            else:
+                pos = price_index.searchsorted(ts_raw, side="right")
+                if pos == 0:
+                    continue
+                ts_bar = price_index[pos - 1]
+
+            col_key = (sym, "close")
+
+            # -------- sizes --------
+            size = float(row.get("contracts", 0.0))
+            side_val = row.get("side")
+            if isinstance(side_val, str) and side_val.lower() == "sell":
+                size *= -1
+            size_df.at[ts_bar, col_key] += size
+
+            # -------- fees --------
+            fee_val = row.get("fee")
+            if fee_val and not np.isnan(fee_val):
+                fixed_fee_df.at[ts_bar, col_key] += float(fee_val)
+
+            if row.get("type") == "funding":
+                payment = float(row.get("payment", 0.0))
+                # payment positive means we paid – negative cash flow
+                fixed_fee_df.at[ts_bar, col_key] += -payment
+
+    # ------------------------------------------------------------------
+    # Create vectorbt Portfolio
+    # ------------------------------------------------------------------
+
+    try:
+        freq_inferred = pd.infer_freq(price_index)
+    except ValueError:
+        freq_inferred = None
+
+    pf = vbt.Portfolio.from_orders(
+        close=close_df,
+        size=size_df.values,
+        price=close_df.values,
+        size_type="amount",
+        fees=np.zeros_like(size_df.values),
+        fixed_fees=fixed_fee_df.values,
+        init_cash=init_cash,
+        cash_sharing=True,
+        freq=freq_inferred,
+        group_by=True,  # group by first level 'asset'
+    )
+
+    return pf

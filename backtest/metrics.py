@@ -60,9 +60,31 @@ class Metrics:
         dd = 1 - equity / roll_max
         self._max_dd = dd.max()
 
-        # Sharpe (daily)
+        # --------------------------------------------------------------
+        # Sharpe ratio (annualised – match vectorbt)
+        # --------------------------------------------------------------
+        # VectorBT annualises returns by multiplying by ``sqrt(freq)`` where
+        # ``freq`` is the number of observations per *year* inferred from the
+        # index (e.g. 365-days × 24h × 12 × 5-minute bars = 105 120).
+        # We replicate that formula here so that the Sharpe values in our
+        # custom Metrics summary match those shown in the VectorBT stats
+        # table and in most portfolio-analysis literature.
+
         returns = equity.pct_change().dropna()
-        if not returns.empty:
-            self._sharpe = (returns.mean() / returns.std()) * np.sqrt(1440)  # assuming minute data ~1440 per day
+
+        if not returns.empty and returns.std() != 0:
+            periods_per_year = 365 * 1440  # fallback assumption: 1-minute bars
+
+            try:
+                freq_str = pd.infer_freq(equity.index)
+                if freq_str is not None:
+                    offset = pd.tseries.frequencies.to_offset(freq_str)
+                    seconds = offset.delta.total_seconds()
+                    if seconds > 0:
+                        periods_per_year = int(31557600 // seconds)  # 365.25 days
+            except Exception:
+                pass  # keep default
+
+            self._sharpe = (returns.mean() / returns.std()) * np.sqrt(periods_per_year)
         else:
             self._sharpe = np.nan

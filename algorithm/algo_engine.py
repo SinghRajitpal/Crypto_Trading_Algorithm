@@ -35,8 +35,11 @@ class AlgoEngine:
         # Get the binance_client from data_engine
         self.binance_client = data_engine.binance_client if hasattr(data_engine, 'binance_client') else None
         
-        # Signal state tracking
-        self._last_signal_states = {}  # {symbol: {timestamp, signal_type, data_hash}}
+        # Track last signal per *symbol–timeframe* so that we can run multiple
+        # timeframes per symbol without collisions (e.g. BTC 5m vs BTC 1h).
+        #
+        # Key format: ``f"{symbol}_{timeframe}"``.
+        self._last_signal_states = {}  # {sym_tf_key: {timestamp, signal_type, data_hash}}
         self._min_signal_interval = 60  # Minimum seconds between signals for same symbol
         
         print("[AlgoEngine] Initialized")
@@ -56,7 +59,7 @@ class AlgoEngine:
         # Hash the relevant parts of the latest candle
         return f"{latest[0]}_{latest[4]}"  # timestamp_close
         
-    def _should_process_signal(self, symbol: str, current_time: int, data_hash: str) -> bool:
+    def _should_process_signal(self, key: str, current_time: int, data_hash: str) -> bool:
         """Determines if we should process a new signal.
         
         Signal processing is based on:
@@ -64,17 +67,17 @@ class AlgoEngine:
         2. Whether the data has changed
         
         Args:
-            symbol: Trading pair symbol.
+            key: Symbol-timeframe key.
             current_time: Current unix timestamp.
             data_hash: Hash of current candle data.
             
         Returns:
             Boolean indicating whether to process a new signal.
         """
-        if symbol not in self._last_signal_states:
+        if key not in self._last_signal_states:
             return True
             
-        last_state = self._last_signal_states[symbol]
+        last_state = self._last_signal_states[key]
         time_diff = current_time - last_state['timestamp']
         
         # Always process if data has changed
@@ -84,16 +87,16 @@ class AlgoEngine:
         # Otherwise, only process if enough time has passed
         return time_diff >= self._min_signal_interval
         
-    def _update_signal_state(self, symbol: str, current_time: int, data_hash: str, signal_type: str):
+    def _update_signal_state(self, key: str, current_time: int, data_hash: str, signal_type: str):
         """Updates the stored state for a symbol after processing a signal.
         
         Args:
-            symbol: Trading pair symbol.
+            key: Symbol-timeframe key.
             current_time: Current unix timestamp.
             data_hash: Hash of current candle data.
             signal_type: Type of signal that was processed.
         """
-        self._last_signal_states[symbol] = {
+        self._last_signal_states[key] = {
             'timestamp': current_time,
             'data_hash': data_hash,
             'signal_type': signal_type
@@ -129,8 +132,11 @@ class AlgoEngine:
             current_time = int(time.time())
             data_hash = self._get_data_hash(candles)
             
+            # Use combined key to track per symbol-timeframe pair
+            key = f"{symbol}_{timeframe}"
+
             # Check if we should process a new signal
-            if not self._should_process_signal(symbol, current_time, data_hash):
+            if not self._should_process_signal(key, current_time, data_hash):
                 return None
                 
             # Calculate signals
@@ -139,7 +145,7 @@ class AlgoEngine:
             if signal:
                 # Update signal state
                 self._update_signal_state(
-                    symbol=symbol,
+                    key=key,
                     current_time=current_time,
                     data_hash=data_hash,
                     signal_type=f"{signal.action}/{signal.side}"
