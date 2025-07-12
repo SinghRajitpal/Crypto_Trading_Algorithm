@@ -16,11 +16,6 @@ symbols = [
     ("ETHUSDT", "1m"),
     ("XRPUSDT", "1m"),
     ("BNBUSDT", "1m"),
-    ("SOLUSDT", "1m"),
-    ("USDCUSDT", "1m"),
-    ("DOGEUSDT", "1m"),
-    ("TRXUSDT", "1m"),
-    ("ADAUSDT", "1m"),
-    ("HYPEUSDT", "1m")
+    ("SOLUSDT", "1m")
 ]
 

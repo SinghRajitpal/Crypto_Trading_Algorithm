@@ -25,6 +25,7 @@ from datetime import UTC
 from typing import Dict, List, Tuple, Any
 
 import pandas as pd
+import json  # Needed for writing summary.json when --save is enabled
 
 from data.historical_data import HistoricalDataFetcher
 from data.data_engine import DataEngine
@@ -239,6 +240,11 @@ if __name__ == "__main__":
     parser.add_argument("symbols", nargs="?", default="", help="Comma separated trading pairs. Leave empty or use 'ALL' to back-test every configured coin")
     parser.add_argument("--tf", default="5m", help="Timeframe, default 5m")
     parser.add_argument("--days", type=int, default=3, help="Days of history, default 3")
+    # Optional explicit date range overrides --days. Format: DD/MM/YYYY
+    parser.add_argument("--start", type=str, default=None, help="Start date (DD/MM/YYYY)")
+    parser.add_argument("--end", type=str, default=None, help="End date (DD/MM/YYYY). Defaults to today if omitted")
+    # Optional flag to persist stats & plots -------------------------------------------------
+    parser.add_argument("--save", action="store_true", help="Save back-test stats and plots to disk")
     args = parser.parse_args()
 
     if not args.symbols.strip() or args.symbols.strip().upper() == "ALL":
@@ -247,8 +253,34 @@ if __name__ == "__main__":
         print(f"[Backtesting] Running ALL configured symbols: {', '.join([s for s, _ in symbols])}")
     else:
         symbols = [(sym.strip().upper(), args.tf) for sym in args.symbols.split(",") if sym.strip()]
-    end_dt = datetime.now(UTC)
-    start_dt = end_dt - timedelta(days=args.days)
+
+    # ------------------------------------------------------------------
+    # Determine back-test date range ------------------------------------
+    # Priority: explicit --start / --end > --days fallback
+    # ------------------------------------------------------------------
+    date_format = "%d/%m/%Y"
+
+    if args.start:
+        try:
+            start_dt = datetime.strptime(args.start, date_format).replace(tzinfo=UTC)
+        except ValueError:
+            raise SystemExit(f"[Backtesting] Invalid --start date format. Expected DD/MM/YYYY, got {args.start}")
+
+        # Handle --end; default to today UTC if not provided
+        if args.end:
+            try:
+                end_dt = datetime.strptime(args.end, date_format).replace(tzinfo=UTC)
+            except ValueError:
+                raise SystemExit(f"[Backtesting] Invalid --end date format. Expected DD/MM/YYYY, got {args.end}")
+        else:
+            end_dt = datetime.now(UTC)
+
+        if end_dt <= start_dt:
+            raise SystemExit("[Backtesting] --end date must be after --start date")
+    else:
+        # Fallback to --days offset
+        end_dt = datetime.now(UTC)
+        start_dt = end_dt - timedelta(days=args.days)
 
     strategy = MACrossoverStrategy()
 
@@ -260,7 +292,31 @@ if __name__ == "__main__":
         initial_capital=10_000,
     )
 
+    # ------------------------------------------------------------------
+    # Run the back-test --------------------------------------------------
+    # ------------------------------------------------------------------
     result = asyncio.run(engine.run())
+
+    # ------------------------------------------------------------------
+    # Prepare optional output directory if --save passed -----------------
+    # ------------------------------------------------------------------
+    save_dir = None
+    if args.save:
+        from datetime import datetime
+        ts_str = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        # Nest results by strategy id so multiple strategies stay separate
+        base_results_dir = os.path.join(os.path.dirname(__file__), "results", strategy.strategy_id)
+        save_dir = os.path.join(base_results_dir, ts_str)
+
+        # Sub-folders for figures
+        indiv_dir = os.path.join(save_dir, "individual_asset_performance")
+        port_dir = os.path.join(save_dir, "portfolio_performance")
+
+        # Create directories
+        for d in [indiv_dir, port_dir]:
+            os.makedirs(d, exist_ok=True)
+
+        print(f"[Backtesting] Saving report to {save_dir}")
 
     # Visualisation / stats -------------------------------------------------------
     try:
@@ -299,8 +355,9 @@ if __name__ == "__main__":
                     continue
 
                 try:
-                    # Build standalone Portfolio for this asset
-                    asset_pf = portfolio_from_trades(asset_trades, close_df[asset], 10_000)
+                    # Build standalone Portfolio for this asset using full initial capital (10k)
+                    # to evaluate its intrinsic performance irrespective of portfolio allocation.
+                    asset_pf = portfolio_from_trades(asset_trades, close_df[asset], engine.broker.initial_capital)
 
                     per_asset_stats[asset] = asset_pf.stats()
 
@@ -309,7 +366,10 @@ if __name__ == "__main__":
                     subplots_used = [s for s in ["value", "drawdowns"] if s in subplots_avail]
                     asset_fig = asset_pf.plots(subplots=subplots_used)
                     asset_fig.update_layout(title_text=f"{asset} Performance")
-                    asset_fig.show()
+                    if args.save and save_dir is not None:
+                        asset_fig.write_html(os.path.join(indiv_dir, f"{asset}.html"))
+                    else:
+                        asset_fig.show()
                 except Exception as e:
                     print(f"[Vectorbt] Could not analyse asset {asset}: {e}")
 
@@ -328,6 +388,50 @@ if __name__ == "__main__":
         except Exception:
             stats_ser = pf.stats()
         print(stats_ser)
+
+        # Persist statistics if requested --------------------------------
+        if args.save and save_dir is not None:
+            try:
+                # Portfolio-level stats
+                stats_ser.to_csv(os.path.join(port_dir, "portfolio_stats.csv"))
+
+                # Per-asset stats DataFrame if available
+                if "per_asset_stats" in locals() and per_asset_stats:
+                    import pandas as pd
+                    pd.DataFrame(per_asset_stats).to_csv(os.path.join(indiv_dir, "per_asset_stats.csv"))
+
+                # Trade log at top-level of this back-test folder
+                result["trades"].to_csv(os.path.join(save_dir, "trade_log.csv"))
+
+                # Rebuild concise metrics based on vectorbt stats for accuracy
+                # Pull common metrics from vectorbt stats – fall back to SimBroker values
+                metrics_dict = {
+                    "final_equity": float(pf.value().iloc[-1]) if "pf" in locals() else result["final_cash"],
+                    "total_return_pct": stats_ser.get("Total Return [%]", result["summary"].get("total_return_pct")),
+                    "max_drawdown_pct": stats_ser.get("Max Drawdown [%]", result["summary"].get("max_drawdown_pct")),
+                    "sharpe": stats_ser.get("Sharpe Ratio", result["summary"].get("sharpe")),
+                    # Prefer vectorbt 'Total Trades' if available; otherwise SimBroker count of closed trades
+                    "trade_count": int(stats_ser.get("Total Trades", result["trade_count"])),
+                }
+
+                summary_payload = {
+                    "metrics": metrics_dict,                  # concise metrics derived from portfolio
+                    "portfolio_stats": stats_ser.to_dict(),   # full vectorbt statistics
+                    "timespan": {
+                        "start": start_dt.isoformat(),
+                        "end": end_dt.isoformat(),
+                        "days": (end_dt - start_dt).days
+                    }
+                }
+
+                # Include per‐asset statistics when available
+                if "per_asset_stats" in locals() and per_asset_stats:
+                    summary_payload["per_asset_stats"] = {k: v.to_dict() for k, v in per_asset_stats.items()}
+
+                with open(os.path.join(save_dir, "summary.json"), "w") as fh:
+                    json.dump(summary_payload, fh, indent=2, default=str)
+            except Exception as e:
+                print(f"[Backtesting] Could not save results: {e}")
 
         wanted = [
             "orders",      # individual order markers per asset
@@ -359,10 +463,13 @@ if __name__ == "__main__":
             # Single-asset plotting: keep all subplots and don't group columns
             group_by_opt = None
 
-        # Build figure – show immediately or write to HTML
+        # Build figure – show or persist
         fig = pf.plots(subplots=subplots, group_by=group_by_opt)
 
-        fig.show()                       # or fig.write_html("report.html")
+        if args.save and save_dir is not None:
+            fig.write_html(os.path.join(port_dir, "portfolio.html"))
+        else:
+            fig.show()  # Interactive display
     except ImportError:
         print("[Vectorbt] vectorbt not installed – install with 'pip install vectorbt' to view plots and stats")
     except Exception as e:
@@ -387,5 +494,8 @@ if __name__ == "__main__":
     print(f"Final equity    : {final_equity_vbt:.2f} USDT")
     if result['trade_count']:
         print("Last trades:\n", result['trades'].tail())
+
+    if args.save and save_dir is not None:
+        print(f"[Backtesting] Results saved to {save_dir}")
 
     # Finished – plots shown above. No extra debug prints.
