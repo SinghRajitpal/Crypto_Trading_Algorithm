@@ -153,7 +153,14 @@ class BacktestingEngine:
                         trigger = True
 
                 if trigger:
+                    # Close via broker and immediately free reserved capital
                     await self.broker.close_position(sym)
+                    try:
+                        # Release *all* allocation reserved for this symbol
+                        self.execution_engine.portfolio_manager.release_allocation(sym)
+                    except KeyError:
+                        # Symbol might not have an entry if it was never allocated
+                        pass
 
             # Process signals for each symbol/timeframe
             for sym, tf in self.symbols:
@@ -182,8 +189,18 @@ class BacktestingEngine:
                     rate = series.loc[ts]
                     await self.broker.apply_funding(sym, rate)
 
-        # Close any open positions to realise PnL
-        await self.broker.close_all_positions()
+        # ------------------------------------------------------------------
+        # End-of-test cleanup – close any remaining open positions *and*
+        # release their reserved allocations so future back-tests start from
+        # a clean slate.
+        # ------------------------------------------------------------------
+        closed = await self.broker.close_all_positions()
+
+        for sym in closed.keys():
+            try:
+                self.execution_engine.portfolio_manager.release_allocation(sym)
+            except KeyError:
+                pass
 
         # Close fetcher exchange connection cleanly
         await self.fetcher.close()
@@ -219,12 +236,17 @@ if __name__ == "__main__":
     from algorithm.strategies.ma_crossover import MACrossoverStrategy
 
     parser = argparse.ArgumentParser(description="Run a quick back-test.")
-    parser.add_argument("symbols", nargs="?", default="BTCUSDT", help="Comma separated trading pairs, default BTCUSDT")
+    parser.add_argument("symbols", nargs="?", default="", help="Comma separated trading pairs. Leave empty or use 'ALL' to back-test every configured coin")
     parser.add_argument("--tf", default="5m", help="Timeframe, default 5m")
     parser.add_argument("--days", type=int, default=3, help="Days of history, default 3")
     args = parser.parse_args()
 
-    symbols = [(sym.strip().upper(), args.tf) for sym in args.symbols.split(",")]
+    if not args.symbols.strip() or args.symbols.strip().upper() == "ALL":
+        import config
+        symbols = [(sym.upper(), args.tf) for sym, _ in config.symbols]
+        print(f"[Backtesting] Running ALL configured symbols: {', '.join([s for s, _ in symbols])}")
+    else:
+        symbols = [(sym.strip().upper(), args.tf) for sym in args.symbols.split(",") if sym.strip()]
     end_dt = datetime.now(UTC)
     start_dt = end_dt - timedelta(days=args.days)
 
@@ -246,6 +268,7 @@ if __name__ == "__main__":
         from backtest.vectorbt_adapter import (
             load_close_dataframe,
             portfolio_from_trades_multi,
+            portfolio_from_trades,
         )
 
         # ------------------------------------------------------------------
@@ -259,6 +282,40 @@ if __name__ == "__main__":
         pf = portfolio_from_trades_multi(result["trades"], close_df, 10_000)
 
         print("\nPORTFOLIO STATISTICS (all assets):")
+
+        # ------------------------------------------------------------------
+        # NEW: Per-asset statistics & plots when testing multiple assets
+        # ------------------------------------------------------------------
+        if close_df.shape[1] > 1:
+            import pandas as pd
+
+            per_asset_stats: dict[str, pd.Series] = {}
+
+            for asset in close_df.columns:
+                # Filter trade-log for this asset only
+                asset_trades = result["trades"].loc[result["trades"]["symbol"] == asset]
+                if asset_trades.empty:
+                    print(f"[Backtesting] No trades for {asset} – skipping stats & plot")
+                    continue
+
+                try:
+                    # Build standalone Portfolio for this asset
+                    asset_pf = portfolio_from_trades(asset_trades, close_df[asset], 10_000)
+
+                    per_asset_stats[asset] = asset_pf.stats()
+
+                    # Quick performance figure (value & drawdowns)
+                    subplots_avail = set(asset_pf.subplots.keys())
+                    subplots_used = [s for s in ["value", "drawdowns"] if s in subplots_avail]
+                    asset_fig = asset_pf.plots(subplots=subplots_used)
+                    asset_fig.update_layout(title_text=f"{asset} Performance")
+                    asset_fig.show()
+                except Exception as e:
+                    print(f"[Vectorbt] Could not analyse asset {asset}: {e}")
+
+            if per_asset_stats:
+                print("\nINDIVIDUAL ASSET STATISTICS:")
+                print(pd.DataFrame(per_asset_stats))
 
         # ------------------------------------------------------------------
         # Stats – for multi-asset portfolios we ask vectorbt to aggregate

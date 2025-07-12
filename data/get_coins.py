@@ -127,7 +127,7 @@ def update_config_with_high_liquidity_coins(min_market_cap=200, max_coins=None, 
 
 if __name__ == "__main__":
     # Default values
-    min_cap = 200  # $200M
+    min_cap = 500  # $200M
     max_coins = None
     timeframe = "1m"
     

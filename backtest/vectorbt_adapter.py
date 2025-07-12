@@ -143,6 +143,32 @@ def _build_order_size_series(trades: pd.DataFrame, price_index: pd.Index) -> pd.
             ts_bar = size_series.index[pos - 1]
 
         size = float(row["contracts"])
+
+        # --------------------------------------------------------------
+        # Futures leverage handling
+        # --------------------------------------------------------------
+        # SimBroker rows store the *contract* amount untouched regardless of
+        # leverage.  When vectorbt consumes an ``orders`` array it assumes the
+        # *full notional* is funded from cash.  That would massively
+        # understate returns for leveraged futures trading because only
+        # ``notional / leverage`` capital is actually tied up.
+        #
+        # We therefore divide the contract size by the reported leverage so
+        # that the cash footprint equals the *margin* posted, closely
+        # matching the behaviour in :pyclass:`~backtest.broker.SimBroker` and
+        # the PortfolioManager allocation logic.
+        # --------------------------------------------------------------
+
+        lev = row.get("leverage")
+        try:
+            lev_val = float(lev) if lev is not None else 1.0
+            if lev_val <= 0:
+                lev_val = 1.0
+        except Exception:
+            lev_val = 1.0
+
+        size /= lev_val  # express in *margin*-sized contracts
+
         if side_val.lower() == "sell":
             size *= -1  # sell → negative size
 
@@ -173,13 +199,18 @@ def _build_fee_series(trades: pd.DataFrame, price_index: pd.Index) -> pd.Series:
 
 
 def _build_funding_series(trades: pd.DataFrame, price_index: pd.Index) -> pd.Series:
-    """Aggregate *funding* payments into cash-flow per bar (positive → cash IN).
+    """Aggregate *funding* payments into cash-flow per bar.
 
-    Vectorbt represents cash movement via the *cash_flow* array where
-    positive numbers increase equity and negative decrease.  SimBroker stores
-    a *payment* column (positive when we **pay** funding).  Therefore the sign
-    is reversed here so that a payment (cash outflow) becomes a **negative**
-    cash_flow value.
+    *Vectorbt* expects **positive** values in the ``fixed_fees`` array to
+    *decrease* equity and negative values to *increase* it.  The
+    :pyclass:`~backtest.broker.SimBroker` records the *payment* column as a
+    positive number when the trader **pays** funding (cash outflow) and
+    negative when funding is **received** (cash inflow).
+
+    Hence we forward *payment* **unchanged** so that:
+
+        • payment  > 0  →  fixed_fee  > 0  →  equity ↓ (we paid funding)
+        • payment  < 0  →  fixed_fee  < 0  →  equity ↑ (we received funding)
     """
 
     cash_ser = pd.Series(0.0, index=price_index, dtype=float)
@@ -201,7 +232,7 @@ def _build_funding_series(trades: pd.DataFrame, price_index: pd.Index) -> pd.Ser
                 continue
             ts_bar = cash_ser.index[pos - 1]
 
-        cash_ser.loc[ts_bar] += -float(row.get("payment", 0.0))  # negative for payment
+        cash_ser.loc[ts_bar] += float(row.get("payment", 0.0))  # keep sign
 
     return cash_ser
 
@@ -382,8 +413,17 @@ def portfolio_from_trades_multi(trades, close_df, init_cash=10_000.0):
 
             col_key = (sym, "close")
 
+            # Extract leverage factor (default 1)
+            lev = row.get("leverage")
+            try:
+                lev_val = float(lev) if lev is not None else 1.0
+                if lev_val <= 0:
+                    lev_val = 1.0
+            except Exception:
+                lev_val = 1.0
+
             # -------- sizes --------
-            size = float(row.get("contracts", 0.0))
+            size = float(row.get("contracts", 0.0)) / lev_val  # margin-sized
             side_val = row.get("side")
             if isinstance(side_val, str) and side_val.lower() == "sell":
                 size *= -1
@@ -396,8 +436,7 @@ def portfolio_from_trades_multi(trades, close_df, init_cash=10_000.0):
 
             if row.get("type") == "funding":
                 payment = float(row.get("payment", 0.0))
-                # payment positive means we paid – negative cash flow
-                fixed_fee_df.at[ts_bar, col_key] += -payment
+                fixed_fee_df.at[ts_bar, col_key] += payment
 
     # ------------------------------------------------------------------
     # Create vectorbt Portfolio

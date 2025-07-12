@@ -138,14 +138,21 @@ class RiskManager:
         # Adjust for leverage
         leverage = min(risk_params.max_leverage, int(1 / risk_percentage)) if risk_percentage > 0 else 1
         
-        # Calculate position size in USDT and contracts
+        # Calculate *notional* position size in USDT (exposure) and contracts
         position_size_usdt = risk_amount / risk_percentage * leverage
-        
-        # Ensure position_size_usdt doesn't exceed max_allocation
-        position_size_usdt = min(position_size_usdt, max_allocation)
-        
-        # Convert to contracts
+
+        # Ensure position_size_usdt doesn't exceed max_allocation *leverage*
+        position_size_usdt = min(position_size_usdt, max_allocation * leverage)
+
+        # Convert to contracts (absolute exposure)
         position_size_contracts = position_size_usdt / entry_price
+
+        # --------------------------------------------------------------
+        # Capital actually locked (= margin) equals notional / leverage.
+        # We use this figure for allocation limits so that high-leverage
+        # trades consume proportionally less capital.
+        # --------------------------------------------------------------
+        margin_required_usdt = position_size_usdt / leverage
         
         # Calculate take profit price based on entry price and risk parameters
         side = "buy" if entry_price > stop_loss_price else "sell"
@@ -186,6 +193,7 @@ class RiskManager:
         return {
             "size_contracts": position_size_contracts,
             "size_usdt": position_size_usdt,
+            "margin_usdt": margin_required_usdt,
             "leverage": leverage,
             "risk_amount": risk_amount,
             "stop_loss_price": stop_loss_price,
@@ -333,12 +341,12 @@ class RiskManager:
                     "reason": f"Position sizing error: {str(e)}"
                 }
             
-            # Check if allocation is possible
-            if not self.portfolio_manager.can_allocate(symbol, position_info["size_usdt"]):
+            # Check if allocation is possible using *margin* (capital locked)
+            if not self.portfolio_manager.can_allocate(symbol, position_info["margin_usdt"]):
                 max_possible = self.portfolio_manager.get_allocation_limit(symbol)
                 return {
                     "valid": False,
-                    "reason": f"Allocation limit reached. Requested: ${position_info['size_usdt']:.2f}, Available: ${max_possible:.2f}"
+                    "reason": f"Allocation limit reached. Requested: ${position_info['margin_usdt']:.2f}, Available: ${max_possible:.2f}"
                 }
             
             # All checks passed, trade is valid

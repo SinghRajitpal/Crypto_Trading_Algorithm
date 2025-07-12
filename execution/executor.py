@@ -56,12 +56,24 @@ class OrderExecutor:
             if margin_type is None:
                 margin_type = self.default_margin_type
             
-            # Calculate notional value for logging
+            # Calculate notional value and **margin** required
             notional_value = position_size * current_price
+            margin_required = notional_value / leverage if leverage else notional_value
+            
+            # --------------------------------------------------------------
+            # 1) Reserve portfolio allocation BEFORE sending the order
+            # --------------------------------------------------------------
+            if not self.portfolio_manager.reserve_allocation(symbol, margin_required):
+                print(f"[OrderExecutor] ❌ Allocation reserve failed for {symbol} – exceeds limits")
+                return {
+                    "status": "rejected",
+                    "reason": "Allocation limit reached",
+                    "symbol": symbol
+                }
             
             # Log the execution
             print(f"[OrderExecutor] Opening {side.upper()} position for {symbol}: {position_size:.6f} contracts")
-            print(f"[OrderExecutor] Notional value: ${notional_value:.2f}, Leverage: {leverage}x")
+            print(f"[OrderExecutor] Notional: ${notional_value:.2f} (margin: ${margin_required:.2f}), Leverage: {leverage}x")
             
             # Log Stop Loss and Take Profit details with clear formatting
             print(f"[OrderExecutor] Risk Management:")
@@ -115,6 +127,12 @@ class OrderExecutor:
                     print(f"[OrderExecutor] 💡 Recommendation: Adjust position size to meet lot size requirements")
                 elif "hedge" in error_message.lower() or "position side" in error_message.lower():
                     print(f"[OrderExecutor] 💡 Order requires position side parameter. Your account is in hedge mode.")
+                
+                # Roll-back reserved capital because order failed
+                try:
+                    self.portfolio_manager.release_allocation(symbol, margin_required)
+                except Exception:
+                    pass
                 
                 # Record the failed execution
                 execution_record = {
@@ -184,6 +202,12 @@ class OrderExecutor:
         except Exception as e:
             error_message = f"Error executing open position: {str(e)}"
             print(f"[OrderExecutor] ❌ {error_message}")
+            
+            # Roll-back reserved allocation (best-effort)
+            try:
+                self.portfolio_manager.release_allocation(symbol, margin_required if 'margin_required' in locals() else None)
+            except Exception:
+                pass
             
             # Record the failed execution
             execution_record = {
