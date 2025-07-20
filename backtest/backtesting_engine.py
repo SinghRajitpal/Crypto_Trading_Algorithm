@@ -154,8 +154,8 @@ class BacktestingEngine:
                         trigger = True
 
                 if trigger:
-                    # Close via broker and immediately free reserved capital
-                    await self.broker.close_position(sym)
+                    # Close via broker with slippage and immediately free reserved capital
+                    await self.broker.close_position(sym, slippage_bp=3.0)
                     try:
                         # Release *all* allocation reserved for this symbol
                         self.execution_engine.portfolio_manager.release_allocation(sym)

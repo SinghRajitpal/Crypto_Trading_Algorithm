@@ -15,10 +15,11 @@ from typing import Dict, List, Optional, Any
 
 import pandas as pd
 
-# Constants
+# Constants - More realistic Binance Futures fees and costs
 
-TAKER_FEE = 0.0004  # 0.04 % per side
-MAKER_FEE = 0.0002  # not used yet
+TAKER_FEE = 0.0004  # 0.04% per side (standard Binance futures taker fee)
+MAKER_FEE = 0.0002  # 0.02% per side (maker fee, not currently used)
+FUNDING_MULTIPLIER = 1.0  # Applied to funding rates (can increase for more conservative backtesting)
 
 # Helper aliases
 
@@ -163,7 +164,8 @@ class SimBroker:
 
         return {"status": "success", "order": {"id": len(self._trade_log)}, "position": self._positions[symbol]}
 
-    async def close_position(self, symbol: str, side: Optional[str] = None):
+    async def close_position(self, symbol: str, side: Optional[str] = None, slippage_bp: float = 3.0):
+        """Close position with slippage support."""
         pos = self._positions.get(symbol)
         if not pos:
             return {"status": "no_position"}
@@ -173,6 +175,15 @@ class SimBroker:
             return {"status": "error", "error": "Price unavailable"}
 
         contracts = pos["contracts"]
+        
+        # Apply slippage: unfavorable for closing positions
+        # Long positions close with sells (worse = lower price)
+        # Short positions close with buys (worse = higher price)
+        if slippage_bp > 0:
+            is_long = contracts > 0
+            slippage_factor = slippage_bp / 10000.0
+            px *= 1 - slippage_factor if is_long else 1 + slippage_factor
+        
         notional = abs(contracts) * px
         fee = notional * TAKER_FEE
         pnl = (px - pos["entryPrice"]) * contracts  # long +ve, short -ve
@@ -219,7 +230,7 @@ class SimBroker:
         """Apply funding payment for *symbol* at the given *rate*.
 
         Returns the cash delta (positive means we received, negative we paid).
-        Formula used (matching Binance):  funding = notional * rate
+        Formula used (matching Binance):  funding = notional * rate * funding_multiplier
         Longs pay positive rate, shorts receive; reverse if rate negative.
         """
         pos = self._positions.get(symbol)
@@ -232,7 +243,10 @@ class SimBroker:
 
         contracts = pos["contracts"]
         notional = abs(contracts) * price
-        payment = notional * rate * (1 if contracts > 0 else -1)
+        
+        # Apply funding multiplier for more conservative/realistic costs
+        effective_rate = rate * FUNDING_MULTIPLIER
+        payment = notional * effective_rate * (1 if contracts > 0 else -1)
 
         self._cash -= payment  # if payment positive and long we pay (cash decrease)
 
@@ -241,7 +255,7 @@ class SimBroker:
                 "timestamp": self._now_iso(),
                 "symbol": symbol,
                 "type": "funding",
-                "rate": rate,
+                "rate": effective_rate,
                 "notional": notional,
                 "payment": payment,
             }

@@ -278,9 +278,10 @@ class OrderExecutor:
                 print(f"[OrderExecutor] ⚠️ Error checking positions: {e}")
                 # Continue with close attempt even if check fails
             
-            # Execute the close
+            # Execute the close with realistic slippage
             print(f"[OrderExecutor] Sending close request to exchange...")
-            result = await self.binance_client.close_position(symbol, side)
+            slippage_bp = 3.0  # 3 basis points = 0.03% realistic slippage
+            result = await self.binance_client.close_position(symbol, side, slippage_bp=slippage_bp)
             
             if result.get("status") in ["closed", "no_position"]:
                 # Release allocation from portfolio manager

@@ -1,0 +1,101 @@
+{
+  "metrics": {
+    "Symbol": "Portfolio",
+    "Total Return (%)": 5.45,
+    "CAGR (%)": 0.0,
+    "Volatility (%)": 4.38,
+    "Sharpe Ratio": 1.086,
+    "Sortino Ratio": 1.668,
+    "Calmar Ratio": 0.0,
+    "Max Drawdown (%)": 3.02,
+    "VaR (95%) (%)": -0.41,
+    "CVaR (95%) (%)": -0.59,
+    "Win Rate (%)": 52.26,
+    "Win/Loss Ratio": 1.108,
+    "Payoff Ratio": 1.108,
+    "Kelly Criterion": 0.092,
+    "Best Day (%)": 1.2,
+    "Worst Day (%)": -1.18,
+    "Skewness": 0.258,
+    "Kurtosis": 3.136
+  },
+  "per_asset_stats": {
+    "BTCUSDT": {
+      "Symbol": "BTCUSDT",
+      "Total Return (%)": -0.01,
+      "CAGR (%)": 0.0,
+      "Volatility (%)": 0.05,
+      "Sharpe Ratio": -0.197,
+      "Sortino Ratio": -0.245,
+      "Calmar Ratio": 0.0,
+      "Max Drawdown (%)": 0.04,
+      "VaR (95%) (%)": 0.0,
+      "CVaR (95%) (%)": -0.0,
+      "Win Rate (%)": 50.0,
+      "Win/Loss Ratio": 0.739,
+      "Payoff Ratio": 0.739,
+      "Kelly Criterion": -0.177,
+      "Best Day (%)": 0.03,
+      "Worst Day (%)": -0.04,
+      "Skewness": -5.255,
+      "Kurtosis": 155.406
+    },
+    "ETHUSDT": {
+      "Symbol": "ETHUSDT",
+      "Total Return (%)": 3.76,
+      "CAGR (%)": 0.0,
+      "Volatility (%)": 3.72,
+      "Sharpe Ratio": 0.89,
+      "Sortino Ratio": 21.816,
+      "Calmar Ratio": 0.0,
+      "Max Drawdown (%)": 0.2,
+      "VaR (95%) (%)": 0.0,
+      "CVaR (95%) (%)": -0.0,
+      "Win Rate (%)": 33.33,
+      "Win/Loss Ratio": 40.517,
+      "Payoff Ratio": 40.517,
+      "Kelly Criterion": 0.317,
+      "Best Day (%)": 3.97,
+      "Worst Day (%)": -0.16,
+      "Skewness": 16.898,
+      "Kurtosis": 286.038
+    },
+    "XRPUSDT": {
+      "Symbol": "XRPUSDT",
+      "Total Return (%)": 1.65,
+      "CAGR (%)": 0.0,
+      "Volatility (%)": 1.54,
+      "Sharpe Ratio": 0.937,
+      "Sortino Ratio": 0.0,
+      "Calmar Ratio": 0.0,
+      "Max Drawdown (%)": 0.0,
+      "VaR (95%) (%)": 0.0,
+      "CVaR (95%) (%)": 0.0,
+      "Win Rate (%)": 100.0,
+      "Win/Loss Ratio": 1.0,
+      "Payoff Ratio": 1.0,
+      "Kelly Criterion": 0.0,
+      "Best Day (%)": 1.65,
+      "Worst Day (%)": 0.0,
+      "Skewness": 16.941,
+      "Kurtosis": 287.0
+    }
+  },
+  "timespan": {
+    "start": "2025-07-19T19:59:29.215556+00:00",
+    "end": "2025-07-20T19:59:29.215556+00:00",
+    "days": 1
+  },
+  "benchmark": "BTCUSDT",
+  "reports_generated": {
+    "portfolio_html_report": "portfolio_performance/portfolio_performance_report.html",
+    "asset_html_reports": [
+      "individual_asset_performance/BTCUSDT_performance_report.html",
+      "individual_asset_performance/ETHUSDT_performance_report.html",
+      "individual_asset_performance/XRPUSDT_performance_report.html"
+    ],
+    "portfolio_stats": "portfolio_performance/portfolio_stats.csv",
+    "asset_stats": "individual_asset_performance/per_asset_stats.csv",
+    "plots_directory": "plots/"
+  }
+}

@@ -144,7 +144,9 @@ class ExecutionEngine:
                 else:
                     print(f"[ExecutionEngine] Take profit: None")
                 
-                # Execute open position
+                # Execute open position with realistic slippage
+                # Add 2-5 basis points slippage for liquid crypto pairs (0.02-0.05%)
+                slippage_bp = 3.0  # 3 basis points = 0.03% realistic slippage
                 return await self.order_executor.execute_open_position(
                     symbol=symbol,
                     side=side,
@@ -152,7 +154,8 @@ class ExecutionEngine:
                     current_price=current_price,
                     stop_loss_price=stop_loss,
                     take_profit_price=take_profit,
-                    leverage=leverage
+                    leverage=leverage,
+                    slippage_bp=slippage_bp
                 )
                 
             # For exit signals, close the position

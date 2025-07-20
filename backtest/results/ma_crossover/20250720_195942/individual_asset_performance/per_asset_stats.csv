@@ -1,0 +1,4 @@
+,Symbol,Total Return (%),CAGR (%),Volatility (%),Sharpe Ratio,Sortino Ratio,Calmar Ratio,Max Drawdown (%),VaR (95%) (%),CVaR (95%) (%),Win Rate (%),Win/Loss Ratio,Payoff Ratio,Kelly Criterion,Best Day (%),Worst Day (%),Skewness,Kurtosis
+BTCUSDT,BTCUSDT,-0.01,0.0,0.05,-0.197,-0.245,0.0,0.04,0.0,-0.0,50.0,0.739,0.739,-0.177,0.03,-0.04,-5.255,155.406
+ETHUSDT,ETHUSDT,3.76,0.0,3.72,0.89,21.816,0.0,0.2,0.0,-0.0,33.33,40.517,40.517,0.317,3.97,-0.16,16.898,286.038
+XRPUSDT,XRPUSDT,1.65,0.0,1.54,0.937,0.0,0.0,0.0,0.0,0.0,100.0,1.0,1.0,0.0,1.65,0.0,16.941,287.0
