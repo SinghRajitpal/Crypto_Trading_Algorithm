@@ -237,8 +237,9 @@ if __name__ == "__main__":
     from algorithm.strategies.ma_crossover import MACrossoverStrategy
 
     parser = argparse.ArgumentParser(description="Run a quick back-test.")
-    parser.add_argument("symbols", nargs="?", default="", help="Comma separated trading pairs. Leave empty or use 'ALL' to back-test every configured coin")
-    parser.add_argument("--tf", default="5m", help="Timeframe, default 5m")
+    parser.add_argument("--symbols", default="", help="Comma separated trading pairs. Leave empty or use 'ALL' to back-test every configured coin")
+    parser.add_argument("--strategy", default="ma_crossover", choices=["ma_crossover"], help="Trading strategy to use (default: ma_crossover)")
+    parser.add_argument("--tf", default="5m", help="Timeframe: 1m, 5m, 15m, 30m, 1h, 4h, 1d, etc. (default: 5m)")
     parser.add_argument("--days", type=int, default=3, help="Days of history, default 3")
     # Optional explicit date range overrides --days. Format: DD/MM/YYYY
     parser.add_argument("--start", type=str, default=None, help="Start date (DD/MM/YYYY)")
@@ -282,7 +283,16 @@ if __name__ == "__main__":
         end_dt = datetime.now(UTC)
         start_dt = end_dt - timedelta(days=args.days)
 
-    strategy = MACrossoverStrategy()
+    # ------------------------------------------------------------------
+    # Strategy initialization based on user selection
+    # ------------------------------------------------------------------
+    if args.strategy == "ma_crossover":
+        strategy = MACrossoverStrategy()
+    else:
+        # Future strategies can be added here
+        raise ValueError(f"Unknown strategy: {args.strategy}")
+
+    print(f"[Backtesting] Strategy: {strategy.strategy_id}")
 
     engine = BacktestingEngine(
         symbols=symbols,
@@ -318,180 +328,78 @@ if __name__ == "__main__":
 
         print(f"[Backtesting] Saving report to {save_dir}")
 
-    # Visualisation / stats -------------------------------------------------------
+    # Visualization / stats with quantstats only -------------------------
     try:
-        import vectorbt as vbt  # noqa: F401
-        from backtest.vectorbt_adapter import (
-            load_close_dataframe,
-            portfolio_from_trades_multi,
-            portfolio_from_trades,
+        from backtest.visualizer import QuantStatsVisualizer
+        
+        print("\nPORTFOLIO STATISTICS (QuantStats):")
+        
+        # Extract just symbol names and timeframe
+        symbol_names = [sym for sym, _ in symbols]
+        primary_timeframe = symbols[0][1] if symbols else "5m"
+        
+        # Initialize visualizer
+        visualizer = QuantStatsVisualizer(initial_capital=10_000.0)
+        
+        # Generate portfolio analysis
+        portfolio_returns, portfolio_metrics = visualizer.generate_portfolio_report(
+            trades_df=result["trades"],
+            symbols=symbol_names,
+            start_date=start_dt,
+            end_date=end_dt,
+            timeframe=primary_timeframe,
+            benchmark_symbol=symbol_names[0] if symbol_names else None  # Use first symbol as benchmark
         )
-
-        # ------------------------------------------------------------------
-        # Load close-price history for *all* requested symbols so that the
-        # resulting vectorbt Portfolio represents the whole portfolio rather
-        # than just the first asset.
-        # ------------------------------------------------------------------
-
-        close_df = load_close_dataframe(symbols, start=start_dt, end=end_dt)
-
-        pf = portfolio_from_trades_multi(result["trades"], close_df, 10_000)
-
-        print("\nPORTFOLIO STATISTICS (all assets):")
-
-        # ------------------------------------------------------------------
-        # NEW: Per-asset statistics & plots when testing multiple assets
-        # ------------------------------------------------------------------
-        if close_df.shape[1] > 1:
-            import pandas as pd
-
-            per_asset_stats: dict[str, pd.Series] = {}
-
-            for asset in close_df.columns:
-                # Filter trade-log for this asset only
-                asset_trades = result["trades"].loc[result["trades"]["symbol"] == asset]
-                if asset_trades.empty:
-                    print(f"[Backtesting] No trades for {asset} – skipping stats & plot")
-                    continue
-
-                try:
-                    # Build standalone Portfolio for this asset using full initial capital (10k)
-                    # to evaluate its intrinsic performance irrespective of portfolio allocation.
-                    asset_pf = portfolio_from_trades(asset_trades, close_df[asset], engine.broker.initial_capital)
-
-                    per_asset_stats[asset] = asset_pf.stats()
-
-                    # Quick performance figure (value & drawdowns)
-                    subplots_avail = set(asset_pf.subplots.keys())
-                    subplots_used = [s for s in ["value", "drawdowns"] if s in subplots_avail]
-                    asset_fig = asset_pf.plots(subplots=subplots_used)
-                    asset_fig.update_layout(title_text=f"{asset} Performance")
-                    if args.save and save_dir is not None:
-                        asset_fig.write_html(os.path.join(indiv_dir, f"{asset}.html"))
-                    else:
-                        asset_fig.show()
-                except Exception as e:
-                    print(f"[Vectorbt] Could not analyse asset {asset}: {e}")
-
-            if per_asset_stats:
-                print("\nINDIVIDUAL ASSET STATISTICS:")
-                print(pd.DataFrame(per_asset_stats))
-
-        # ------------------------------------------------------------------
-        # Stats – for multi-asset portfolios we ask vectorbt to aggregate
-        # across the first-level (asset) dimension by passing ``group_by=True``.
-        # For single-asset, the default behaviour is fine.
-        # ------------------------------------------------------------------
-
-        try:
-            stats_ser = pf.stats(group_by=True) if close_df.shape[1] > 1 else pf.stats()
-        except Exception:
-            stats_ser = pf.stats()
-        print(stats_ser)
-
-        # Persist statistics if requested --------------------------------
-        if args.save and save_dir is not None:
+        
+        # Generate individual asset analysis
+        asset_results = {}
+        for symbol in symbol_names:
             try:
-                # Portfolio-level stats
-                stats_ser.to_csv(os.path.join(port_dir, "portfolio_stats.csv"))
-
-                # Per-asset stats DataFrame if available
-                if "per_asset_stats" in locals() and per_asset_stats:
-                    import pandas as pd
-                    pd.DataFrame(per_asset_stats).to_csv(os.path.join(indiv_dir, "per_asset_stats.csv"))
-
-                # Trade log at top-level of this back-test folder
-                result["trades"].to_csv(os.path.join(save_dir, "trade_log.csv"))
-
-                # Rebuild concise metrics based on vectorbt stats for accuracy
-                # Pull common metrics from vectorbt stats – fall back to SimBroker values
-                metrics_dict = {
-                    "final_equity": float(pf.value().iloc[-1]) if "pf" in locals() else result["final_cash"],
-                    "total_return_pct": stats_ser.get("Total Return [%]", result["summary"].get("total_return_pct")),
-                    "max_drawdown_pct": stats_ser.get("Max Drawdown [%]", result["summary"].get("max_drawdown_pct")),
-                    "sharpe": stats_ser.get("Sharpe Ratio", result["summary"].get("sharpe")),
-                    # Prefer vectorbt 'Total Trades' if available; otherwise SimBroker count of closed trades
-                    "trade_count": int(stats_ser.get("Total Trades", result["trade_count"])),
-                }
-
-                summary_payload = {
-                    "metrics": metrics_dict,                  # concise metrics derived from portfolio
-                    "portfolio_stats": stats_ser.to_dict(),   # full vectorbt statistics
-                    "timespan": {
-                        "start": start_dt.isoformat(),
-                        "end": end_dt.isoformat(),
-                        "days": (end_dt - start_dt).days
-                    }
-                }
-
-                # Include per‐asset statistics when available
-                if "per_asset_stats" in locals() and per_asset_stats:
-                    summary_payload["per_asset_stats"] = {k: v.to_dict() for k, v in per_asset_stats.items()}
-
-                with open(os.path.join(save_dir, "summary.json"), "w") as fh:
-                    json.dump(summary_payload, fh, indent=2, default=str)
+                asset_returns, asset_metrics = visualizer.generate_asset_report(
+                    trades_df=result["trades"],
+                    symbol=symbol,
+                    start_date=start_dt,
+                    end_date=end_dt,
+                    timeframe=primary_timeframe,
+                    benchmark_symbol=symbol  # Use asset itself as benchmark
+                )
+                
+                if asset_returns is not None and asset_metrics:
+                    asset_results[symbol] = (asset_returns, asset_metrics)
+                
             except Exception as e:
-                print(f"[Backtesting] Could not save results: {e}")
-
-        wanted = [
-            "orders",      # individual order markers per asset
-            "trades",      # entry/exit markers
-            "value",       # cumulative equity curve (cum-returns)
-            "assets",      # per-asset market value
-            "drawdowns",   # under-water curve
-        ]
-
-        # Only keep names that exist in this version of vectorbt
-        available = set(pf.subplots.keys())
-        subplots = [s for s in wanted if s in available]
-
-        multi_asset = close_df.shape[1] > 1
-
-        # For multi-asset portfolios vectorbt panels like 'orders', 'trades',
-        # and even 'value' expect a single column.  The recommended approach is
-        # to plot with ``group_by='group'`` which aggregates all columns into
-        # one virtual group (the full portfolio).  We therefore:
-        #   • Drop orders / trades panels (they are per-asset and noisy).
-        #   • Plot using group_by='group' so that 'value' and others work.
-
-        if multi_asset:
-            # Aggregate across assets using vectorbt's built-in grouping
-            group_by_opt = True  # use first level of column MultiIndex
-            # Detailed per-order panels and 'assets' don't support grouped data well
-            subplots = [s for s in subplots if s not in {"orders", "trades", "assets"}]
-        else:
-            # Single-asset plotting: keep all subplots and don't group columns
-            group_by_opt = None
-
-        # Build figure – show or persist
-        fig = pf.plots(subplots=subplots, group_by=group_by_opt)
-
+                print(f"[QuantStats] Could not analyze asset {symbol}: {e}")
+        
+        # Print comprehensive metrics summary
+        visualizer.print_summary(portfolio_metrics, {k: v[1] for k, v in asset_results.items()})
+        
+        # Save results with comprehensive QuantStats tear sheets
         if args.save and save_dir is not None:
-            fig.write_html(os.path.join(port_dir, "portfolio.html"))
-        else:
-            fig.show()  # Interactive display
-    except ImportError:
-        print("[Vectorbt] vectorbt not installed – install with 'pip install vectorbt' to view plots and stats")
+            visualizer.save_results(
+                portfolio_returns=portfolio_returns,
+                portfolio_metrics=portfolio_metrics,
+                asset_results=asset_results,
+                trades_df=result["trades"],
+                save_dir=save_dir,
+                start_date=start_dt,
+                end_date=end_dt,
+                benchmark_symbol=symbol_names[0] if symbol_names else None
+            )
+        
+        # Use final equity from our metrics
+        final_equity_display = portfolio_metrics.get("Final Equity", result["final_cash"])
+        
+    except ImportError as e:
+        print(f"[QuantStats] Required packages not installed: {e}")
+        print("Please install: pip install quantstats")
+        final_equity_display = result["final_cash"]
     except Exception as e:
-        print(f"[Vectorbt] Could not build or plot portfolio: {e}")
-
-    # ------------------------------------------------------------------
-    # Consistent final-equity display ----------------------------------
-    # Use vectorbt Portfolio end value when available so that the printed
-    # figure matches the stats table (avoids confusion with SimBroker
-    # cash balance which ignores leverage effects).
-    # ------------------------------------------------------------------
-
-    final_equity_vbt = None
-    try:
-        final_equity_vbt = float(pf.value().iloc[-1])
-    except Exception:
-        # Fallback to SimBroker equity if vectorbt failed
-        final_equity_vbt = result["final_cash"]
+        print(f"[QuantStats] Could not generate visualizations: {e}")
+        final_equity_display = result["final_cash"]
 
     print("\nBack-test complete")
     print(f"Trades executed : {result['trade_count']}")
-    print(f"Final equity    : {final_equity_vbt:.2f} USDT")
+    print(f"Final equity    : {final_equity_display:.2f} USDT")
     if result['trade_count']:
         print("Last trades:\n", result['trades'].tail())
 

@@ -408,10 +408,10 @@ if __name__ == "__main__":
     
     # Create strategy with custom parameters
     strategy = MACrossoverStrategy(params={
-        'fast_ma_period': 9,
-        'slow_ma_period': 21,
-        'stop_loss_pct': 0.002,  # 2% stop loss
-        'take_profit_pct': 0.003,  # 4% take profit
+        'fast_ma_period': 5,
+        'slow_ma_period': 20,
+        'stop_loss_pct': 0.001,  # 2% stop loss
+        'take_profit_pct': 0.002,  # 4% take profit
         'leverage': 7  # Setting leverage to 20x
     })
     

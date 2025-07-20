@@ -61,14 +61,13 @@ class Metrics:
         self._max_dd = dd.max()
 
         # --------------------------------------------------------------
-        # Sharpe ratio (annualised – match vectorbt)
+        # Sharpe ratio (annualised)
         # --------------------------------------------------------------
-        # VectorBT annualises returns by multiplying by ``sqrt(freq)`` where
-        # ``freq`` is the number of observations per *year* inferred from the
-        # index (e.g. 365-days × 24h × 12 × 5-minute bars = 105 120).
-        # We replicate that formula here so that the Sharpe values in our
-        # custom Metrics summary match those shown in the VectorBT stats
-        # table and in most portfolio-analysis literature.
+        # Annualise returns by multiplying by sqrt(freq) where
+        # freq is the number of observations per year inferred from the
+        # index (e.g. 365-days × 24h × 12 × 5-minute bars = 105,120).
+        # This follows standard portfolio analysis practices for
+        # consistent risk-adjusted return metrics.
 
         returns = equity.pct_change().dropna()
 

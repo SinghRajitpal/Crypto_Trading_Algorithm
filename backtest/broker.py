@@ -122,8 +122,8 @@ class SimBroker:
         # We therefore:
         #   1. Deduct *margin* from available cash when the position is opened.
         #   2. Return the same *margin* to cash when the position is closed.
-        # This ensures that :pyfunc:`equity` (cash + unrealised PnL) matches the
-        # economic reality and aligns with vectorbtʼs equity curve.
+        # This ensures that equity (cash + unrealised PnL) matches the
+        # economic reality and provides accurate performance metrics.
         # ------------------------------------------------------------------
 
         leverage_eff = leverage or 1

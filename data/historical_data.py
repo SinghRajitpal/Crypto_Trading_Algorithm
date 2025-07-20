@@ -49,6 +49,9 @@ def _to_ms(dt: Union[str, datetime, int, None]) -> Optional[int]:
     raise ValueError(f"Unsupported date format: {type(dt)} → {dt}")
 
 
+
+
+
 def _normalize_symbol(symbol: str) -> str:
     """Ensure symbol is in CCXT slash format, e.g. BTC/USDT."""
     if "/" in symbol:
@@ -111,7 +114,6 @@ class HistoricalDataFetcher:
         If the file already exists it will be **appended** (or skipped) unless
         `force=True` which triggers a full re-download.
         """
-
         symbol_norm = _normalize_symbol(symbol)
         file_path = self._cache_path(symbol, timeframe)
 
