@@ -60,6 +60,14 @@ class ProductionExecutionEngine:
         print(f"[ProductionExecution] Initialized with ${total_capital:.2f} USDT capital")
         print(f"[ProductionExecution] Target volatility: 18%, Max allocation: 85%")
     
+    async def setup(self):
+        """Setup the execution engine asynchronously."""
+        try:
+            await self.binance_client.setup_account_config()
+            print("[ProductionExecution] ✅ Account configuration completed")
+        except Exception as e:
+            print(f"[ProductionExecution] ⚠️ Account setup warning: {e}")
+    
     def update_market_data_bar(self, symbol: str, ohlcv_data: Dict[str, float], 
                               atr_value: float, correlation_data: Dict[str, float] = None) -> None:
         """Update market data for 1-min bar processing as per document workflow.
@@ -121,6 +129,40 @@ class ProductionExecutionEngine:
         print(f"[ProductionExecution]   High vol regime: {self.portfolio_manager.is_high_volatility_regime()}")
         
         return True
+    
+    def _calculate_turnover(self, new_allocations: Dict) -> float:
+        """Calculate portfolio turnover from rebalancing.
+        
+        Args:
+            new_allocations: New allocation dictionary.
+            
+        Returns:
+            Portfolio turnover as a percentage.
+        """
+        if not hasattr(self, '_previous_allocations'):
+            self._previous_allocations = {}
+        
+        total_change = 0.0
+        total_capital = self.portfolio_manager.total_capital
+        
+        # Calculate absolute changes in allocations
+        current_symbols = set(new_allocations.keys())
+        previous_symbols = set(self._previous_allocations.keys())
+        all_symbols = current_symbols | previous_symbols
+        
+        for symbol in all_symbols:
+            new_alloc = new_allocations.get(symbol, {}).get('allocated_capital', 0) if isinstance(new_allocations.get(symbol), dict) else 0
+            old_alloc = self._previous_allocations.get(symbol, 0)
+            total_change += abs(new_alloc - old_alloc)
+        
+        # Update previous allocations
+        self._previous_allocations = {
+            symbol: alloc.allocated_capital if hasattr(alloc, 'allocated_capital') else alloc
+            for symbol, alloc in new_allocations.items()
+        }
+        
+        # Return turnover as percentage of total capital
+        return total_change / (2 * total_capital) if total_capital > 0 else 0.0
     
     async def process_signal(self, signal) -> Dict[str, Any]:
         """Process trading signal with production risk management.
@@ -228,8 +270,7 @@ class ProductionExecutionEngine:
             current_price=current_price,
             stop_loss_price=position_info['stop_loss_price'],
             take_profit_price=position_info['take_profit_price'],
-            leverage=position_info['leverage'],
-            slippage_bp=3.0  # 3 basis points realistic slippage
+            leverage=position_info['leverage']
         )
     
     async def _process_exit_signal(self, symbol: str) -> Dict[str, Any]:
@@ -264,6 +305,77 @@ class ProductionExecutionEngine:
             }
         }
     
+    def get_portfolio_summary(self) -> Dict[str, Any]:
+        """Get portfolio summary - delegates to portfolio manager.
+        
+        Returns:
+            Portfolio summary dictionary.
+        """
+        summary = self.portfolio_manager.get_portfolio_summary()
+        # Add active_positions if not present
+        if "active_positions" not in summary:
+            summary["active_positions"] = self.risk_manager.get_risk_metrics().get("active_positions", 0)
+        return summary
+    
+    def get_risk_metrics(self) -> Dict[str, Any]:
+        """Get risk metrics - delegates to risk manager.
+        
+        Returns:
+            Risk metrics dictionary.
+        """
+        return self.risk_manager.get_risk_metrics()
+    
+    async def validate_signal(self, signal, current_price: float) -> Dict[str, Any]:
+        """Validate trading signal - delegates to risk manager.
+        
+        Args:
+            signal: Trading signal object.
+            current_price: Current market price.
+            
+        Returns:
+            Validation result dictionary.
+        """
+        try:
+            # Extract ATR value from signal metadata
+            atr_value = signal.metadata.get('atr_value')
+            if atr_value is None:
+                return {"valid": False, "reason": "Missing ATR value for validation"}
+            
+            # Validate using risk manager
+            result = self.risk_manager.validate_trade(
+                symbol=signal.symbol,
+                action=signal.action,
+                side=signal.side,
+                entry_price=current_price,
+                atr_value=atr_value
+            )
+            
+            # Add position information to signal metadata if valid
+            if result["valid"] and "position_info" in result:
+                position_info = result["position_info"]
+                signal.metadata.update({
+                    "position_size": position_info["size_contracts"],
+                    "position_leverage": position_info["leverage"],
+                    "stop_loss_price": position_info["stop_loss_price"],
+                    "take_profit_price": position_info["take_profit_price"],
+                    "reward_risk_ratio": abs((position_info["take_profit_price"] - current_price) / 
+                                           (current_price - position_info["stop_loss_price"]))
+                })
+            
+            return result
+            
+        except Exception as e:
+            return {"valid": False, "reason": f"Validation error: {str(e)}"}
+    
+    def update_daily_pnl(self, symbol: str, pnl: float) -> None:
+        """Update daily P&L for risk tracking.
+        
+        Args:
+            symbol: Trading pair symbol.
+            pnl: Current unrealized P&L.
+        """
+        self.risk_manager.daily_pnl = max(self.risk_manager.daily_pnl, pnl)
+
     async def emergency_flatten(self, percentage: float = 1.0) -> Dict[str, Any]:
         """Emergency portfolio flattening for kill switches.
         

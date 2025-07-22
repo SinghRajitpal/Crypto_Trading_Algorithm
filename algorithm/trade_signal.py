@@ -29,6 +29,8 @@ class TradeSignal:
     symbol: str  # Trading pair symbol (e.g., "BTCUSDT")
     strategy_id: str  # ID of the strategy that generated the signal
     metadata: Dict[str, Any]  # Additional information about the signal
+    signal_confidence: float  # Confidence level of the signal (0.0 to 1.0)
+    timestamp: int = 0  # Unix timestamp in milliseconds
     
     def __post_init__(self):
         """Validates signal parameters after initialization.
@@ -53,12 +55,6 @@ class TradeSignal:
             
         if not self.strategy_id:
             raise ValueError("Strategy ID must be specified")
-    
-    # Strategy information
-    signal_confidence: float  # Confidence level of the signal (0.0 to 1.0)
-    
-    # Additional information
-    timestamp: int = 0  # Unix timestamp in milliseconds
     
     
    

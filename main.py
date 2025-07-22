@@ -92,6 +92,9 @@ class TradingAlgorithm:
         self.running = True
         
         try:
+            # Setup execution engine
+            await self.execution_engine.setup()
+            
             # Start data collection
             self.data_task = asyncio.create_task(self.data_engine.run())
             print("[TradingAlgorithm] Started data collection task")
@@ -116,9 +119,9 @@ class TradingAlgorithm:
             
             # Display strategy risk parameters
             print("\nSTRATEGY RISK PARAMETERS:")
-            print(f"Stop Loss: {self.strategy.stop_loss_pct*100:.1f}%")
-            print(f"Take Profit: {self.strategy.take_profit_pct*100:.1f}%")
-            print(f"Reward/Risk Ratio: {self.strategy.take_profit_pct/self.strategy.stop_loss_pct:.2f}")
+            print(f"ATR Stop Loss Multiplier: 1.8x")
+            print(f"ATR Take Profit Multiplier: 3.6x (1:2 risk-reward)")
+            print(f"Risk per Trade: 0.8% of allocated capital")
             print("-" * 80)
             
             # Track the last processed time to avoid redundant updates

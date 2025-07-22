@@ -44,8 +44,8 @@ class DataFetcher:
     async def watch_ohlcv(self, symbol, timeframe):
         """Watches for OHLCV (candle) data for a specific symbol-timeframe pair.
         
-        This method continuously monitors for new candles from the exchange
-        and updates the data processor when a closed candle is received.
+        This method first loads historical data, then continuously monitors for new candles
+        from the exchange and updates the data processor when new candles are received.
         
         Args:
             symbol: Trading pair symbol.
@@ -59,6 +59,49 @@ class DataFetcher:
         
         print(f"Starting data collection for {symbol} ({timeframe})")
         
+        try:
+            # First, fetch historical data to populate initial candles
+            print(f"[{symbol}] Fetching historical data...")
+            historical_candles = await self.binance.exchange.fetch_ohlcv(symbol, timeframe, limit=self.data_processor.max_candles + 1)  # Fetch extra to account for filtering
+            
+            # Filter out incomplete current candle to prevent look-ahead bias
+            import time
+            from datetime import datetime
+            
+            current_time = time.time() * 1000  # Current time in milliseconds
+            timeframe_ms = self.binance.exchange.parse_timeframe(timeframe) * 1000  # Timeframe in milliseconds
+            
+            # Calculate the start of the current candle period
+            current_candle_start = (current_time // timeframe_ms) * timeframe_ms
+            
+            # Filter out candles that are from the current incomplete period
+            complete_candles = []
+            for candle in historical_candles:
+                candle_timestamp = candle[0]
+                if candle_timestamp < current_candle_start:  # Only include completed candles
+                    complete_candles.append(candle)
+            
+            # Limit to max_candles after filtering
+            if len(complete_candles) > self.data_processor.max_candles:
+                complete_candles = complete_candles[-self.data_processor.max_candles:]
+            
+            print(f"[{symbol}] Filtered {len(historical_candles)} raw candles to {len(complete_candles)} complete candles")
+            
+            # Process historical candles (only complete ones)
+            for candle in complete_candles:
+                await self.data_processor.update_tracked_candles(symbol, timeframe, candle)
+                candle_count += 1
+            
+            current_candles = len(self.data_processor.get_candles(symbol, timeframe))
+            print(f"[{symbol}] Loaded {current_candles} historical candles")
+            
+        except Exception as e:
+            print(f"[{symbol}] Warning: Could not fetch historical data: {e}")
+            print(f"[{symbol}] Will start with live data only")
+        
+        # Now watch for live data
+        print(f"[{symbol}] Starting live data stream...")
+        
         while True:
             try:
                 # Use BinanceClient for market data
@@ -66,12 +109,17 @@ class DataFetcher:
                 now = time.time() * 1000
                 latest = candles[-1]
                 
-                # Check if this is a closed candle
-                if latest[0] != last_printed and now - latest[0] > self.binance.exchange.parse_timeframe(timeframe) * 1000:
+                # Check if we have new data or if this is initial collection
+                current_candle_count = len(self.data_processor.get_candles(symbol, timeframe))
+                is_new_candle = latest[0] != last_printed
+                is_initial_collection = current_candle_count < self.data_processor.max_candles
+                
+                # Process candle if it's new OR if we're still doing initial collection
+                if is_new_candle and (is_initial_collection or now - latest[0] > self.binance.exchange.parse_timeframe(timeframe) * 1000):
                     candle_count += 1
                     
                     # Only print summary on initial candles or every 10 candles
-                    if candle_count <= 5 or candle_count % 10 == 0:
+                    if candle_count <= 10 or candle_count % 10 == 0:
                         total_candles = self.data_processor.max_candles
                         current_candles = len(self.data_processor.get_candles(symbol, timeframe))
                         print(f"[{symbol}] Collected {current_candles}/{total_candles} candles")

@@ -32,7 +32,7 @@ class OrderExecutor:
         
         print("[OrderExecutor] Initialized")
     
-    async def execute_open_position(self, symbol, side, position_size, current_price=None, stop_loss_price=None, take_profit_price=None, leverage=None, margin_type=None, slippage_bp: float = 0.0):
+    async def execute_open_position(self, symbol, side, position_size, current_price=None, stop_loss_price=None, take_profit_price=None, leverage=None, margin_type=None):
         """Execute opening a position.
         
         Args:
@@ -107,8 +107,7 @@ class OrderExecutor:
                 stop_loss=stop_loss_price,
                 take_profit=take_profit_price,
                 leverage=leverage,
-                margin_type=margin_type,
-                slippage_bp=slippage_bp,
+                margin_type=margin_type
             )
             
             # Check if execution was successful

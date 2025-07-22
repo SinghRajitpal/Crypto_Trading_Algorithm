@@ -101,6 +101,13 @@ class Indicators:
                         latest = results[indicator]
                         print(f"[Indicators] Bollinger Bands: Upper = {latest['upper'][-1]:.2f}, Middle = {latest['middle'][-1]:.2f}, Lower = {latest['lower'][-1]:.2f}")
                         
+                    elif indicator.startswith('atr_'):
+                        period = int(indicator.split('_')[1])
+                        if period <= 0:
+                            raise ValueError(f"Invalid period for ATR: {period}")
+                        results[indicator] = self.atr(high_prices, low_prices, close_prices, period)
+                        print(f"[Indicators] ATR({period}) = {results[indicator][-1]:.4f} (latest value)")
+                        
                     elif indicator == 'atr':
                         results[indicator] = self.atr(high_prices, low_prices, close_prices)
                         print(f"[Indicators] ATR = {results[indicator][-1]:.4f} (latest value)")

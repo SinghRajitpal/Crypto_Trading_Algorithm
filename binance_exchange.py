@@ -46,9 +46,24 @@ class BinanceClient:
         # Initialize exchange
         self.exchange = ccxt.binanceusdm(options)
         
+        # Configure exchange options for futures trading
+        self.exchange.options['warnOnFetchOpenOrdersWithoutSymbol'] = False  # Suppress CCXT warning
+        self.exchange.options['defaultType'] = 'future'  # Use futures API
+        
         # Set sandbox mode if testnet is enabled
         if testnet:
             self.exchange.set_sandbox_mode(True)
+            
+    async def setup_account_config(self):
+        """Setup account configuration for futures trading."""
+        try:
+            # Set position mode to one-way (easier to manage)
+            # This avoids the "position side does not match" error
+            await self.exchange.fapiPrivatePostPositionSideDual({'dualSidePosition': 'false'})
+            print("[BinanceClient] ✅ Position mode set to One-Way")
+        except Exception as e:
+            # This might fail if already set, which is fine
+            print(f"[BinanceClient] Position mode setting: {e}")
     
     # ===== Account & Position Info =====
     
@@ -92,6 +107,10 @@ class BinanceClient:
         except Exception as e:
             print(f"\n❌ Error fetching positions: {e}")
             return []
+    
+    async def get_all_positions(self):
+        """Get all open positions (alias for get_open_positions with no symbol filter)"""
+        return await self.get_open_positions(symbol=None)
     
     async def get_leverage(self, symbol):
         """Get current leverage for a specific symbol"""
@@ -195,6 +214,67 @@ class BinanceClient:
     
     # ===== Position Management =====
     
+    async def monitor_orders(self, symbol: str, check_interval: int = 30) -> None:
+        """Monitor orders for a symbol and cancel remaining orders when SL/TP is hit.
+        
+        Args:
+            symbol: Symbol to monitor orders for.
+            check_interval: How often to check orders in seconds.
+        """
+        try:
+            print(f"[Binance] Starting order monitoring for {symbol}")
+            
+            while True:
+                try:
+                    # Get current positions
+                    positions = await self.get_positions()
+                    active_position = None
+                    
+                    # Check if we still have an active position for this symbol
+                    for pos in positions:
+                        if pos['symbol'] == symbol and abs(float(pos['size'])) > 0:
+                            active_position = pos
+                            break
+                    
+                    # If no active position, cancel any remaining orders
+                    if not active_position:
+                        print(f"[Binance] No active position for {symbol}, canceling remaining orders")
+                        try:
+                            cancelled_orders = await self.cancel_all_orders(symbol)
+                            if cancelled_orders:
+                                print(f"[Binance] ✅ Cancelled {len(cancelled_orders)} remaining orders for {symbol}")
+                            break  # Exit monitoring for this symbol
+                        except Exception as e:
+                            print(f"[Binance] ⚠️ Error cancelling orders: {e}")
+                    
+                    # Check open orders
+                    open_orders = await self.exchange.fetch_open_orders(symbol)
+                    
+                    if not open_orders:
+                        if active_position:
+                            print(f"[Binance] No open orders for {symbol} but position exists")
+                        else:
+                            print(f"[Binance] No orders to monitor for {symbol}")
+                            break
+                    
+                    # Log current order status
+                    stop_loss_orders = [o for o in open_orders if o['type'] == 'stop']
+                    take_profit_orders = [o for o in open_orders if 'take_profit' in o['type'].lower()]
+                    
+                    if stop_loss_orders or take_profit_orders:
+                        print(f"[Binance] Monitoring {len(stop_loss_orders)} SL and {len(take_profit_orders)} TP orders for {symbol}")
+                    
+                    await asyncio.sleep(check_interval)
+                    
+                except Exception as e:
+                    print(f"[Binance] ⚠️ Error in order monitoring loop: {e}")
+                    await asyncio.sleep(check_interval)
+                    
+        except asyncio.CancelledError:
+            print(f"[Binance] Order monitoring cancelled for {symbol}")
+        except Exception as e:
+            print(f"[Binance] ❌ Order monitoring error for {symbol}: {e}")
+
     async def close_position(self, symbol, side=None):
         """Close an open position for a symbol"""
         # Import debug settings
@@ -495,6 +575,16 @@ class BinanceClient:
             # Wait a moment for the order to be processed
             await asyncio.sleep(1)
             
+            # Get the actual fill price for direction validation
+            actual_entry_price = main_order.get('average') or main_order.get('price') or price
+            if actual_entry_price is None:
+                # Fetch current market price as fallback
+                try:
+                    ticker = await self.exchange.fetch_ticker(symbol)
+                    actual_entry_price = ticker['last']
+                except:
+                    actual_entry_price = price  # Use original price as last resort
+            
             # Calculate opposite side for closing orders
             close_side = 'sell' if side == 'buy' else 'buy'
             
@@ -557,38 +647,21 @@ class BinanceClient:
             take_profit_order = None
             if take_profit is not None:
                 try:
-                    # Use direct Binance API parameters for take profit
-                    print(f"[Binance] Creating take profit order at price: {take_profit:.2f}")
+                    # Validate take profit direction first
+                    if ((side == 'buy' and take_profit <= actual_entry_price) or 
+                        (side == 'sell' and take_profit >= actual_entry_price)):
+                        print(f"[Binance] ⚠️ Invalid take profit direction: TP={take_profit:.2f}, Entry={actual_entry_price:.2f}, Side={side}")
+                        print(f"[Binance] Correcting take profit direction...")
+                        # Skip take profit if direction is wrong to prevent losses
+                        take_profit = None
                     
-                    # For Binance Futures, we need to use specific parameter format
-                    take_profit_params = {
-                        'stopPrice': take_profit,
-                    }
-                    
-                    # Add position side if in hedge mode
-                    if is_hedge_mode:
-                        take_profit_params['positionSide'] = position_side
-                    
-                    take_profit_order = await self.exchange.create_order(
-                        symbol=symbol,
-                        type='TAKE_PROFIT_MARKET',
-                        side=close_side,
-                        amount=amount,
-                        params=take_profit_params
-                    )
-                    
-                    print(f"[Binance] ✅ Take profit order created: {take_profit_order.get('id', 'Unknown')}")
-                    
-                except Exception as e:
-                    print(f"[Binance] ⚠️ Failed to create take profit order: {e}")
-                    
-                    # Try alternative method directly with Binance's API structure
-                    try:
-                        print(f"[Binance] Attempting alternative take profit method...")
-                        # Use closePosition parameter for simplicity
+                    if take_profit is not None:
+                        print(f"[Binance] Creating take profit order at price: {take_profit:.2f} (Entry: {actual_entry_price:.2f}, Side: {side})")
+                        
+                        # For Binance Futures TAKE_PROFIT_MARKET orders
                         take_profit_params = {
-                            'closePosition': 'true',
                             'stopPrice': take_profit,
+                            'timeInForce': 'GTC',  # Good Till Cancelled
                         }
                         
                         # Add position side if in hedge mode
@@ -599,14 +672,49 @@ class BinanceClient:
                             symbol=symbol,
                             type='TAKE_PROFIT_MARKET',
                             side=close_side,
-                            amount=0,  # Amount is not needed with closePosition=true
+                            amount=amount,
                             params=take_profit_params
                         )
                         
-                        print(f"[Binance] ✅ Take profit order created with alternative method: {take_profit_order.get('id', 'Unknown')}")
-                    except Exception as alt_e:
-                        print(f"[Binance] ⚠️ Failed to create take profit with alternative method: {alt_e}")
-                        # Continue with the main order even if TP failed
+                        print(f"[Binance] ✅ Take profit order created: {take_profit_order.get('id', 'Unknown')}")
+                    
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    print(f"[Binance] ⚠️ Failed to create take profit order: {e}")
+                    
+                    # Try alternative method for problematic cases
+                    if take_profit is not None and ('invalid' not in error_msg and 'format' not in error_msg):
+                        try:
+                            print(f"[Binance] Attempting simplified take profit method...")
+                            # Simplified approach with basic parameters
+                            take_profit_params = {
+                                'stopPrice': take_profit,
+                            }
+                            
+                            if is_hedge_mode:
+                                take_profit_params['positionSide'] = position_side
+                            
+                            take_profit_order = await self.exchange.create_order(
+                                symbol=symbol,
+                                type='TAKE_PROFIT_MARKET',
+                                side=close_side,
+                                amount=amount,
+                                params=take_profit_params
+                            )
+                            
+                            print(f"[Binance] ✅ Take profit order created with simplified method: {take_profit_order.get('id', 'Unknown')}")
+                        except Exception as alt_e:
+                            print(f"[Binance] ⚠️ Both take profit methods failed: {alt_e}")
+                            # Continue with the main order even if TP failed
+            
+            # Start order monitoring in background if we have SL or TP orders
+            if stop_loss_order is not None or take_profit_order is not None:
+                try:
+                    # Start monitoring task in background
+                    asyncio.create_task(self.monitor_orders(symbol, check_interval=30))
+                    print(f"[Binance] ✅ Started order monitoring for {original_symbol}")
+                except Exception as monitor_e:
+                    print(f"[Binance] ⚠️ Failed to start order monitoring: {monitor_e}")
             
             # Prepare the result with all order information
             return {

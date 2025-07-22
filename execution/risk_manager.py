@@ -90,9 +90,10 @@ class ProductionRiskManager:
         # Calculate dynamic cost adjustment
         dynamic_cost = self.calculate_dynamic_cost_adjustment(volatility_norm)
         
-        # Core formula: Size = (0.8% × Allocated × 0.7) / max(ATR, 0.001) - dynamic_cost
+        # Core formula: Size = (0.8% × Allocated × 0.7) / max(ATR, 0.001) × (1 - dynamic_cost)
         numerator = self.risk_params.risk_per_trade_pct * allocated_capital * self.risk_params.kelly_fraction
-        position_size_usdt = (numerator / atr_adjusted) - (allocated_capital * dynamic_cost)
+        base_position_size = numerator / atr_adjusted
+        position_size_usdt = base_position_size * (1 - dynamic_cost)
         
         # Ensure position size is positive
         position_size_usdt = max(position_size_usdt, 0)
@@ -102,6 +103,24 @@ class ProductionRiskManager:
         
         # Calculate leverage using dynamic leverage engine
         leverage = self.calculate_dynamic_leverage(symbol, atr_adjusted)
+        
+        # Check minimum notional value requirement (Binance: $100)
+        min_notional = 100.0  # Minimum order value in USD
+        current_notional = position_size_contracts * entry_price  # Actual notional value
+        
+        if current_notional < min_notional and position_size_contracts > 0:
+            # Scale up position to meet minimum notional requirement
+            scale_factor = min_notional / current_notional
+            position_size_usdt *= scale_factor
+            position_size_contracts *= scale_factor
+            print(f"[ProductionRisk] Position scaled up {scale_factor:.2f}x to meet ${min_notional} minimum")
+        
+        # Check minimum amount precision (BTCUSDT: 0.001)
+        min_amount = 0.001  # Minimum contract size for BTCUSDT
+        if position_size_contracts < min_amount and position_size_contracts > 0:
+            position_size_contracts = min_amount
+            position_size_usdt = position_size_contracts * entry_price
+            print(f"[ProductionRisk] Position size adjusted to minimum precision: {min_amount} contracts")
         
         # Calculate margin required
         margin_required = position_size_usdt / leverage if leverage > 0 else position_size_usdt
@@ -141,9 +160,11 @@ class ProductionRiskManager:
             Dynamic leverage value.
         """
         # Base leverage calculation with volatility adjustment
-        vol_adjustment = min(1.0, self.risk_params.target_volatility / max(atr_value, 0.001))
+        # Convert ATR to percentage volatility: ATR / current_price
+        atr_pct = atr_value / 100000.0  # Rough price estimate for crypto
+        vol_adjustment = min(1.0, self.risk_params.target_volatility / max(atr_pct, 0.001))
         base_leverage = min(self.risk_params.max_leverage, 
-                          int(self.risk_params.max_leverage * vol_adjustment))
+                          max(1, int(self.risk_params.max_leverage * 0.3)))  # Minimum base leverage
         
         # Drawdown factor: 0.8 if rolling 3-day DD >10%; 0.5 if >14%
         dd_3d = self.get_rolling_drawdown_3d()
@@ -225,7 +246,8 @@ class ProductionRiskManager:
         
         # Calculate normalized volatility for cost adjustment
         portfolio_avg_vol = self.get_portfolio_average_volatility()
-        volatility_norm = atr_value / max(portfolio_avg_vol, 0.001) if portfolio_avg_vol > 0 else 0.5
+        # Cap volatility normalization to prevent extreme values
+        volatility_norm = min(atr_value / max(portfolio_avg_vol, 0.01), 5.0)  # Cap at 5x average
         
         # Calculate position size using production formula
         try:
@@ -319,7 +341,7 @@ class ProductionRiskManager:
         """Get average volatility across active symbols."""
         active_symbols = list(self.portfolio_manager.volatility_data.keys())
         if not active_symbols:
-            return 0.02  # Default volatility
+            return 100.0  # Default volatility in price units (better for crypto)
         
         total_vol = sum(self.portfolio_manager.get_volatility_ema(s) for s in active_symbols)
         return total_vol / len(active_symbols)
@@ -345,6 +367,15 @@ class ProductionRiskManager:
         """Get comprehensive risk metrics."""
         kill_switches = self.check_kill_switches()
         
+        # Determine risk status based on current conditions
+        risk_status = "normal"
+        if self.max_drawdown_hit:
+            risk_status = "critical"
+        elif any(kill_switches.values()):
+            risk_status = "warning"
+        elif self.daily_pnl < -0.05:  # -5% daily loss
+            risk_status = "caution"
+        
         return {
             "daily_pnl": self.daily_pnl,
             "max_drawdown_hit": self.max_drawdown_hit,
@@ -353,6 +384,7 @@ class ProductionRiskManager:
             "equity_slope": self.get_equity_curve_slope(),
             "active_positions": len(self.positions),
             "kill_switches": kill_switches,
+            "risk_status": risk_status,
             "risk_parameters": {
                 "risk_per_trade": self.risk_params.risk_per_trade_pct,
                 "kelly_fraction": self.risk_params.kelly_fraction,

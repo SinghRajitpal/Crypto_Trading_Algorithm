@@ -81,15 +81,18 @@ class MACrossoverStrategy(BaseStrategy):
         This strategy requires two simple moving averages:
         - A fast MA with period specified in params
         - A slow MA with period specified in params
+        - ATR for production risk management
         
         Returns:
             List of indicator names required for this strategy:
             - sma_{fast_ma_period}
             - sma_{slow_ma_period}
+            - atr_14 (for production risk sizing)
         """
         return [
             f'sma_{self.params["fast_ma_period"]}',
-            f'sma_{self.params["slow_ma_period"]}'
+            f'sma_{self.params["slow_ma_period"]}',
+            'atr_14'  # Required for production risk management
         ]
     
     async def _generate_signals(self, data: Dict[str, np.ndarray], indicator_data: Dict[str, np.ndarray], symbol: str) -> TradeSignal:
@@ -182,6 +185,12 @@ class MACrossoverStrategy(BaseStrategy):
             # Get current position from Binance
             current_position = await self.get_position(symbol)
             
+            # Get ATR value for production risk management
+            atr_key = 'atr_14'
+            atr_value = indicator_data.get(atr_key, None)
+            if atr_value is not None:
+                atr_value = atr_value[-1]  # Get latest ATR value
+            
             # Create base metadata
             metadata = {
                 "reason": "No action needed",
@@ -191,7 +200,8 @@ class MACrossoverStrategy(BaseStrategy):
                 "current_position": current_position,
                 "fast_ma_period": self.params['fast_ma_period'],
                 "slow_ma_period": self.params['slow_ma_period'],
-                "position_threshold": self.position_threshold
+                "position_threshold": self.position_threshold,
+                "atr_value": atr_value  # Required for production risk management
             }
             
             # Bullish crossover
