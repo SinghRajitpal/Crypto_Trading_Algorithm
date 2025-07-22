@@ -122,8 +122,12 @@ class AlgoEngine:
         Raises:
             Exception: Any exceptions are caught, logged, and None is returned.
         """
-        # Get latest candles
-        candles = self.data_engine.get_candles(symbol, timeframe)
+        try:
+            # Get latest candles
+            candles = self.data_engine.get_candles(symbol, timeframe)
+        except Exception as e:
+            print(f"[AlgoEngine] Error fetching candles for {symbol}_{timeframe}: {e}")
+            return None
         
         if not candles or len(candles) == 0:
             return None

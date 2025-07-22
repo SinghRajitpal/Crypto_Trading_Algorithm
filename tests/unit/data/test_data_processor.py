@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 import sys
 import os
+import pytest
 from collections import deque
 
 # Add project root to path
@@ -81,62 +82,74 @@ class TestDataProcessor(unittest.TestCase):
         key_special = self.processor.get_candle_key("BTC-USDT", "1m")
         self.assertEqual(key_special, "BTC-USDT_1m")
     
-    async def test_update_tracked_candles_basic(self):
+    def test_update_tracked_candles_basic(self):
         """Test basic candle tracking functionality."""
-        symbol = "BTCUSDT"
-        timeframe = "1m"
+        async def test_basic():
+            symbol = "BTCUSDT"
+            timeframe = "1m"
+            
+            # Add first candle
+            await self.processor.update_tracked_candles(symbol, timeframe, self.sample_candles[0])
+            
+            candles = self.processor.get_candles(symbol, timeframe)
+            self.assertEqual(len(candles), 1)
+            self.assertEqual(candles[0], self.sample_candles[0])
+            
+            # Add second candle
+            await self.processor.update_tracked_candles(symbol, timeframe, self.sample_candles[1])
+            
+            candles = self.processor.get_candles(symbol, timeframe)
+            self.assertEqual(len(candles), 2)
+            self.assertEqual(candles[1], self.sample_candles[1])
         
-        # Add first candle
-        await self.processor.update_tracked_candles(symbol, timeframe, self.sample_candles[0])
-        
-        candles = self.processor.get_candles(symbol, timeframe)
-        self.assertEqual(len(candles), 1)
-        self.assertEqual(candles[0], self.sample_candles[0])
-        
-        # Add second candle
-        await self.processor.update_tracked_candles(symbol, timeframe, self.sample_candles[1])
-        
-        candles = self.processor.get_candles(symbol, timeframe)
-        self.assertEqual(len(candles), 2)
-        self.assertEqual(candles[1], self.sample_candles[1])
+        import asyncio
+        asyncio.run(test_basic())
     
-    async def test_update_tracked_candles_max_limit(self):
+    def test_update_tracked_candles_max_limit(self):
         """Test that max_candles limit is enforced."""
-        symbol = "BTCUSDT"
-        timeframe = "1m"
+        async def test_max_limit():
+            symbol = "BTCUSDT"
+            timeframe = "1m"
+            
+            # Add all sample candles (4 candles, but max is 3)
+            for candle in self.sample_candles:
+                await self.processor.update_tracked_candles(symbol, timeframe, candle)
+            
+            candles = self.processor.get_candles(symbol, timeframe)
+            
+            # Should only keep the last 3 candles
+            self.assertEqual(len(candles), 3)
+            
+            # Should be the last 3 candles from sample_candles
+            expected_candles = self.sample_candles[-3:]
+            self.assertEqual(candles, expected_candles)
         
-        # Add all sample candles (4 candles, but max is 3)
-        for candle in self.sample_candles:
-            await self.processor.update_tracked_candles(symbol, timeframe, candle)
-        
-        candles = self.processor.get_candles(symbol, timeframe)
-        
-        # Should only keep the last 3 candles
-        self.assertEqual(len(candles), 3)
-        
-        # Should be the last 3 candles from sample_candles
-        expected_candles = self.sample_candles[-3:]
-        self.assertEqual(candles, expected_candles)
+        import asyncio
+        asyncio.run(test_max_limit())
     
-    async def test_multiple_symbols_and_timeframes(self):
+    def test_multiple_symbols_and_timeframes(self):
         """Test handling multiple symbol-timeframe pairs."""
-        # Add candles for different symbols and timeframes
-        await self.processor.update_tracked_candles("BTCUSDT", "1m", self.sample_candles[0])
-        await self.processor.update_tracked_candles("BTCUSDT", "5m", self.sample_candles[1])
-        await self.processor.update_tracked_candles("ETHUSDT", "1m", self.sample_candles[2])
+        async def test_multiple():
+            # Add candles for different symbols and timeframes
+            await self.processor.update_tracked_candles("BTCUSDT", "1m", self.sample_candles[0])
+            await self.processor.update_tracked_candles("BTCUSDT", "5m", self.sample_candles[1])
+            await self.processor.update_tracked_candles("ETHUSDT", "1m", self.sample_candles[2])
+            
+            # Verify each pair is stored separately
+            btc_1m = self.processor.get_candles("BTCUSDT", "1m")
+            btc_5m = self.processor.get_candles("BTCUSDT", "5m")
+            eth_1m = self.processor.get_candles("ETHUSDT", "1m")
+            
+            self.assertEqual(len(btc_1m), 1)
+            self.assertEqual(len(btc_5m), 1)
+            self.assertEqual(len(eth_1m), 1)
+            
+            self.assertEqual(btc_1m[0], self.sample_candles[0])
+            self.assertEqual(btc_5m[0], self.sample_candles[1])
+            self.assertEqual(eth_1m[0], self.sample_candles[2])
         
-        # Verify each pair is stored separately
-        btc_1m = self.processor.get_candles("BTCUSDT", "1m")
-        btc_5m = self.processor.get_candles("BTCUSDT", "5m")
-        eth_1m = self.processor.get_candles("ETHUSDT", "1m")
-        
-        self.assertEqual(len(btc_1m), 1)
-        self.assertEqual(len(btc_5m), 1)
-        self.assertEqual(len(eth_1m), 1)
-        
-        self.assertEqual(btc_1m[0], self.sample_candles[0])
-        self.assertEqual(btc_5m[0], self.sample_candles[1])
-        self.assertEqual(eth_1m[0], self.sample_candles[2])
+        import asyncio
+        asyncio.run(test_multiple())
     
     def test_get_candles_empty(self):
         """Test get_candles for non-existent symbol-timeframe pairs."""
@@ -149,22 +162,26 @@ class TestDataProcessor(unittest.TestCase):
         candles_empty = empty_processor.get_candles("BTCUSDT", "1m")
         self.assertEqual(candles_empty, [])
     
-    async def test_get_latest_candle(self):
+    def test_get_latest_candle(self):
         """Test get_latest_candle functionality."""
-        symbol = "BTCUSDT"
-        timeframe = "1m"
+        async def test_latest():
+            symbol = "BTCUSDT"
+            timeframe = "1m"
+            
+            # Test with no data
+            latest = self.processor.get_latest_candle(symbol, timeframe)
+            self.assertIsNone(latest)
+            
+            # Add candles
+            await self.processor.update_tracked_candles(symbol, timeframe, self.sample_candles[0])
+            await self.processor.update_tracked_candles(symbol, timeframe, self.sample_candles[1])
+            
+            # Test latest candle
+            latest = self.processor.get_latest_candle(symbol, timeframe)
+            self.assertEqual(latest, self.sample_candles[1])
         
-        # Test with no data
-        latest = self.processor.get_latest_candle(symbol, timeframe)
-        self.assertIsNone(latest)
-        
-        # Add candles
-        await self.processor.update_tracked_candles(symbol, timeframe, self.sample_candles[0])
-        await self.processor.update_tracked_candles(symbol, timeframe, self.sample_candles[1])
-        
-        # Test latest candle
-        latest = self.processor.get_latest_candle(symbol, timeframe)
-        self.assertEqual(latest, self.sample_candles[1])
+        import asyncio
+        asyncio.run(test_latest())
     
     def test_get_all_symbols(self):
         """Test get_all_symbols functionality."""
@@ -188,32 +205,36 @@ class TestDataProcessor(unittest.TestCase):
         for symbol in expected_symbols:
             self.assertIn(symbol, symbols)
     
-    async def test_circular_buffer_behavior(self):
+    def test_circular_buffer_behavior(self):
         """Test that the circular buffer behaves correctly."""
-        symbol = "BTCUSDT"
-        timeframe = "1m"
+        async def test_circular():
+            symbol = "BTCUSDT"
+            timeframe = "1m"
+            
+            # Add exactly max_candles
+            for i in range(self.processor.max_candles):
+                await self.processor.update_tracked_candles(symbol, timeframe, self.sample_candles[i % len(self.sample_candles)])
+            
+            candles = self.processor.get_candles(symbol, timeframe)
+            self.assertEqual(len(candles), self.processor.max_candles)
+            
+            # Add one more candle - should replace the oldest
+            new_candle = [1642680240000, 42350.0, 42450.0, 42300.0, 42400.0, 120.0]
+            await self.processor.update_tracked_candles(symbol, timeframe, new_candle)
+            
+            candles_after = self.processor.get_candles(symbol, timeframe)
+            
+            # Should still have max_candles
+            self.assertEqual(len(candles_after), self.processor.max_candles)
+            
+            # Latest candle should be the new one
+            self.assertEqual(candles_after[-1], new_candle)
+            
+            # Should not contain the first candle anymore
+            self.assertNotEqual(candles_after[0], candles[0])
         
-        # Add exactly max_candles
-        for i in range(self.processor.max_candles):
-            await self.processor.update_tracked_candles(symbol, timeframe, self.sample_candles[i % len(self.sample_candles)])
-        
-        candles = self.processor.get_candles(symbol, timeframe)
-        self.assertEqual(len(candles), self.processor.max_candles)
-        
-        # Add one more candle - should replace the oldest
-        new_candle = [1642680240000, 42350.0, 42450.0, 42300.0, 42400.0, 120.0]
-        await self.processor.update_tracked_candles(symbol, timeframe, new_candle)
-        
-        candles_after = self.processor.get_candles(symbol, timeframe)
-        
-        # Should still have max_candles
-        self.assertEqual(len(candles_after), self.processor.max_candles)
-        
-        # Latest candle should be the new one
-        self.assertEqual(candles_after[-1], new_candle)
-        
-        # Should not contain the first candle anymore
-        self.assertNotEqual(candles_after[0], candles[0])
+        import asyncio
+        asyncio.run(test_circular())
     
     def test_data_structure_integrity(self):
         """Test that internal data structures maintain integrity."""
@@ -238,22 +259,26 @@ class TestDataProcessor(unittest.TestCase):
         import asyncio
         asyncio.run(test_internal_structure())
     
-    async def test_concurrent_access_simulation(self):
+    def test_concurrent_access_simulation(self):
         """Test behavior under simulated concurrent access."""
-        symbol = "BTCUSDT"
-        timeframe = "1m"
+        async def test_concurrent():
+            symbol = "BTCUSDT"
+            timeframe = "1m"
+            
+            # Simulate rapid updates
+            for candle in self.sample_candles:
+                await self.processor.update_tracked_candles(symbol, timeframe, candle)
+                
+                # Interleave with get operations
+                current_candles = self.processor.get_candles(symbol, timeframe)
+                latest = self.processor.get_latest_candle(symbol, timeframe)
+                
+                # Verify consistency
+                if current_candles:
+                    self.assertEqual(latest, current_candles[-1])
         
-        # Simulate rapid updates
-        for candle in self.sample_candles:
-            await self.processor.update_tracked_candles(symbol, timeframe, candle)
-            
-            # Interleave with get operations
-            current_candles = self.processor.get_candles(symbol, timeframe)
-            latest = self.processor.get_latest_candle(symbol, timeframe)
-            
-            # Verify consistency
-            if current_candles:
-                self.assertEqual(latest, current_candles[-1])
+        import asyncio
+        asyncio.run(test_concurrent())
     
     def test_memory_efficiency(self):
         """Test memory efficiency with large datasets."""

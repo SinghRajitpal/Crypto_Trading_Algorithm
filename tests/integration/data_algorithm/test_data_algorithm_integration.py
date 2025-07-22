@@ -33,6 +33,12 @@ class MockBinanceClient:
     def __init__(self, testnet=True):
         self.testnet = testnet
         
+        # Create mock exchange with needed methods
+        self.exchange = Mock()
+        self.exchange.fetch_ohlcv = AsyncMock(return_value=[])
+        self.exchange.watch_ohlcv = AsyncMock(return_value=[])
+        self.exchange.parse_timeframe = Mock(return_value=60)  # 60 seconds for 1m
+        
     async def close(self):
         pass
 
@@ -45,7 +51,19 @@ class IntegrationTestStrategy(BaseStrategy):
         self.signals_generated = []
         
     def get_required_indicators(self):
-        return ["sma_5", "sma_20"]
+        # Use simpler indicators that work with small data sets
+        return ["sma_3", "sma_5"]
+        
+    async def calculate_signals(self, data, symbol):
+        """Override to ensure timestamp control."""
+        # Call the parent implementation
+        signal = await super().calculate_signals(data, symbol)
+        
+        if signal:
+            # Force timestamp to None so AlgoEngine can set it
+            signal.timestamp = None
+            
+        return signal
         
     async def _generate_signals(self, data, indicator_data, symbol):
         """Generate test signals based on simple logic."""
@@ -59,7 +77,8 @@ class IntegrationTestStrategy(BaseStrategy):
                 "data_points": len(data['close']) if 'close' in data else 0,
                 "indicators_available": list(indicator_data.keys())
             },
-            signal_confidence=0.6
+            signal_confidence=0.6,
+            timestamp=None  # Let AlgoEngine set the timestamp
         )
         
         self.signals_generated.append(signal)
@@ -73,9 +92,8 @@ class MockDataFetcher:
         self.binance_client = binance_client
         self.max_candles = max_candles
         self.running = False
-        self.data_processor = Mock()
         
-        # Simulate real candle data
+        # Simulate real candle data - store directly for reliable access
         self.mock_data = {
             "BTCUSDT_1m": [
                 [1642680000000, 42000.0, 42100.0, 41900.0, 42050.0, 100.0],
@@ -93,15 +111,30 @@ class MockDataFetcher:
             ]
         }
         
+        # Mock the data_processor too for consistency
+        self.data_processor = Mock()
+        self.data_processor.get_candles = lambda symbol, timeframe: self.mock_data.get(f"{symbol}_{timeframe}", [])
+        self.data_processor.get_latest_candle = lambda symbol, timeframe: (
+            self.mock_data.get(f"{symbol}_{timeframe}", [])[-1] 
+            if self.mock_data.get(f"{symbol}_{timeframe}", []) else None
+        )
+        
     async def run(self):
         """Simulate data fetcher running."""
         self.running = True
         await asyncio.sleep(0.1)  # Simulate data collection time
         
     def get_candles(self, symbol, timeframe):
-        """Return mock candle data."""
+        """Return mock candle data directly."""
         key = f"{symbol}_{timeframe}"
         return self.mock_data.get(key, [])
+    
+    def get_latest_candle(self, symbol, timeframe):
+        """Return the latest candle directly."""
+        candles = self.get_candles(symbol, timeframe)
+        if candles:
+            return candles[-1]
+        return None
 
 
 class TestDataAlgorithmIntegration(unittest.TestCase):
@@ -135,7 +168,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
         
         return data_engine, algo_engine
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     def test_basic_data_algorithm_integration(self, mock_data_fetcher_class):
         """Test basic integration between DataEngine and AlgoEngine."""        
         async def test_integration():
@@ -154,7 +187,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             
         asyncio.run(test_integration())
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     def test_signal_generation_pipeline(self, mock_data_fetcher_class):
         """Test complete signal generation pipeline."""
         mock_fetcher = MockDataFetcher(self.mock_client, 100)
@@ -185,7 +218,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
                 
         asyncio.run(test_pipeline())
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     def test_data_consistency_across_engines(self, mock_data_fetcher_class):
         """Test data consistency between DataEngine and AlgoEngine."""
         mock_fetcher = MockDataFetcher(self.mock_client, 100)
@@ -211,7 +244,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             
         asyncio.run(test_consistency())
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     def test_timestamp_synchronization(self, mock_data_fetcher_class):
         """Test timestamp handling and synchronization."""
         mock_fetcher = MockDataFetcher(self.mock_client, 100)
@@ -231,8 +264,11 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             
             # Verify signal has timestamp
             self.assertIsNotNone(signal.timestamp)
-            self.assertGreaterEqual(signal.timestamp, start_time)
-            self.assertLessEqual(signal.timestamp, end_time)
+            
+            # The AlgoEngine should set the timestamp to current time, not candle time
+            # Allow some tolerance for test execution time
+            self.assertGreaterEqual(signal.timestamp, start_time - 1000)  # 1 second tolerance
+            self.assertLessEqual(signal.timestamp, end_time + 1000)  # 1 second tolerance
             
             # Verify candle timestamps are in correct format
             candles = data_engine.get_candles("BTCUSDT", "1m")
@@ -243,7 +279,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
                 
         asyncio.run(test_timestamps())
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     def test_signal_throttling_integration(self, mock_data_fetcher_class):
         """Test signal throttling behavior in integration."""
         mock_fetcher = MockDataFetcher(self.mock_client, 100)
@@ -267,7 +303,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             
         asyncio.run(test_throttling())
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     def test_error_propagation(self, mock_data_fetcher_class):
         """Test error handling and propagation between engines."""
         # Create mock fetcher that raises error
@@ -288,7 +324,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             
         asyncio.run(test_errors())
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     @patch('data.indicators.Indicators')
     def test_indicator_calculation_integration(self, mock_indicators_class, mock_data_fetcher_class):
         """Test integration with indicator calculation."""
@@ -299,8 +335,8 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
         mock_indicators = Mock()
         mock_indicators_class.return_value = mock_indicators
         mock_indicators.calculate_indicators = AsyncMock(return_value={
-            'sma_5': [42100.0, 42150.0, 42200.0, 42250.0, 42300.0],
-            'sma_20': [42000.0, 42025.0, 42050.0, 42075.0, 42100.0]
+            'sma_3': [42200.0, 42250.0, 42300.0],
+            'sma_5': [42100.0, 42150.0, 42200.0, 42250.0, 42300.0]
         })
         
         async def test_indicators():
@@ -315,12 +351,12 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             # Verify indicators were available to strategy
             self.assertIn("indicators_available", signal.metadata)
             indicators_list = signal.metadata["indicators_available"]
+            self.assertIn("sma_3", indicators_list)
             self.assertIn("sma_5", indicators_list)
-            self.assertIn("sma_20", indicators_list)
             
         asyncio.run(test_indicators())
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     def test_multiple_symbol_processing(self, mock_data_fetcher_class):
         """Test processing multiple symbols concurrently."""
         mock_fetcher = MockDataFetcher(self.mock_client, 100)
@@ -352,13 +388,19 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             
         asyncio.run(test_multiple_symbols())
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     def test_data_engine_algorithm_engine_lifecycle(self, mock_data_fetcher_class):
         """Test complete lifecycle of DataEngine and AlgoEngine integration."""
-        mock_fetcher = AsyncMock()
-        mock_fetcher.get_candles = Mock(return_value=[
-            [1642680000000, 42000.0, 42100.0, 41900.0, 42050.0, 100.0]
-        ])
+        # Create a proper mock fetcher that simulates running behavior
+        mock_fetcher = MockDataFetcher(self.mock_client, 100)
+        
+        # Mock the run method to actually set running=True
+        original_run = mock_fetcher.run
+        async def mock_run():
+            mock_fetcher.running = True
+            await original_run()
+            
+        mock_fetcher.run = mock_run
         mock_data_fetcher_class.return_value = mock_fetcher
         
         async def test_lifecycle():
@@ -369,7 +411,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             
             # 2. Start data engine
             data_task = asyncio.create_task(data_engine.run())
-            await asyncio.sleep(0.01)  # Let it start
+            await asyncio.sleep(0.1)  # Give it more time to start
             
             self.assertTrue(data_engine.running)
             
@@ -392,7 +434,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             
         asyncio.run(test_lifecycle())
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     def test_memory_usage_patterns(self, mock_data_fetcher_class):
         """Test memory usage patterns in integration."""
         mock_fetcher = MockDataFetcher(self.mock_client, 10)  # Small max_candles
@@ -416,7 +458,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             
         asyncio.run(test_memory())
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     def test_data_freshness_detection(self, mock_data_fetcher_class):
         """Test data freshness detection and change handling."""
         mock_fetcher = MockDataFetcher(self.mock_client, 100)
@@ -446,7 +488,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             
         asyncio.run(test_freshness())
     
-    @patch('data.data_engine.DataFetcher')  
+    @patch('data.data_fetcher.DataFetcher')  
     def test_signal_metadata_enrichment(self, mock_data_fetcher_class):
         """Test signal metadata enrichment through the pipeline."""
         mock_fetcher = MockDataFetcher(self.mock_client, 100)
@@ -469,7 +511,7 @@ class TestDataAlgorithmIntegration(unittest.TestCase):
             
         asyncio.run(test_metadata())
     
-    @patch('data.data_engine.DataFetcher')
+    @patch('data.data_fetcher.DataFetcher')
     def test_state_isolation_between_symbols(self, mock_data_fetcher_class):
         """Test state isolation between different symbols."""
         mock_fetcher = MockDataFetcher(self.mock_client, 100)

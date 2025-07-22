@@ -50,6 +50,9 @@ class ProductionPortfolioManager:
         self.lookback_bars = 60  # EMA lookback for vol and correlation
         self.regime_percentile = 75  # 75th percentile for high vol regime
         
+        # Track reserved allocations for position management
+        self.reserved_allocations: Dict[str, float] = {}
+        
         print(f"[ProductionPortfolio] Initialized with ${total_capital:.2f}, target_vol={target_volatility:.1%}")
     
     def update_volatility_data(self, symbol: str, atr_value: float) -> None:
@@ -334,6 +337,39 @@ class ProductionPortfolioManager:
             print(f"[ProductionPortfolio] Loaded {len(symbols)} symbols from config")
         except ImportError:
             print("[ProductionPortfolio] Warning: Could not load config.symbols")
+    
+    def reserve_allocation(self, symbol: str, amount: float) -> bool:
+        """Reserve allocation for a position.
+        
+        Args:
+            symbol: Trading pair symbol.
+            amount: Amount to reserve (margin required).
+            
+        Returns:
+            True if reservation successful, False if would exceed limits.
+        """
+        current_reserved = self.reserved_allocations.get(symbol, 0.0)
+        allocated_capital = self.get_allocated_capital(symbol)
+        
+        if current_reserved + amount > allocated_capital:
+            return False
+        
+        self.reserved_allocations[symbol] = current_reserved + amount
+        return True
+    
+    def release_allocation(self, symbol: str, amount: float) -> bool:
+        """Release reserved allocation.
+        
+        Args:
+            symbol: Trading pair symbol.
+            amount: Amount to release.
+            
+        Returns:
+            True if release successful.
+        """
+        if symbol in self.reserved_allocations:
+            self.reserved_allocations[symbol] = max(0.0, self.reserved_allocations[symbol] - amount)
+        return True
 
 
 # Legacy compatibility - map old class to new implementation
