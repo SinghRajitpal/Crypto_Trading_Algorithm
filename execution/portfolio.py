@@ -93,6 +93,59 @@ class ProductionPortfolioManager:
         
         self.correlation_data[pair].append(correlation)
     
+    def initialize_market_data(self, data_engine, symbols: List[str]) -> bool:
+        """Initialize portfolio with real market data from data engine.
+        
+        Args:
+            data_engine: DataEngine instance for fetching market data.
+            symbols: List of symbols to initialize.
+            
+        Returns:
+            True if initialization was successful.
+        """
+        try:
+            print("[ProductionPortfolio] Initializing with real market data...")
+            
+            # Get real-time volatilities from data engine
+            volatilities = data_engine.initialize_portfolio_volatilities(symbols)
+            
+            # Clear existing data and build fresh history
+            self.volatility_data.clear()
+            
+            # Build volatility history for each symbol (need 25+ points for proper EMA)
+            for symbol, volatility in volatilities.items():
+                for _ in range(25):  # Build sufficient history
+                    self.update_volatility_data(symbol, volatility)
+                print(f"[ProductionPortfolio] {symbol}: Initialized with volatility {volatility:.4f}")
+            
+            # Add default correlation data
+            correlation_pairs = [
+                ("BTCUSDT", "ETHUSDT", 0.7),
+                ("BTCUSDT", "SOLUSDT", 0.6), 
+                ("ETHUSDT", "SOLUSDT", 0.75),
+                ("BTCUSDT", "BNBUSDT", 0.65),
+                ("ETHUSDT", "BNBUSDT", 0.7),
+                ("XRPUSDT", "BTCUSDT", 0.5),
+                ("XRPUSDT", "ETHUSDT", 0.55),
+                ("BNBUSDT", "SOLUSDT", 0.6)
+            ]
+            
+            # Clear existing correlation data
+            self.correlation_data.clear()
+            
+            for sym1, sym2, corr in correlation_pairs:
+                if sym1 in symbols and sym2 in symbols:
+                    # Build sufficient history for correlation EMA
+                    for _ in range(25):
+                        self.update_correlation_data(sym1, sym2, corr)
+            
+            print(f"[ProductionPortfolio] ✅ Market data initialization complete for {len(symbols)} symbols")
+            return True
+            
+        except Exception as e:
+            print(f"[ProductionPortfolio] ❌ Error initializing market data: {e}")
+            return False
+    
     def get_volatility_ema(self, symbol: str) -> float:
         """Get EMA of volatility (σ_i) for a symbol.
         
@@ -165,8 +218,13 @@ class ProductionPortfolioManager:
             sigma_i = self.get_volatility_ema(symbol)
             avg_corr_i = self.get_average_correlation(symbol, symbols)
             
+            # Apply volatility floor to prevent extreme weights
+            sigma_i = max(sigma_i, 0.001)  # 0.1% minimum volatility
+            
             # Core formula: w_i = (1/σ_i) × (1 + α × avg_correlation_i)
-            raw_weight = (1 / sigma_i) * (1 + self.alpha * avg_corr_i)
+            # CRITICAL FIX: Use the exact formula from the document
+            correlation_adjustment = 1 + self.alpha * avg_corr_i  # Correct formula: ADD correlation effect
+            raw_weight = (1 / sigma_i) * correlation_adjustment
             raw_weights[symbol] = raw_weight
         
         # Normalize so sum = 1
@@ -178,6 +236,11 @@ class ProductionPortfolioManager:
         normalized_weights = {s: w / total_weight for s, w in raw_weights.items()}
         
         print(f"[ProductionPortfolio] Computed weights for {len(symbols)} symbols")
+        for symbol in symbols:
+            vol = self.get_volatility_ema(symbol)
+            corr = self.get_average_correlation(symbol, symbols)
+            print(f"[ProductionPortfolio]   {symbol}: weight={normalized_weights[symbol]:.4f}, vol={vol:.4f}, corr={corr:.3f}")
+        
         return normalized_weights
     
     def is_high_volatility_regime(self) -> bool:
@@ -187,21 +250,30 @@ class ProductionPortfolioManager:
         Returns:
             True if high volatility regime.
         """
-        if len(self.volatility_history) < 30:
+        if len(self.volatility_history) < 5:  # Need minimum data points
             return False  # Insufficient data
         
-        # Calculate current average volatility
+        # Calculate current average volatility across all active symbols
         active_symbols = list(self.volatility_data.keys())
         if not active_symbols:
             return False
         
-        sigma_hat = sum(self.get_volatility_ema(s) for s in active_symbols) / len(active_symbols)
+        current_volatilities = [self.get_volatility_ema(s) for s in active_symbols]
+        sigma_hat = sum(current_volatilities) / len(current_volatilities)
         
-        # Calculate 75th percentile of last 30 days
-        recent_history = self.volatility_history[-30:]
-        percentile_75 = np.percentile(recent_history, 75)
+        # FIXED: Use proper percentile calculation with minimum history requirement
+        if len(self.volatility_history) >= 10:
+            # Use the full document formula: high_vol_regime if σ_hat > 75th percentile over last 30 days
+            percentile_75 = np.percentile(self.volatility_history, 75)
+        else:
+            # With limited history, use conservative threshold (1.5x average)
+            percentile_75 = np.mean(self.volatility_history) * 1.5
         
-        return sigma_hat > percentile_75
+        is_high_vol = sigma_hat > percentile_75
+        
+        print(f"[ProductionPortfolio] Volatility regime check: σ_hat={sigma_hat:.4f}, 75th percentile={percentile_75:.4f}, high_vol={is_high_vol}")
+        
+        return is_high_vol
     
     def calculate_scaling_multiplier(self) -> float:
         """Calculate volatility targeting scaling multiplier:
@@ -217,20 +289,23 @@ class ProductionPortfolioManager:
         # Calculate average volatility across portfolio (σ_hat)
         sigma_hat = sum(self.get_volatility_ema(s) for s in active_symbols) / len(active_symbols)
         
-        # Update volatility history for regime detection
+        # FIXED: Update volatility history BEFORE checking regime
         self.volatility_history.append(sigma_hat)
         if len(self.volatility_history) > 30:  # Keep 30 days for percentile
             self.volatility_history.pop(0)
         
-        # Volatility targeting component
+        # Volatility targeting component: min(1, target_vol/σ_hat)
         vol_scaling = min(1.0, self.target_volatility / max(sigma_hat, 0.001))
         
-        # Regime adjustment
+        # Regime adjustment: 0.5 if high_vol_regime else 1.0
         regime_factor = 0.5 if self.is_high_volatility_regime() else 1.0
         
+        # Final scaling multiplier
         multiplier = vol_scaling * regime_factor
         
         print(f"[ProductionPortfolio] Scaling multiplier: {multiplier:.3f} (vol_scaling={vol_scaling:.3f}, regime_factor={regime_factor:.3f})")
+        print(f"[ProductionPortfolio]   σ_hat={sigma_hat:.4f}, target_vol={self.target_volatility:.4f}")
+        
         return multiplier
     
     def should_rebalance(self) -> bool:
@@ -263,23 +338,26 @@ class ProductionPortfolioManager:
         # Step 2: Calculate scaling multiplier for volatility targeting
         scaling_multiplier = self.calculate_scaling_multiplier()
         
-        # Step 3: Calculate total allocatable capital with scaling
-        # Apply scaling multiplier to TOTAL allocation, not per asset
-        max_total_allocation = self.total_capital * self.max_allocation_pct
-        scaled_total_allocation = scaling_multiplier * max_total_allocation
+        # Step 3: Calculate allocations with proper scaling
+        # The scaling multiplier should reduce overall exposure during high volatility
+        base_allocation = self.total_capital * self.max_allocation_pct
+        total_scaled_allocation = base_allocation * scaling_multiplier
         
         new_allocations = {}
+        total_check = 0.0
         
         for symbol in active_symbols:
-            # Use raw weight (not scaled per asset) to maintain proper distribution
+            # Apply normalized weight to scaled total allocation
             weight = weights[symbol]
+            allocated_capital = weight * total_scaled_allocation
             
-            # Apply weight to the scaled total allocation
-            allocated_capital = weight * scaled_total_allocation
+            # Additional safety: cap individual allocation at reasonable percentage
+            max_individual_allocation = self.total_capital * 0.50  # Max 50% per asset
+            allocated_capital = min(allocated_capital, max_individual_allocation)
             
             allocation = AllocationWeights(
                 symbol=symbol,
-                weight=weight,  # Store original weight for transparency
+                weight=weight,
                 allocated_capital=allocated_capital,
                 volatility=self.get_volatility_ema(symbol),
                 avg_correlation=self.get_average_correlation(symbol, active_symbols),
@@ -287,18 +365,19 @@ class ProductionPortfolioManager:
             )
             
             new_allocations[symbol] = allocation
+            total_check += allocated_capital
         
         self.allocation_weights = new_allocations
         
         # Log rebalancing details
-        total_allocated = sum(a.allocated_capital for a in new_allocations.values())
-        allocation_pct = (total_allocated / self.total_capital) * 100
+        allocation_pct = (total_check / self.total_capital) * 100
         
         print(f"[ProductionPortfolio] Daily rebalance completed:")
         print(f"[ProductionPortfolio]   Total capital: ${self.total_capital:.2f}")
         print(f"[ProductionPortfolio]   Scaling multiplier: {scaling_multiplier:.3f}")
-        print(f"[ProductionPortfolio]   Max allocation: {self.max_allocation_pct:.1%} (${max_total_allocation:.2f})")
-        print(f"[ProductionPortfolio]   Actual allocated: ${total_allocated:.2f} ({allocation_pct:.1f}%)")
+        print(f"[ProductionPortfolio]   Max base allocation: {self.max_allocation_pct:.1%} (${base_allocation:.2f})")
+        print(f"[ProductionPortfolio]   Scaled allocation target: ${total_scaled_allocation:.2f}")
+        print(f"[ProductionPortfolio]   Actual allocated: ${total_check:.2f} ({allocation_pct:.1f}%)")
         print(f"[ProductionPortfolio]   High vol regime: {self.is_high_volatility_regime()}")
         print(f"[ProductionPortfolio]   Asset allocations:")
         

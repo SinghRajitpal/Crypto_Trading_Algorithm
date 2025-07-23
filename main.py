@@ -7,6 +7,7 @@ from binance_exchange import BinanceClient
 import time
 from datetime import datetime
 import traceback
+import numpy as np
 
 class TradingAlgorithm:
     """Main trading algorithm class that orchestrates the entire trading system.
@@ -114,56 +115,55 @@ class TradingAlgorithm:
             
             print(f"[TradingAlgorithm] ✅ Components initialized with {self.strategy.strategy_id} strategy")
             
-            # === STEP 3: Setup execution engine ===
+            # === STEP 3: Setup execution engine and initialize portfolio ===
             await self.execution_engine.setup()
             
-            # === CRITICAL FIX: Initialize portfolio allocations immediately ===
-            # Force an initial rebalance after a brief data collection period
             print("[TradingAlgorithm] Initializing portfolio allocations...")
             
-            # Give some time for initial data collection and set last_rebalance_time to force rebalance
-            from datetime import datetime, timedelta
-            await asyncio.sleep(5)  # Let data collection start
+            # Start data collection first to get historical candles
+            self.data_task = asyncio.create_task(self.data_engine.run())
+            print("[TradingAlgorithm] Started data collection task")
             
-            # Force rebalance on startup by setting old timestamp
-            self.execution_engine.portfolio_manager.last_rebalance_time = datetime.now() - timedelta(hours=25)
+            # Wait for initial data collection to complete
+            print("[TradingAlgorithm] Waiting for historical data collection...")
+            await asyncio.sleep(8)  # Give enough time for candles to be fetched
             
-            # Add some default volatility data if none exists yet
+            # Initialize portfolio with real market data
             import config
             config_symbols = [symbol for symbol, _ in config.symbols]
-            for symbol in config_symbols:
-                if symbol not in self.execution_engine.portfolio_manager.volatility_data:
-                    # Add default volatility data to enable initial allocation
-                    self.execution_engine.portfolio_manager.update_volatility_data(symbol, 0.02)  # 2% default
-                    print(f"[TradingAlgorithm] Added default volatility data for {symbol}")
             
-            # Trigger initial rebalance with better debugging
-            if config_symbols:
-                print("[TradingAlgorithm] Checking rebalance conditions...")
-                print(f"[TradingAlgorithm] Should rebalance: {self.execution_engine.portfolio_manager.should_rebalance()}")
-                print(f"[TradingAlgorithm] Active symbols with volatility data: {list(self.execution_engine.portfolio_manager.volatility_data.keys())}")
+            # Use the integrated portfolio initialization system
+            initialization_success = self.execution_engine.portfolio_manager.initialize_market_data(
+                self.data_engine, config_symbols
+            )
+            
+            if initialization_success:
+                print("[TradingAlgorithm] ✅ Portfolio data initialization successful")
                 
+                # Force rebalance on startup by setting old timestamp
+                from datetime import datetime, timedelta
+                self.execution_engine.portfolio_manager.last_rebalance_time = datetime.now() - timedelta(hours=25)
+                
+                # Trigger initial rebalance with real data
+                print("[TradingAlgorithm] Executing initial portfolio rebalance...")
                 rebalanced = self.execution_engine.process_daily_rebalance()
+                
                 if rebalanced:
                     print("[TradingAlgorithm] ✅ Initial portfolio allocation completed")
                     # Verify allocation worked
                     summary = self.execution_engine.portfolio_manager.get_portfolio_summary()
                     print(f"[TradingAlgorithm] Total allocated: ${summary['allocated_capital']:.2f} ({summary['allocation_percentage']:.1%})")
                 else:
-                    print("[TradingAlgorithm] ⚠️ Initial portfolio allocation failed - forcing manual rebalance")
-                    # Manual fallback: force rebalance directly
+                    print("[TradingAlgorithm] ⚠️ Initial rebalance failed - attempting manual rebalance")
+                    # Manual fallback
                     allocations = self.execution_engine.portfolio_manager.rebalance_portfolio(config_symbols)
                     if allocations:
                         total = sum(a.allocated_capital for a in allocations.values())
                         print(f"[TradingAlgorithm] ✅ Manual rebalance successful: ${total:.2f} allocated")
-                    else:
-                        print("[TradingAlgorithm] ❌ Manual rebalance also failed")
+            else:
+                print("[TradingAlgorithm] ❌ Portfolio initialization failed - using defaults")
             
-            # Start data collection
-            self.data_task = asyncio.create_task(self.data_engine.run())
-            print("[TradingAlgorithm] Started data collection task")
-            
-            # Wait briefly for initial data to be collected
+            # Wait briefly for any remaining data to stabilize
             await asyncio.sleep(2)
             
             # Print header
@@ -312,24 +312,35 @@ class TradingAlgorithm:
                             # Find stop loss and take profit orders in open orders
                             try:
                                 open_orders = await self.binance_client.get_open_orders(symbol)
-                                sl_order = next((o for o in open_orders if o.get('type', '').startswith('STOP')), None)
-                                tp_order = next((o for o in open_orders if o.get('type', '').startswith('TAKE_PROFIT')), None)
+                                
+                                # More comprehensive order type detection
+                                sl_order = None
+                                tp_order = None
+                                
+                                for order in open_orders:
+                                    order_type = order.get('type', '').lower()
+                                    # Stop loss can be 'stop_market', 'stop', or 'stop_loss_limit'
+                                    if 'stop' in order_type and 'take' not in order_type:
+                                        sl_order = order
+                                    # Take profit can be 'take_profit_market', 'limit' or 'take_profit' 
+                                    elif ('take' in order_type and 'profit' in order_type) or order_type == 'limit':
+                                        tp_order = order
                                 
                                 # Display Stop Loss and Take Profit with clear formatting
                                 print("\nRISK MANAGEMENT ORDERS:")
                                 if sl_order:
-                                    sl_price = float(sl_order.get('stopPrice', 0))
+                                    sl_price = float(sl_order.get('stopPrice', sl_order.get('price', 0)))
                                     entry_price = float(positions_info[symbol]['entry_price']) if positions_info[symbol]['entry_price'] != 'N/A' else current_price
                                     sl_pct = abs(sl_price - entry_price) / entry_price * 100
-                                    print(f"Stop Loss: ${sl_price:.2f} ({sl_pct:.2f}% from entry)")
+                                    print(f"Stop Loss: ${sl_price:.2f} ({sl_pct:.2f}% from entry) [{sl_order.get('type')}]")
                                 else:
                                     print("Stop Loss: Not set")
                                     
                                 if tp_order:
-                                    tp_price = float(tp_order.get('stopPrice', 0))
+                                    tp_price = float(tp_order.get('price', tp_order.get('stopPrice', 0)))
                                     entry_price = float(positions_info[symbol]['entry_price']) if positions_info[symbol]['entry_price'] != 'N/A' else current_price
                                     tp_pct = abs(tp_price - entry_price) / entry_price * 100
-                                    print(f"Take Profit: ${tp_price:.2f} ({tp_pct:.2f}% from entry)")
+                                    print(f"Take Profit: ${tp_price:.2f} ({tp_pct:.2f}% from entry) [{tp_order.get('type')}]")
                                 else:
                                     print("Take Profit: Not set")
                                 
@@ -361,10 +372,13 @@ class TradingAlgorithm:
                         current_portfolio = self.execution_engine.get_portfolio_summary()
                         current_risk = self.execution_engine.get_risk_metrics()
                         
+                        # Get symbol-specific allocated capital
+                        symbol_allocated_capital = self.execution_engine.portfolio_manager.get_allocated_capital(symbol)
+                        
                         print("\nRISK & PORTFOLIO:")
                         print(f"Allocation: {current_portfolio['allocation_percentage']*100:.1f}% | "
                               f"Positions: {current_portfolio['active_positions']}")
-                        print(f"Available Capital: ${current_portfolio['total_capital'] - current_portfolio['allocated_capital']:.2f} | "
+                        print(f"Available Capital: ${symbol_allocated_capital:.2f} | "
                               f"Daily PnL: ${current_risk.get('daily_pnl', 0):.2f}")
                         
                         # 8. Risk Assessment for Open Signals
@@ -472,6 +486,11 @@ class TradingAlgorithm:
                             print(f"  Take Profit: ${float(tp_order.get('stopPrice', 0)):.2f}")
             except Exception as e:
                 print(f"[TradingAlgorithm] Error displaying positions: {e}")
+            
+            # Cleanup execution engine
+            if self.execution_engine:
+                print("\n[TradingAlgorithm] Cleaning up execution engine...")
+                await self.execution_engine.cleanup()
             
             # Close Binance client connection
             print("\n[TradingAlgorithm] Closing exchange connection...")

@@ -145,6 +145,141 @@ class DataEngine:
             return 0.0
             
         return (candle[4] - candle[1]) / candle[1] * 100  # (close - open) / open * 100
+    
+    def calculate_atr_volatility(self, symbol: str, period: int = 14) -> Optional[float]:
+        """Calculate ATR-based volatility for a symbol using real market data.
+        
+        This method calculates the Average True Range (ATR) and converts it to 
+        percentage volatility for portfolio allocation purposes.
+        
+        Args:
+            symbol: Trading pair symbol.
+            period: ATR calculation period (default: 14).
+            
+        Returns:
+            ATR as percentage of current price, or None if insufficient data.
+        """
+        try:
+            candles = self.get_candles(symbol, "1m")
+            if not candles or len(candles) < period + 5:
+                print(f"[DataEngine] Insufficient candles for {symbol} ATR calculation: {len(candles) if candles else 0} available, need {period + 5}")
+                return None
+            
+            # Import indicators for ATR calculation
+            from data.indicators import Indicators
+            import numpy as np
+            
+            indicators = Indicators()
+            
+            # Convert candles to OHLCV format for ATR calculation
+            ohlcv_data = []
+            for candle in candles[-(period + 10):]:  # Use extra candles for stable calculation
+                if len(candle) >= 6:
+                    try:
+                        ohlcv_data.append([
+                            candle[0],          # timestamp
+                            float(candle[1]),   # open
+                            float(candle[2]),   # high  
+                            float(candle[3]),   # low
+                            float(candle[4]),   # close
+                            float(candle[5])    # volume
+                        ])
+                    except (ValueError, IndexError) as e:
+                        print(f"[DataEngine] Error processing candle data for {symbol}: {e}")
+                        continue
+            
+            if len(ohlcv_data) < period:
+                print(f"[DataEngine] Insufficient valid OHLCV data for {symbol}: {len(ohlcv_data)}")
+                return None
+            
+            # Extract price arrays for ATR calculation
+            high_prices = np.array([row[2] for row in ohlcv_data])
+            low_prices = np.array([row[3] for row in ohlcv_data])
+            close_prices = np.array([row[4] for row in ohlcv_data])
+            
+            # Calculate ATR using the indicators module
+            atr_values = indicators.atr(high_prices, low_prices, close_prices, period)
+            if atr_values is None or len(atr_values) == 0:
+                print(f"[DataEngine] ATR calculation returned no values for {symbol}")
+                return None
+            
+            # Get latest ATR value and current price
+            latest_atr = atr_values[-1]
+            current_price = float(candles[-1][4])  # Latest close price
+            
+            # Convert ATR to percentage volatility
+            if current_price > 0 and latest_atr > 0:
+                atr_percentage = latest_atr / current_price
+                
+                # Apply realistic bounds for crypto markets
+                atr_percentage = max(0.005, min(atr_percentage, 0.15))  # 0.5% to 15%
+                
+                print(f"[DataEngine] {symbol} ATR calculation: ATR={latest_atr:.2f}, Price={current_price:.2f}, Vol={atr_percentage:.4f}")
+                return atr_percentage
+            else:
+                print(f"[DataEngine] Invalid price data for {symbol}: ATR={latest_atr}, Price={current_price}")
+                return None
+                
+        except Exception as e:
+            print(f"[DataEngine] Error calculating ATR volatility for {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def initialize_portfolio_volatilities(self, symbols: List[str]) -> Dict[str, float]:
+        """Initialize volatility data for portfolio allocation using real market data.
+        
+        This method fetches historical candles and calculates ATR-based volatility
+        for accurate portfolio allocation weights.
+        
+        Args:
+            symbols: List of symbols to calculate volatilities for.
+            
+        Returns:
+            Dictionary mapping symbols to their volatility values.
+        """
+        volatilities = {}
+        
+        # Default volatilities as fallback (based on crypto market characteristics)
+        default_volatilities = {
+            'BTCUSDT': 0.015,   # 1.5% - typically lower volatility
+            'ETHUSDT': 0.025,   # 2.5% - medium volatility  
+            'XRPUSDT': 0.035,   # 3.5% - higher volatility
+            'BNBUSDT': 0.018,   # 1.8% - lower volatility
+            'SOLUSDT': 0.030    # 3.0% - higher volatility
+        }
+        
+        print("[DataEngine] Calculating real-time volatilities for portfolio initialization...")
+        
+        for symbol in symbols:
+            try:
+                # Get sufficient historical candles for ATR calculation
+                candles = self.get_candles(symbol, "1m")
+                
+                if candles and len(candles) >= 20:  # Need minimum candles for ATR(14)
+                    # Calculate ATR-based volatility using real market data
+                    atr_volatility = self.calculate_atr_volatility(symbol, period=14)
+                    
+                    if atr_volatility is not None and atr_volatility > 0:
+                        # Apply realistic bounds for crypto volatility
+                        atr_volatility = max(0.005, min(atr_volatility, 0.10))  # 0.5% to 10%
+                        volatilities[symbol] = atr_volatility
+                        print(f"[DataEngine] {symbol}: Real ATR volatility = {atr_volatility:.4f} ({atr_volatility*100:.2f}%)")
+                        continue
+                
+                # Fallback to default if real calculation fails
+                default_vol = default_volatilities.get(symbol, 0.02)
+                volatilities[symbol] = default_vol
+                print(f"[DataEngine] {symbol}: Using default volatility = {default_vol:.4f} ({default_vol*100:.2f}%) [insufficient data]")
+                
+            except Exception as e:
+                print(f"[DataEngine] Error calculating volatility for {symbol}: {e}")
+                # Use default volatility as fallback
+                default_vol = default_volatilities.get(symbol, 0.02)
+                volatilities[symbol] = default_vol
+                print(f"[DataEngine] {symbol}: Using default volatility = {default_vol:.4f} ({default_vol*100:.2f}%) [error fallback]")
+        
+        return volatilities
 
 
 if __name__ == "__main__":

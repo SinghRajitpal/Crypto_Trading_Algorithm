@@ -78,12 +78,16 @@ class OrderManager:
         try:
             print(f"[OrderManager] Placing {side.upper()} position for {symbol}")
             
-            # Place the main market order
+            # Determine position side for hedge mode
+            position_side = 'LONG' if side == 'buy' else 'SHORT'
+            
+            # Place the main market order with position side
             main_order = await self.binance_client.exchange.create_order(
                 symbol=symbol,
                 type='market',
                 side=side,
                 amount=amount,
+                params={'positionSide': position_side}
             )
             
             main_order_id = main_order['id']
@@ -101,7 +105,10 @@ class OrderManager:
                         type='stop_market',
                         side=sl_side,
                         amount=amount,
-                        params={'stopPrice': stop_loss}
+                        params={
+                            'stopPrice': stop_loss,
+                            'positionSide': position_side  # Same position side
+                        }
                     )
                     sl_order_id = sl_order['id']
                     associated_orders.append(sl_order_id)
@@ -114,16 +121,20 @@ class OrderManager:
             if take_profit:
                 try:
                     tp_side = 'sell' if side == 'buy' else 'buy'  # Opposite side
+                    # Use stop market order for take profit to ensure execution when triggered
                     tp_order = await self.binance_client.exchange.create_order(
                         symbol=symbol,
-                        type='limit',
+                        type='take_profit_market',  # Market order when take profit is hit
                         side=tp_side,
                         amount=amount,
-                        price=take_profit
+                        params={
+                            'stopPrice': take_profit,
+                            'positionSide': position_side  # Same position side
+                        }
                     )
                     tp_order_id = tp_order['id']
                     associated_orders.append(tp_order_id)
-                    print(f"[OrderManager] ✅ Take profit order placed: {tp_order_id} @ {take_profit}")
+                    print(f"[OrderManager] ✅ Take profit market order placed: {tp_order_id} @ {take_profit}")
                 except Exception as e:
                     print(f"[OrderManager] ❌ Failed to place take profit: {e}")
             

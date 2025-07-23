@@ -227,7 +227,7 @@ class BinanceClient:
             while True:
                 try:
                     # Get current positions
-                    positions = await self.get_positions()
+                    positions = await self.get_open_positions()
                     active_position = None
                     
                     # Check if we still have an active position for this symbol
@@ -307,12 +307,13 @@ class BinanceClient:
         
         # Check if we're in hedge mode
         try:
-            position_mode = await self.exchange.fapiPrivateGet_positionSide_dual()
+            # Try to get position mode - use the correct CCXT method
+            position_mode = await self.exchange.fapiPrivateGetPositionSideDual()
             is_hedge_mode = position_mode.get('dualSidePosition', False)
             print(f"[Binance] Hedge mode is {'enabled' if is_hedge_mode else 'disabled'}")
         except Exception as e:
-            print(f"[Binance] ⚠️ Warning: Error checking hedge mode: {e}")
-            is_hedge_mode = True  # Assume hedge mode by default to be safe
+            print(f"[Binance] Error checking hedge mode: {e}")
+            is_hedge_mode = False  # Assume one-way mode by default for testnet
         
         for position in positions:
             contracts = float(position.get('contracts', 0))
@@ -479,12 +480,12 @@ class BinanceClient:
             
             # Check if we're in hedge mode
             try:
-                position_mode = await self.exchange.fapiPrivateGet_positionSide_dual()
+                position_mode = await self.exchange.fapiPrivateGetPositionSideDual()
                 is_hedge_mode = position_mode.get('dualSidePosition', False)
                 print(f"[Binance] Hedge mode is {'enabled' if is_hedge_mode else 'disabled'}")
             except Exception as e:
                 print(f"[Binance] Error checking hedge mode: {e}")
-                is_hedge_mode = True  # Assume hedge mode by default to be safe
+                is_hedge_mode = False  # Assume one-way mode by default for testnet
             
             # Determine position side based on side
             position_side = 'LONG' if side == 'buy' else 'SHORT'

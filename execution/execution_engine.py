@@ -46,6 +46,10 @@ class ProductionExecutionEngine:
             risk_manager=self.risk_manager
         )
         
+        # Initialize order manager for SL/TP tracking
+        from execution.order_manager import OrderManager
+        self.order_manager = OrderManager(binance_client)
+        
         # Initialize stress handling module
         self.stress_handler = StressHandlingModule(self)
         
@@ -65,8 +69,23 @@ class ProductionExecutionEngine:
         try:
             await self.binance_client.setup_account_config()
             print("[ProductionExecution] ✅ Account configuration completed")
+            
+            # Start order manager monitoring
+            await self.order_manager.start_monitoring()
+            print("[ProductionExecution] ✅ Order manager monitoring started")
+            
         except Exception as e:
-            print(f"[ProductionExecution] ⚠️ Account setup warning: {e}")
+            print(f"[ProductionExecution] ⚠️ Setup warning: {e}")
+    
+    async def cleanup(self):
+        """Cleanup the execution engine."""
+        try:
+            # Stop order manager monitoring
+            await self.order_manager.stop_monitoring()
+            print("[ProductionExecution] ✅ Order manager monitoring stopped")
+            
+        except Exception as e:
+            print(f"[ProductionExecution] ⚠️ Cleanup warning: {e}")
     
     def update_market_data_bar(self, symbol: str, ohlcv_data: Dict[str, float], 
                               atr_value: float, correlation_data: Dict[str, float] = None) -> None:
@@ -286,16 +305,57 @@ class ProductionExecutionEngine:
         print(f"[ProductionExecution]   SL: {position_info['stop_loss_price']:.2f}")
         print(f"[ProductionExecution]   TP: {position_info['take_profit_price']:.2f}")
         
-        # Execute the trade
-        return await self.order_executor.execute_open_position(
-            symbol=symbol,
-            side=side,
-            position_size=position_info['size_contracts'],
-            current_price=current_price,
-            stop_loss_price=position_info['stop_loss_price'],
-            take_profit_price=position_info['take_profit_price'],
-            leverage=position_info['leverage']
-        )
+        # CRITICAL FIX: Use order manager for proper SL/TP tracking
+        # Instead of direct execution, use the order manager which handles automatic cancellation
+        try:
+            # Set leverage first
+            await self.binance_client.set_leverage(symbol, position_info['leverage'])
+            
+            # Use order manager for tracked position with SL/TP
+            order_result = await self.order_manager.place_position_with_sltp(
+                symbol=symbol,
+                side=side,
+                amount=position_info['size_contracts'],
+                stop_loss=position_info['stop_loss_price'],
+                take_profit=position_info['take_profit_price'],
+                leverage=position_info['leverage']
+            )
+            
+            if order_result.get('status') == 'success':
+                print(f"[ProductionExecution] ✅ Position opened with automated SL/TP tracking")
+                print(f"[ProductionExecution]   Main Order ID: {order_result.get('main_order_id')}")
+                print(f"[ProductionExecution]   SL Order ID: {order_result.get('stop_loss_order_id')}")
+                print(f"[ProductionExecution]   TP Order ID: {order_result.get('take_profit_order_id')}")
+                
+                return {
+                    "status": "success",
+                    "symbol": symbol,
+                    "action": "open",
+                    "side": side,
+                    "size": position_info['size_contracts'],
+                    "order_ids": {
+                        "main": order_result.get('main_order_id'),
+                        "stop_loss": order_result.get('stop_loss_order_id'),
+                        "take_profit": order_result.get('take_profit_order_id')
+                    }
+                }
+            else:
+                error_msg = order_result.get('error', 'Unknown error from order manager')
+                print(f"[ProductionExecution] ❌ Order manager failed: {error_msg}")
+                return {
+                    "status": "error",
+                    "reason": error_msg,
+                    "symbol": symbol
+                }
+        
+        except Exception as e:
+            error_msg = f"Error in order manager execution: {str(e)}"
+            print(f"[ProductionExecution] ❌ {error_msg}")
+            return {
+                "status": "error",
+                "reason": error_msg,
+                "symbol": symbol
+            }
     
     async def _process_exit_signal(self, symbol: str) -> Dict[str, Any]:
         """Process exit position signal."""
