@@ -1,131 +1,351 @@
 #!/usr/bin/env python3
 """
-Comprehensive Test Execution Script
-Senior Quantitative Developer Testing Protocol
+Comprehensive Test Runner for Crypto Trading Algorithm.
 
-This script provides organized test execution for the crypto trading algorithm
-with detailed reporting and component validation.
+This script provides a unified interface to run all types of tests:
+- pytest unit tests
+- pytest integration tests  
+- unittest comprehensive tests
+- live testnet validation
+- stress tests
+- mathematical validation
+
+Usage:
+    python run_comprehensive_tests.py [options]
+    
+Options:
+    --unit          Run unit tests only
+    --integration   Run integration tests only
+    --stress        Run stress tests only
+    --live          Run live testnet tests only
+    --unittest      Run unittest suite only
+    --mathematical  Run mathematical validation only
+    --all           Run all tests (default)
+    --fast          Skip slow tests
+    --verbose       Increase verbosity
+    --no-capture    Don't capture output
 """
 
-import subprocess
 import sys
+import os
+import argparse
+import subprocess
 import time
 from datetime import datetime
+from typing import List, Dict, Any
+
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def run_test_suite(test_path, description):
-    """Run a specific test suite and capture results."""
-    print(f"\n{'='*80}")
-    print(f"EXECUTING: {description}")
-    print(f"TEST PATH: {test_path}")
-    print(f"TIMESTAMP: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*80}")
+class TestRunner:
+    """Comprehensive test runner with detailed reporting."""
     
-    start_time = time.time()
-    
-    try:
-        result = subprocess.run([
-            sys.executable, '-m', 'pytest', test_path, '-v', '--tb=short'
-        ], capture_output=True, text=True, cwd='/Users/singhs/Documents/Coding/Crypto Trading Algorithm')
+    def __init__(self, verbose: bool = False, no_capture: bool = False):
+        self.verbose = verbose
+        self.no_capture = no_capture
+        self.results = {}
+        self.start_time = None
+        self.total_tests = 0
+        self.passed_tests = 0
+        self.failed_tests = 0
         
-        execution_time = time.time() - start_time
+    def log(self, message: str, level: str = "INFO"):
+        """Log messages with timestamp."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        prefix = f"[{timestamp}] [{level}]"
         
-        print(f"Execution Time: {execution_time:.2f} seconds")
-        print(f"Return Code: {result.returncode}")
-        
-        if result.returncode == 0:
-            print("✅ ALL TESTS PASSED")
+        if level == "ERROR":
+            print(f"\033[91m{prefix} {message}\033[0m")
+        elif level == "SUCCESS":
+            print(f"\033[92m{prefix} {message}\033[0m")
+        elif level == "WARNING":
+            print(f"\033[93m{prefix} {message}\033[0m")
         else:
-            print("❌ SOME TESTS FAILED")
+            print(f"{prefix} {message}")
+    
+    def run_command(self, command: List[str], description: str) -> Dict[str, Any]:
+        """Run a command and capture results."""
+        self.log(f"Running: {description}")
+        if self.verbose:
+            self.log(f"Command: {' '.join(command)}")
         
-        # Print output
-        if result.stdout:
-            print("\nSTDOUT:")
-            print(result.stdout)
+        start_time = time.time()
         
-        if result.stderr:
-            print("\nSTDERR:")
-            print(result.stderr)
+        try:
+            # Set up environment
+            env = os.environ.copy()
+            env['PYTHONPATH'] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             
-        return result.returncode == 0, execution_time
+            # Run command
+            result = subprocess.run(
+                command,
+                capture_output=not self.no_capture,
+                text=True,
+                env=env,
+                timeout=300,  # 5 minutes timeout
+                cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
+            
+            duration = time.time() - start_time
+            
+            success = result.returncode == 0
+            if success:
+                self.log(f"✅ {description} completed in {duration:.2f}s", "SUCCESS")
+                self.passed_tests += 1
+            else:
+                self.log(f"❌ {description} failed in {duration:.2f}s", "ERROR")
+                if result.stdout and self.verbose:
+                    self.log(f"STDOUT:\n{result.stdout}")
+                if result.stderr:
+                    self.log(f"STDERR:\n{result.stderr}")
+                self.failed_tests += 1
+            
+            return {
+                'success': success,
+                'returncode': result.returncode,
+                'duration': duration,
+                'stdout': result.stdout,
+                'stderr': result.stderr,
+                'description': description
+            }
+            
+        except subprocess.TimeoutExpired:
+            duration = time.time() - start_time
+            self.log(f"⏰ {description} timed out after {duration:.2f}s", "ERROR")
+            self.failed_tests += 1
+            return {
+                'success': False,
+                'returncode': -1,
+                'duration': duration,
+                'stdout': '',
+                'stderr': 'Command timed out',
+                'description': description
+            }
+        except Exception as e:
+            duration = time.time() - start_time
+            self.log(f"💥 {description} crashed: {str(e)}", "ERROR")
+            self.failed_tests += 1
+            return {
+                'success': False,
+                'returncode': -2,
+                'duration': duration,
+                'stdout': '',
+                'stderr': str(e),
+                'description': description
+            }
+    
+    def run_pytest_tests(self, markers: List[str] = None, extra_args: List[str] = None) -> Dict[str, Any]:
+        """Run pytest with specified markers."""
+        command = ['python3', '-m', 'pytest']
         
-    except Exception as e:
-        print(f"❌ EXECUTION ERROR: {e}")
-        return False, 0
+        if markers:
+            for marker in markers:
+                command.extend(['-m', marker])
+        
+        # Add standard pytest args
+        command.extend([
+            '--tb=short',
+            '--strict-markers',
+            '-v' if self.verbose else '-q'
+        ])
+        
+        if self.no_capture:
+            command.append('-s')
+        
+        if extra_args:
+            command.extend(extra_args)
+        
+        # Add test directory
+        command.append('tests/')
+        
+        description = f"pytest tests"
+        if markers:
+            description += f" (markers: {', '.join(markers)})"
+        
+        return self.run_command(command, description)
+    
+    def run_unittest_tests(self) -> Dict[str, Any]:
+        """Run unittest suite."""
+        command = [
+            'python3', '-m', 'unittest',
+            'tests.test_unittest_comprehensive',
+            '-v' if self.verbose else ''
+        ]
+        # Remove empty string if not verbose
+        command = [arg for arg in command if arg]
+        
+        return self.run_command(command, "unittest comprehensive tests")
+    
+    def run_specific_test_file(self, file_path: str, description: str = None) -> Dict[str, Any]:
+        """Run a specific test file."""
+        if not description:
+            description = f"Test file: {os.path.basename(file_path)}"
+        
+        command = ['python3', '-m', 'pytest', file_path, '-v' if self.verbose else '-q']
+        if self.no_capture:
+            command.append('-s')
+        
+        return self.run_command(command, description)
+    
+    def print_summary(self):
+        """Print comprehensive test summary."""
+        duration = time.time() - self.start_time if self.start_time else 0
+        
+        print("\n" + "="*80)
+        print("🧪 COMPREHENSIVE TEST EXECUTION SUMMARY")
+        print("="*80)
+        
+        # Overall stats
+        total_executed = self.passed_tests + self.failed_tests
+        success_rate = (self.passed_tests / total_executed * 100) if total_executed > 0 else 0
+        
+        print(f"📊 Total Test Suites: {total_executed}")
+        print(f"✅ Passed: {self.passed_tests}")
+        print(f"❌ Failed: {self.failed_tests}")
+        print(f"📈 Success Rate: {success_rate:.1f}%")
+        print(f"⏱️  Total Duration: {duration:.2f} seconds")
+        
+        # Result details
+        if self.results:
+            print("\n📋 Detailed Results:")
+            print("-" * 80)
+            
+            for test_name, result in self.results.items():
+                status = "✅ PASS" if result['success'] else "❌ FAIL"
+                duration_str = f"{result['duration']:.2f}s"
+                print(f"{status:<8} {test_name:<50} {duration_str:>8}")
+                
+                if not result['success'] and result['stderr']:
+                    print(f"         Error: {result['stderr'][:100]}...")
+        
+        # Production readiness assessment
+        print("\n🏭 PRODUCTION READINESS ASSESSMENT:")
+        print("-" * 50)
+        
+        if success_rate >= 95:
+            print("🟢 PRODUCTION READY - All critical systems validated")
+        elif success_rate >= 85:
+            print("🟡 CONDITIONALLY READY - Minor issues detected")
+        else:
+            print("🔴 NOT PRODUCTION READY - Critical failures detected")
+        
+        # Recommendations
+        print("\n📝 RECOMMENDATIONS:")
+        if self.failed_tests > 0:
+            print("- Review failed test outputs above")
+            print("- Fix failing components before deployment")
+            print("- Re-run tests after fixes")
+        else:
+            print("- All tests passing - system ready for deployment")
+            print("- Consider running stress tests under load")
+            print("- Monitor system performance in production")
+        
+        print("="*80)
+        
+        return success_rate >= 95
 
 
 def main():
-    """Execute comprehensive test suite with detailed reporting."""
-    print("COMPREHENSIVE CRYPTO TRADING ALGORITHM TEST SUITE")
-    print("Senior Quantitative Developer | Testing Architect")
-    print(f"Execution started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    parser = argparse.ArgumentParser(
+        description="Comprehensive Test Runner for Crypto Trading Algorithm",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    python run_comprehensive_tests.py --all          # Run all tests
+    python run_comprehensive_tests.py --unit         # Run unit tests only
+    python run_comprehensive_tests.py --live         # Run live testnet tests
+    python run_comprehensive_tests.py --fast -v      # Fast tests with verbose output
+        """
+    )
     
-    # Define test suites in order of execution priority
-    test_suites = [
-        # Core component tests (high confidence)
-        ("tests/unit/test_comprehensive_unit.py::TestProductionPortfolioManagerUnit::test_initialization_parameters", "Portfolio Manager Initialization"),
-        ("tests/unit/test_comprehensive_unit.py::TestProductionPortfolioManagerUnit::test_weight_computation_formula", "Portfolio Weight Computation Formula"),
-        ("tests/unit/test_comprehensive_unit.py::TestProductionRiskManagerUnit::test_initialization_and_parameters", "Risk Manager Parameter Validation"),
-        ("tests/unit/test_comprehensive_unit.py::TestProductionRiskManagerUnit::test_dynamic_cost_adjustment_calculation", "Dynamic Cost Adjustment"),
+    # Test selection arguments
+    parser.add_argument('--unit', action='store_true', help='Run unit tests only')
+    parser.add_argument('--integration', action='store_true', help='Run integration tests only')
+    parser.add_argument('--stress', action='store_true', help='Run stress tests only')
+    parser.add_argument('--live', action='store_true', help='Run live testnet tests only')
+    parser.add_argument('--unittest', action='store_true', help='Run unittest suite only')
+    parser.add_argument('--mathematical', action='store_true', help='Run mathematical validation only')
+    parser.add_argument('--all', action='store_true', help='Run all tests (default)')
+    
+    # Execution options
+    parser.add_argument('--fast', action='store_true', help='Skip slow tests')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Increase verbosity')
+    parser.add_argument('--no-capture', action='store_true', help="Don't capture output")
+    
+    args = parser.parse_args()
+    
+    # Default to all tests if no specific test type selected
+    if not any([args.unit, args.integration, args.stress, args.live, args.unittest, args.mathematical]):
+        args.all = True
+    
+    # Initialize test runner
+    runner = TestRunner(verbose=args.verbose, no_capture=args.no_capture)
+    runner.start_time = time.time()
+    
+    runner.log("🚀 Starting Comprehensive Test Execution")
+    runner.log(f"Arguments: {vars(args)}")
+    
+    # Run selected tests
+    try:
+        if args.unit or args.all:
+            runner.results['Unit Tests'] = runner.run_pytest_tests(['unit'])
         
-        # Extended component tests  
-        ("tests/unit/test_comprehensive_unit.py::TestProductionPortfolioManagerUnit", "Complete Portfolio Manager Unit Tests"),
-        ("tests/unit/test_comprehensive_unit.py::TestProductionRiskManagerUnit::test_dynamic_leverage_calculation", "Dynamic Leverage Calculation"),
-        ("tests/unit/test_comprehensive_unit.py::TestStressHandlingModuleUnit::test_stress_handler_initialization", "Stress Handler Initialization"),
+        if args.integration or args.all:
+            runner.results['Integration Tests'] = runner.run_pytest_tests(['integration'])
         
-        # Integration tests (if API issues resolved)
-        # ("tests/execution/test_comprehensive_execution.py::TestProductionPortfolioManager", "Execution Portfolio Manager Tests"),
-        # ("tests/algorithm/test_comprehensive_algorithm.py::TestAlgorithmEngineCore::test_initialization", "Algorithm Engine Core Tests"),
-    ]
-    
-    # Execution tracking
-    results = []
-    total_time = 0
-    
-    for test_path, description in test_suites:
-        success, exec_time = run_test_suite(test_path, description)
-        results.append((description, success, exec_time))
-        total_time += exec_time
+        if args.stress or args.all:
+            runner.results['Stress Tests'] = runner.run_pytest_tests(['stress'])
         
-        # Add delay between test suites
-        time.sleep(1)
+        if args.mathematical or args.all:
+            runner.results['Mathematical Tests'] = runner.run_pytest_tests(['mathematical'])
+        
+        if args.unittest or args.all:
+            runner.results['Unittest Suite'] = runner.run_unittest_tests()
+        
+        if args.live or args.all:
+            if not args.fast:
+                runner.results['Live Testnet'] = runner.run_specific_test_file(
+                    'tests/test_live_testnet_validation.py',
+                    'Live Testnet Validation'
+                )
+            else:
+                runner.log("⏩ Skipping live testnet tests (fast mode)", "WARNING")
+        
+        # Additional comprehensive tests
+        if args.all:
+            runner.results['Portfolio Manager'] = runner.run_specific_test_file(
+                'tests/test_portfolio_manager_pytest.py',
+                'Portfolio Manager Tests'
+            )
+            
+            runner.results['Risk Manager'] = runner.run_specific_test_file(
+                'tests/test_risk_manager_pytest.py', 
+                'Risk Manager Tests'
+            )
+            
+            runner.results['Stress Handler'] = runner.run_specific_test_file(
+                'tests/test_stress_handler_pytest.py',
+                'Stress Handler Tests'
+            )
     
-    # Generate final report
-    print(f"\n{'='*80}")
-    print("COMPREHENSIVE TEST EXECUTION REPORT")
-    print(f"{'='*80}")
-    print(f"Total Execution Time: {total_time:.2f} seconds")
-    print(f"Test Suites Executed: {len(results)}")
+    except KeyboardInterrupt:
+        runner.log("⚠️ Test execution interrupted by user", "WARNING")
+        return 1
+    except Exception as e:
+        runner.log(f"💥 Unexpected error during test execution: {str(e)}", "ERROR")
+        return 1
     
-    passed = sum(1 for _, success, _ in results if success)
-    failed = len(results) - passed
+    # Print summary and determine exit code
+    production_ready = runner.print_summary()
     
-    print(f"Test Suites Passed: {passed}")
-    print(f"Test Suites Failed: {failed}")
-    print(f"Success Rate: {(passed/len(results)*100):.1f}%")
-    
-    print(f"\nDETAILED RESULTS:")
-    for description, success, exec_time in results:
-        status = "✅ PASS" if success else "❌ FAIL"
-        print(f"  {status} | {exec_time:6.2f}s | {description}")
-    
-    # Assessment
-    if passed >= len(results) * 0.8:  # 80% success threshold
-        print(f"\n🎯 ASSESSMENT: SYSTEM VALIDATION SUCCESSFUL")
-        print("Core components demonstrate production readiness")
-    elif passed >= len(results) * 0.6:  # 60% success threshold  
-        print(f"\n⚠️  ASSESSMENT: SYSTEM PARTIALLY VALIDATED")
-        print("Core components functional, some integration issues remain")
+    if production_ready:
+        runner.log("🎉 All tests completed successfully - System is production ready!", "SUCCESS")
+        return 0
     else:
-        print(f"\n❌ ASSESSMENT: SYSTEM REQUIRES SIGNIFICANT FIXES")
-        print("Critical components need attention before production deployment")
-    
-    print(f"\nReport generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("Testing Protocol: Senior Quantitative Developer Standards")
-    
-    return passed >= len(results) * 0.6  # Return True if at least 60% passed
+        runner.log("⚠️ Some tests failed - System needs attention before production", "WARNING")
+        return 1
 
 
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    sys.exit(main())

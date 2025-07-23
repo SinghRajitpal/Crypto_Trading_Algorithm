@@ -10,12 +10,23 @@ import asyncio
 import sys
 import os
 from typing import Dict, Any
+from datetime import datetime, timedelta
+from unittest.mock import Mock, AsyncMock, MagicMock
 
 # Add project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from algorithm.algo_engine import AlgoEngine
 from execution.execution_engine import ProductionExecutionEngine
+from execution.portfolio import ProductionPortfolioManager, AllocationWeights
+from execution.risk_manager import ProductionRiskManager, ProductionRiskParameters
+from execution.stress_handler import StressHandlingModule
+from execution.order_manager import OrderManager
+from execution.executor import OrderExecutor
+from binance_exchange import BinanceClient
+from algorithm.trade_signal import TradeSignal
+from algorithm.strategies.ma_crossover import MACrossoverStrategy
+from data.data_engine import DataEngine
 from tests.utils.mock_objects import (
     MockDataEngine,
     MockBinanceClient,
@@ -85,6 +96,92 @@ def test_symbols():
 def test_timeframes():
     """Fixture providing standard test timeframes."""
     return ["1m", "5m"]
+
+
+@pytest.fixture
+def test_capital():
+    """Fixture providing standard test capital amount."""
+    return 15000.0
+
+
+@pytest.fixture
+def test_symbols():
+    """Fixture providing standard test symbols."""
+    return ["BTCUSDT", "ETHUSDT", "XRPUSDT", "BNBUSDT", "SOLUSDT"]
+
+
+@pytest.fixture
+def portfolio_manager(test_capital):
+    """Production portfolio manager instance."""
+    return ProductionPortfolioManager(total_capital=test_capital)
+
+
+@pytest.fixture
+def risk_manager(portfolio_manager):
+    """Production risk manager instance."""
+    return ProductionRiskManager(portfolio_manager=portfolio_manager)
+
+
+@pytest.fixture
+def stress_handler():
+    """Stress handler instance with mock execution engine."""
+    mock_execution_engine = Mock()
+    return StressHandlingModule(mock_execution_engine)
+
+
+@pytest.fixture
+def data_engine(mock_binance_client):
+    """Data engine instance with mock client."""
+    return DataEngine(binance_client=mock_binance_client)
+
+
+@pytest.fixture
+def order_executor(mock_binance_client, portfolio_manager, risk_manager):
+    """Order executor instance."""
+    return OrderExecutor(
+        binance_client=mock_binance_client,
+        portfolio_manager=portfolio_manager,
+        risk_manager=risk_manager
+    )
+
+
+@pytest.fixture
+def sample_trade_signal():
+    """Sample trade signal for testing."""
+    return TradeSignal(
+        symbol="BTCUSDT",
+        side="buy",
+        action="open",
+        strategy_id="test_strategy",
+        metadata={"confidence": 0.8, "entry_price": 50000.0},
+        signal_confidence=0.8
+    )
+
+
+@pytest.fixture
+def sample_market_data():
+    """Sample market data for testing."""
+    return {
+        "symbol": "BTCUSDT",
+        "price": 50000.0,
+        "timestamp": datetime.now(),
+        "volume": 1000000.0,
+        "high": 51000.0,
+        "low": 49000.0,
+        "open": 50500.0,
+        "close": 50000.0
+    }
+
+
+@pytest.fixture
+def test_allocations(portfolio_manager, test_symbols):
+    """Sample portfolio allocations."""
+    for i, symbol in enumerate(test_symbols[:3]):
+        portfolio_manager.update_volatility_data(symbol, 0.02 + i * 0.01)
+    
+    # Force rebalance
+    portfolio_manager.last_rebalance_time = datetime.now() - timedelta(hours=25)
+    return portfolio_manager.rebalance_portfolio(test_symbols[:3])
 
 
 @pytest.fixture

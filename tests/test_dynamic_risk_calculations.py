@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from execution.portfolio import ProductionPortfolioManager, AllocationWeights
-from execution.risk_manager import ProductionRiskManager, RiskParameters
+from execution.risk_manager import ProductionRiskManager, ProductionRiskParameters
 from execution.execution_engine import ProductionExecutionEngine
 from binance_exchange import BinanceClient
 

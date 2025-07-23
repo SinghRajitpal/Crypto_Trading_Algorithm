@@ -56,6 +56,11 @@ class ProductionRiskManager:
         
         print(f"[ProductionRisk] Initialized with 0.8% risk, {self.risk_params.kelly_fraction} Kelly fraction")
     
+    @property
+    def risk_per_trade(self) -> float:
+        """Get risk per trade as a decimal (0.008 for 0.8%)."""
+        return self.risk_params.risk_per_trade_pct
+    
     def calculate_dynamic_cost_adjustment(self, volatility_norm: float) -> float:
         """Calculate dynamic cost adjustment based on normalized volatility.
         
