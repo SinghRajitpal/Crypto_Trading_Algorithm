@@ -21,6 +21,7 @@ class MockDataEngine:
         """Initialize mock data engine."""
         self.call_count = {}
         self.binance_client = None
+        self.candles_data = {}  # Add candles_data attribute for test compatibility
         
     def get_candles(self, symbol: str, timeframe: str) -> List[List]:
         """Generate mock candle data.
@@ -32,6 +33,11 @@ class MockDataEngine:
         Returns:
             List of OHLCV candles
         """
+        # Check if test data is available first
+        test_key = (symbol, timeframe)
+        if test_key in self.candles_data:
+            return self.candles_data[test_key]
+        
         # Track calls for different behavior
         key = f"{symbol}_{timeframe}"
         self.call_count[key] = self.call_count.get(key, 0) + 1

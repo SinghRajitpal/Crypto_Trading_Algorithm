@@ -1,7 +1,7 @@
 import asyncio
 from data.data_engine import DataEngine
 from algorithm.algo_engine import AlgoEngine
-from execution.execution_engine import ExecutionEngine
+from execution.execution_engine import ProductionExecutionEngine
 from algorithm.strategies.base_strategy import BaseStrategy
 from binance_exchange import BinanceClient
 import time
@@ -30,13 +30,13 @@ class TradingAlgorithm:
         data_task: Asyncio task for data collection.
     """
     
-    def __init__(self, strategy: BaseStrategy, testnet=True, total_capital=1000.0):
+    def __init__(self, strategy: BaseStrategy, testnet=True, total_capital=None):
         """Initializes the trading algorithm with a specific strategy.
         
         Args:
             strategy: The trading strategy to use.
             testnet: Whether to use testnet or live trading (default: True).
-            total_capital: Total capital in USDT for portfolio management.
+            total_capital: Total capital in USDT for portfolio management. If None, fetches from exchange.
             
         Raises:
             ValueError: If strategy is not an instance of BaseStrategy.
@@ -47,34 +47,21 @@ class TradingAlgorithm:
         # Create a single BinanceClient instance
         self.binance_client = BinanceClient(testnet=testnet)
         
-        # Initialize components with enough candles for indicator calculation
-        # Use max(100, 5 * slow_ma_period) to ensure enough data for indicators
-        max_candles = max(100, 5 * strategy.params.get('slow_ma_period', 20))
-        # Make sure we have additional candles for crossover detection
-        max_candles += 5
+        # Fetch actual capital from exchange if not provided
+        self.total_capital = total_capital  # Will be set properly in start() method
         
-        print(f"[TradingAlgorithm] Initializing with {max_candles} candles per symbol")
+        # Initialize components will be done after we fetch actual capital
+        self.data_engine = None
+        self.algo_engine = None
+        self.execution_engine = None
         
-        # Initialize data engine for market data collection
-        self.data_engine = DataEngine(binance_client=self.binance_client, max_candles=max_candles)
-        
-        # Initialize algo engine for signal generation only
-        self.algo_engine = AlgoEngine(data_engine=self.data_engine)
-        
-        # Initialize execution engine with portfolio and risk management
-        self.execution_engine = ExecutionEngine(
-            binance_client=self.binance_client,
-            total_capital=total_capital
-        )
-        
-        # Set the algo engine on the strategy
-        strategy.set_algo_engine(self.algo_engine)
+        # Set the algo engine on the strategy (will be set after initialization)
         self.strategy = strategy
         
         self.running = False
         self.data_task = None
         
-        print(f"[TradingAlgorithm] Initialized with {strategy.strategy_id} strategy")
+        print(f"[TradingAlgorithm] Pre-initialized with {strategy.strategy_id} strategy")
     
     async def start(self):
         """Starts the trading algorithm.
@@ -92,8 +79,85 @@ class TradingAlgorithm:
         self.running = True
         
         try:
-            # Setup execution engine
+            # === STEP 1: Fetch actual capital from exchange ===
+            if self.total_capital is None:
+                print("[TradingAlgorithm] Fetching actual capital from exchange...")
+                account_metrics = await self.binance_client.get_account_metrics()
+                self.total_capital = account_metrics['total_wallet_balance']
+                print(f"[TradingAlgorithm] ✅ Fetched actual capital: ${self.total_capital:.2f} USDT")
+            else:
+                print(f"[TradingAlgorithm] Using provided capital: ${self.total_capital:.2f} USDT")
+            
+            # === STEP 2: Initialize components with actual capital ===
+            print("[TradingAlgorithm] Initializing components with actual capital...")
+            
+            # Initialize components with enough candles for indicator calculation
+            max_candles = max(100, 5 * self.strategy.params.get('slow_ma_period', 20))
+            max_candles += 5
+            
+            print(f"[TradingAlgorithm] Initializing with {max_candles} candles per symbol")
+            
+            # Initialize data engine for market data collection
+            self.data_engine = DataEngine(binance_client=self.binance_client, max_candles=max_candles)
+            
+            # Initialize algo engine for signal generation only
+            self.algo_engine = AlgoEngine(data_engine=self.data_engine)
+            
+            # Initialize execution engine with actual capital
+            self.execution_engine = ProductionExecutionEngine(
+                binance_client=self.binance_client,
+                total_capital=self.total_capital
+            )
+            
+            # Set the algo engine on the strategy
+            self.strategy.set_algo_engine(self.algo_engine)
+            
+            print(f"[TradingAlgorithm] ✅ Components initialized with {self.strategy.strategy_id} strategy")
+            
+            # === STEP 3: Setup execution engine ===
             await self.execution_engine.setup()
+            
+            # === CRITICAL FIX: Initialize portfolio allocations immediately ===
+            # Force an initial rebalance after a brief data collection period
+            print("[TradingAlgorithm] Initializing portfolio allocations...")
+            
+            # Give some time for initial data collection and set last_rebalance_time to force rebalance
+            from datetime import datetime, timedelta
+            await asyncio.sleep(5)  # Let data collection start
+            
+            # Force rebalance on startup by setting old timestamp
+            self.execution_engine.portfolio_manager.last_rebalance_time = datetime.now() - timedelta(hours=25)
+            
+            # Add some default volatility data if none exists yet
+            import config
+            config_symbols = [symbol for symbol, _ in config.symbols]
+            for symbol in config_symbols:
+                if symbol not in self.execution_engine.portfolio_manager.volatility_data:
+                    # Add default volatility data to enable initial allocation
+                    self.execution_engine.portfolio_manager.update_volatility_data(symbol, 0.02)  # 2% default
+                    print(f"[TradingAlgorithm] Added default volatility data for {symbol}")
+            
+            # Trigger initial rebalance with better debugging
+            if config_symbols:
+                print("[TradingAlgorithm] Checking rebalance conditions...")
+                print(f"[TradingAlgorithm] Should rebalance: {self.execution_engine.portfolio_manager.should_rebalance()}")
+                print(f"[TradingAlgorithm] Active symbols with volatility data: {list(self.execution_engine.portfolio_manager.volatility_data.keys())}")
+                
+                rebalanced = self.execution_engine.process_daily_rebalance()
+                if rebalanced:
+                    print("[TradingAlgorithm] ✅ Initial portfolio allocation completed")
+                    # Verify allocation worked
+                    summary = self.execution_engine.portfolio_manager.get_portfolio_summary()
+                    print(f"[TradingAlgorithm] Total allocated: ${summary['allocated_capital']:.2f} ({summary['allocation_percentage']:.1%})")
+                else:
+                    print("[TradingAlgorithm] ⚠️ Initial portfolio allocation failed - forcing manual rebalance")
+                    # Manual fallback: force rebalance directly
+                    allocations = self.execution_engine.portfolio_manager.rebalance_portfolio(config_symbols)
+                    if allocations:
+                        total = sum(a.allocated_capital for a in allocations.values())
+                        print(f"[TradingAlgorithm] ✅ Manual rebalance successful: ${total:.2f} allocated")
+                    else:
+                        print("[TradingAlgorithm] ❌ Manual rebalance also failed")
             
             # Start data collection
             self.data_task = asyncio.create_task(self.data_engine.run())
@@ -150,6 +214,22 @@ class TradingAlgorithm:
                         # Extract OHLCV values using the utility method
                         candle_data = self.data_engine.extract_ohlcv(latest_candle)
                         current_price = candle_data["close"]
+                        
+                        # === CRITICAL FIX: Update market data for allocation system ===
+                        # Get ATR value for volatility tracking
+                        atr_value = signal.metadata.get('atr_value')
+                        if atr_value:
+                            # Update volatility data for portfolio allocation
+                            self.execution_engine.update_market_data_bar(
+                                symbol=symbol,
+                                ohlcv_data=candle_data,
+                                atr_value=atr_value
+                            )
+                        
+                        # Check and trigger daily rebalancing
+                        rebalanced = self.execution_engine.process_daily_rebalance()
+                        if rebalanced:
+                            print(f"[TradingAlgorithm] 🔄 Portfolio rebalanced")
                         
                         # Get current position info
                         position = await self.binance_client.get_open_positions(symbol)
@@ -422,7 +502,7 @@ if __name__ == "__main__":
     algorithm = TradingAlgorithm(
         strategy=strategy, 
         testnet=True,
-        total_capital=5500.0  # Starting with 1000 USDT
+        total_capital=None  # Fetch actual capital from testnet
     )
     
     asyncio.run(algorithm.start())

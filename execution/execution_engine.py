@@ -236,6 +236,30 @@ class ProductionExecutionEngine:
         except Exception as e:
             print(f"[ProductionExecution] Warning: Could not check positions: {e}")
         
+        # CRITICAL: Ensure allocation exists before validating trade
+        allocated_capital = self.portfolio_manager.get_allocated_capital(symbol)
+        if allocated_capital <= 0:
+            print(f"[ProductionExecution] No allocation for {symbol} - checking if rebalance needed")
+            
+            # Add this symbol to volatility data if missing
+            if symbol not in self.portfolio_manager.volatility_data:
+                self.portfolio_manager.update_volatility_data(symbol, atr_value)
+                print(f"[ProductionExecution] Added volatility data for {symbol}")
+            
+            # Force rebalance if needed
+            active_symbols = list(self.portfolio_manager.volatility_data.keys())
+            if active_symbols:
+                allocations = self.portfolio_manager.rebalance_portfolio(active_symbols)
+                new_allocation = self.portfolio_manager.get_allocated_capital(symbol)
+                print(f"[ProductionExecution] After rebalance, {symbol} allocation: ${new_allocation:.2f}")
+                
+                if new_allocation <= 0:
+                    return {
+                        "status": "rejected",
+                        "reason": f"No capital allocated to {symbol} even after rebalancing",
+                        "symbol": symbol
+                    }
+        
         # Validate trade using production risk management
         risk_result = self.risk_manager.validate_trade(
             symbol=symbol,

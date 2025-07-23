@@ -279,9 +279,10 @@ class TestSystemResilience:
         # Verify market data is consistent across components
         for symbol in test_symbols:
             # Check portfolio manager has volatility data
-            assert symbol in market_data_setup.portfolio_manager.volatilities
-            vol = market_data_setup.portfolio_manager.volatilities[symbol]
-            assert vol > 0
+            assert symbol in market_data_setup.portfolio_manager.volatility_data
+            vol_data = market_data_setup.portfolio_manager.volatility_data[symbol]
+            assert len(vol_data) > 0
+            assert all(v > 0 for v in vol_data)
         
         # Check risk manager can access the data
         risk_status = market_data_setup.get_risk_metrics()

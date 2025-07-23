@@ -257,25 +257,29 @@ class ProductionPortfolioManager:
         if not active_symbols:
             return {}
         
-        # Step 1: Compute raw weights
+        # Step 1: Compute raw weights (normalized so they sum to 1)
         weights = self.compute_weights(active_symbols)
         
-        # Step 2: Calculate scaling multiplier
+        # Step 2: Calculate scaling multiplier for volatility targeting
         scaling_multiplier = self.calculate_scaling_multiplier()
         
-        # Step 3: Calculate allocated capital for each symbol
+        # Step 3: Calculate total allocatable capital with scaling
+        # Apply scaling multiplier to TOTAL allocation, not per asset
         max_total_allocation = self.total_capital * self.max_allocation_pct
+        scaled_total_allocation = scaling_multiplier * max_total_allocation
         
         new_allocations = {}
         
         for symbol in active_symbols:
+            # Use raw weight (not scaled per asset) to maintain proper distribution
             weight = weights[symbol]
-            scaled_weight = scaling_multiplier * weight
-            allocated_capital = scaled_weight * max_total_allocation
+            
+            # Apply weight to the scaled total allocation
+            allocated_capital = weight * scaled_total_allocation
             
             allocation = AllocationWeights(
                 symbol=symbol,
-                weight=scaled_weight,
+                weight=weight,  # Store original weight for transparency
                 allocated_capital=allocated_capital,
                 volatility=self.get_volatility_ema(symbol),
                 avg_correlation=self.get_average_correlation(symbol, active_symbols),
@@ -288,12 +292,19 @@ class ProductionPortfolioManager:
         
         # Log rebalancing details
         total_allocated = sum(a.allocated_capital for a in new_allocations.values())
+        allocation_pct = (total_allocated / self.total_capital) * 100
+        
         print(f"[ProductionPortfolio] Daily rebalance completed:")
-        print(f"[ProductionPortfolio]   Total allocated: ${total_allocated:.2f} ({total_allocated/self.total_capital:.1%})")
+        print(f"[ProductionPortfolio]   Total capital: ${self.total_capital:.2f}")
+        print(f"[ProductionPortfolio]   Scaling multiplier: {scaling_multiplier:.3f}")
+        print(f"[ProductionPortfolio]   Max allocation: {self.max_allocation_pct:.1%} (${max_total_allocation:.2f})")
+        print(f"[ProductionPortfolio]   Actual allocated: ${total_allocated:.2f} ({allocation_pct:.1f}%)")
         print(f"[ProductionPortfolio]   High vol regime: {self.is_high_volatility_regime()}")
+        print(f"[ProductionPortfolio]   Asset allocations:")
         
         for symbol, alloc in new_allocations.items():
-            print(f"[ProductionPortfolio]   {symbol}: ${alloc.allocated_capital:.2f} ({alloc.weight:.1%}) vol={alloc.volatility:.4f}")
+            asset_pct = (alloc.allocated_capital / self.total_capital) * 100
+            print(f"[ProductionPortfolio]     {symbol}: ${alloc.allocated_capital:.2f} ({asset_pct:.1f}% of total) vol={alloc.volatility:.4f}")
         
         return new_allocations
     

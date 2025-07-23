@@ -273,6 +273,42 @@ def main():
     
     # Exit with appropriate code
     sys.exit(0 if overall_success else 1)
+    parser.add_argument("--coverage", action="store_true", help="Run with coverage reporting")
+    parser.add_argument("--component", choices=['algorithm', 'execution', 'data', 'backtest', 'config', 'integration'], 
+                       help="Run tests for specific component only")
+    
+    args = parser.parse_args()
+    
+    print_header("CRYPTO TRADING ALGORITHM - COMPREHENSIVE TEST RUNNER")
+    print(f"Project Root: {project_root}")
+    print(f"Python Version: {sys.version}")
+    
+    if args.component:
+        print(f"Component Focus: {args.component}")
+    
+    start_time = time.time()
+    pytest_success = True
+    unittest_success = True
+    pytest_output = ""
+    unittest_output = ""
+    
+    # Run pytest suite
+    if not args.unittest_only:
+        pytest_success, pytest_output = run_pytest_suite(args.verbose, args.coverage, args.component)
+    
+    # Run unittest suite  
+    if not args.pytest_only and not args.component:  # Only run unittest for full test runs
+        unittest_success, unittest_output = run_unittest_suite(args.verbose)
+    
+    # Parse results and generate summary
+    results = parse_test_results(pytest_output, unittest_output)
+    overall_success = print_summary_report(results, pytest_success, unittest_success)
+    
+    total_time = time.time() - start_time
+    print(f"\nTotal execution time: {total_time:.2f}s")
+    
+    # Exit with appropriate code
+    sys.exit(0 if overall_success else 1)
 
 
 if __name__ == "__main__":
