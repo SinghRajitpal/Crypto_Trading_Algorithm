@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import time
 import numpy as np
 from datetime import datetime, timedelta
+import config
 
 @dataclass
 class AllocationWeights:
@@ -24,17 +25,17 @@ class ProductionPortfolioManager:
     - EMA-based volatility (ATR) and correlation tracking over 60 bars
     """
     
-    def __init__(self, total_capital: float, target_volatility: float = 0.18, max_allocation_pct: float = 0.85):
+    def __init__(self, total_capital: float, target_volatility: float = None, max_allocation_pct: float = None):
         """Initialize the production portfolio manager.
         
         Args:
             total_capital: Total trading capital in USDT.
-            target_volatility: Target portfolio volatility (default: 18%).
-            max_allocation_pct: Maximum percentage of capital to allocate (default: 85%).
+            target_volatility: Target portfolio volatility (default from config).
+            max_allocation_pct: Maximum percentage of capital to allocate (default from config).
         """
         self.total_capital = total_capital
-        self.target_volatility = target_volatility
-        self.max_allocation_pct = max_allocation_pct
+        self.target_volatility = target_volatility or config.TARGET_VOLATILITY
+        self.max_allocation_pct = max_allocation_pct or config.MAX_ALLOCATION_PCT
         
         # Core data structures for the allocation system
         self.volatility_data: Dict[str, List[float]] = {}  # EMA of 1-min ATR(30) over 60 bars
@@ -45,15 +46,15 @@ class ProductionPortfolioManager:
         self.volatility_history: List[float] = []  # For 30-day percentile calculation
         self.last_rebalance_time = datetime.now()
         
-        # Fixed parameters from document
-        self.alpha = 0.3  # Fixed correlation adjustment parameter
-        self.lookback_bars = 60  # EMA lookback for vol and correlation
-        self.regime_percentile = 75  # 75th percentile for high vol regime
+        # Fixed parameters from config
+        self.alpha = config.ALPHA_CORRELATION  # Correlation adjustment parameter
+        self.lookback_bars = config.LOOKBACK_BARS  # EMA lookback for vol and correlation
+        self.regime_percentile = config.REGIME_PERCENTILE  # Percentile for high vol regime
         
         # Track reserved allocations for position management
         self.reserved_allocations: Dict[str, float] = {}
         
-        print(f"[ProductionPortfolio] Initialized with ${total_capital:.2f}, target_vol={target_volatility:.1%}")
+        print(f"[ProductionPortfolio] Initialized with ${total_capital:.2f}, target_vol={self.target_volatility:.1%}")
     
     def update_volatility_data(self, symbol: str, atr_value: float) -> None:
         """Update volatility data (EMA of 1-min ATR(30)) for a symbol.
@@ -263,15 +264,15 @@ class ProductionPortfolioManager:
         
         # FIXED: Use proper percentile calculation with minimum history requirement
         if len(self.volatility_history) >= 10:
-            # Use the full document formula: high_vol_regime if σ_hat > 75th percentile over last 30 days
-            percentile_75 = np.percentile(self.volatility_history, 75)
+            # Use the document formula: high_vol_regime if σ_hat > percentile over last 30 days
+            percentile_threshold = np.percentile(self.volatility_history, self.regime_percentile)
         else:
             # With limited history, use conservative threshold (1.5x average)
-            percentile_75 = np.mean(self.volatility_history) * 1.5
+            percentile_threshold = np.mean(self.volatility_history) * 1.5
         
-        is_high_vol = sigma_hat > percentile_75
+        is_high_vol = sigma_hat > percentile_threshold
         
-        print(f"[ProductionPortfolio] Volatility regime check: σ_hat={sigma_hat:.4f}, 75th percentile={percentile_75:.4f}, high_vol={is_high_vol}")
+        print(f"[ProductionPortfolio] Volatility regime check: σ_hat={sigma_hat:.4f}, {self.regime_percentile}th percentile={percentile_threshold:.4f}, high_vol={is_high_vol}")
         
         return is_high_vol
     
@@ -316,7 +317,7 @@ class ProductionPortfolioManager:
         """
         now = datetime.now()
         hours_since_rebalance = (now - self.last_rebalance_time).total_seconds() / 3600
-        return hours_since_rebalance >= 24.0
+        return hours_since_rebalance >= config.REBALANCE_HOURS
     
     def rebalance_portfolio(self, active_symbols: List[str]) -> Dict[str, AllocationWeights]:
         """Perform daily portfolio rebalancing using the document's allocation system.

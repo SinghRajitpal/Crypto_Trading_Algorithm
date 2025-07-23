@@ -231,16 +231,6 @@ class TradingAlgorithm:
                         if rebalanced:
                             print(f"[TradingAlgorithm] 🔄 Portfolio rebalanced")
                         
-                        # Get current position info
-                        position = await self.binance_client.get_open_positions(symbol)
-                        position_size = float(position[0].get('contracts', 0)) if position else 0
-                        positions_info[symbol] = {
-                            'size': position_size,
-                            'entry_price': position[0].get('entryPrice', 'N/A') if position else 'N/A',
-                            'leverage': position[0].get('leverage', 'N/A') if position else 'N/A',
-                            'unrealized_pnl': position[0].get('unrealizedPnl', 'N/A') if position else 'N/A'
-                        }
-                        
                         # Validate the signal with risk management
                         if signal.action == "open":
                             risk_result = await self.execution_engine.validate_signal(signal, current_price)
@@ -251,6 +241,16 @@ class TradingAlgorithm:
                         # Update the signal with current_price since process_signal no longer accepts it as a parameter
                         signal.metadata['price'] = current_price
                         execution_result = await self.execution_engine.process_signal(signal)
+                        
+                        # Get current position info AFTER execution to reflect any new positions
+                        position = await self.binance_client.get_open_positions(symbol)
+                        position_size = float(position[0].get('contracts', 0)) if position else 0
+                        positions_info[symbol] = {
+                            'size': position_size,
+                            'entry_price': position[0].get('entryPrice', 'N/A') if position else 'N/A',
+                            'leverage': position[0].get('leverage', 'N/A') if position else 'N/A',
+                            'unrealized_pnl': position[0].get('unrealizedPnl', 'N/A') if position else 'N/A'
+                        }
                         
                         # Output border
                         print("\n" + "-" * 80)
@@ -329,7 +329,7 @@ class TradingAlgorithm:
                                 # Display Stop Loss and Take Profit with clear formatting
                                 print("\nRISK MANAGEMENT ORDERS:")
                                 if sl_order:
-                                    sl_price = float(sl_order.get('stopPrice', sl_order.get('price', 0)))
+                                    sl_price = float(sl_order.get('stopPrice') or sl_order.get('price', 0) or 0)
                                     entry_price = float(positions_info[symbol]['entry_price']) if positions_info[symbol]['entry_price'] != 'N/A' else current_price
                                     sl_pct = abs(sl_price - entry_price) / entry_price * 100
                                     print(f"Stop Loss: ${sl_price:.2f} ({sl_pct:.2f}% from entry) [{sl_order.get('type')}]")
@@ -337,7 +337,7 @@ class TradingAlgorithm:
                                     print("Stop Loss: Not set")
                                     
                                 if tp_order:
-                                    tp_price = float(tp_order.get('price', tp_order.get('stopPrice', 0)))
+                                    tp_price = float(tp_order.get('price') or tp_order.get('stopPrice', 0) or 0)
                                     entry_price = float(positions_info[symbol]['entry_price']) if positions_info[symbol]['entry_price'] != 'N/A' else current_price
                                     tp_pct = abs(tp_price - entry_price) / entry_price * 100
                                     print(f"Take Profit: ${tp_price:.2f} ({tp_pct:.2f}% from entry) [{tp_order.get('type')}]")
@@ -346,8 +346,8 @@ class TradingAlgorithm:
                                 
                                 # Calculate and display reward-to-risk ratio if both orders are set
                                 if sl_order and tp_order and position_type == "LONG":
-                                    sl_price = float(sl_order.get('stopPrice', 0))
-                                    tp_price = float(tp_order.get('stopPrice', 0))
+                                    sl_price = float(sl_order.get('stopPrice') or sl_order.get('price', 0) or 0)
+                                    tp_price = float(tp_order.get('stopPrice') or tp_order.get('price', 0) or 0)
                                     entry_price = float(positions_info[symbol]['entry_price']) if positions_info[symbol]['entry_price'] != 'N/A' else current_price
                                     
                                     risk = entry_price - sl_price
@@ -465,25 +465,34 @@ class TradingAlgorithm:
                 active_positions = [p for p in positions if float(p.get('contracts', 0)) != 0]
                 
                 if active_positions:
+                    print(f"\n📈 Found {len(active_positions)} active position(s)")
                     print("\n[TradingAlgorithm] Preserving open positions:")
                     for position in active_positions:
                         symbol = position.get('symbol', 'UNKNOWN')
+                        # Sanitize symbol format to ensure proper display (handle various formats)
+                        display_symbol = symbol.replace(':/USDT', '').replace(':USDT', '').replace(':', '')
                         size = float(position.get('contracts', 0))
                         entry_price = position.get('entryPrice', 'N/A')
                         pnl = position.get('unrealizedPnl', 'N/A')
                         
                         position_type = "LONG" if size > 0 else "SHORT"
-                        print(f"- {symbol}: {position_type} {abs(size)} contracts @ {entry_price} (PnL: {pnl})")
+                        print(f"- {display_symbol}: {position_type} {abs(size)} contracts @ {entry_price} (PnL: {pnl})")
                         
-                        # Display associated SL/TP orders
-                        orders = await self.binance_client.get_open_orders(symbol)
-                        sl_order = next((o for o in orders if o.get('type', '').startswith('STOP')), None)
-                        tp_order = next((o for o in orders if o.get('type', '').startswith('TAKE_PROFIT')), None)
-                        
-                        if sl_order:
-                            print(f"  Stop Loss: ${float(sl_order.get('stopPrice', 0)):.2f}")
-                        if tp_order:
-                            print(f"  Take Profit: ${float(tp_order.get('stopPrice', 0)):.2f}")
+                        # Display associated SL/TP orders with proper symbol
+                        try:
+                            orders = await self.binance_client.get_open_orders(display_symbol)
+                            sl_order = next((o for o in orders if o.get('type', '').startswith('STOP')), None)
+                            tp_order = next((o for o in orders if o.get('type', '').startswith('TAKE_PROFIT')), None)
+                            
+                            if sl_order:
+                                print(f"  Stop Loss: ${float(sl_order.get('stopPrice', 0)):.2f}")
+                            if tp_order:
+                                print(f"  Take Profit: ${float(tp_order.get('stopPrice', 0)):.2f}")
+                        except Exception as order_error:
+                            # Silently handle order lookup errors to avoid disrupting shutdown
+                            pass
+                            # Silently handle order lookup errors to avoid disrupting shutdown
+                            pass
             except Exception as e:
                 print(f"[TradingAlgorithm] Error displaying positions: {e}")
             

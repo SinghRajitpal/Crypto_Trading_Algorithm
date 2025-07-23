@@ -121,10 +121,10 @@ class OrderManager:
             if take_profit:
                 try:
                     tp_side = 'sell' if side == 'buy' else 'buy'  # Opposite side
-                    # Use stop market order for take profit to ensure execution when triggered
+                    # Use take profit market order for proper take profit execution
                     tp_order = await self.binance_client.exchange.create_order(
                         symbol=symbol,
-                        type='take_profit_market',  # Market order when take profit is hit
+                        type='take_profit_market',  # Proper take profit market order
                         side=tp_side,
                         amount=amount,
                         params={

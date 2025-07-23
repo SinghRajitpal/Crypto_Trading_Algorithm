@@ -16,30 +16,30 @@ from datetime import datetime, timedelta
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config
+
 def test_dynamic_portfolio_allocation():
     """Test dynamic portfolio allocation."""
     print("🔬 Testing Dynamic Portfolio Allocation")
     
     from execution.portfolio import ProductionPortfolioManager
     
-    # Initialize with realistic capital
+    # Initialize with config parameters
     portfolio_manager = ProductionPortfolioManager(
-        total_capital=15000.0,
-        target_volatility=0.18,
-        max_allocation_pct=0.85
+        total_capital=15000.0  # Use realistic capital for testing
     )
     
-    # Test symbols
-    symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
+    # Use test symbols from config
+    symbols = config.TEST_SYMBOLS
     
-    # Add different volatilities
-    volatilities = [0.015, 0.025, 0.020, 0.018, 0.030]
+    # Use test volatilities from config
+    volatilities = config.TEST_VOLATILITIES
     
     for symbol, vol in zip(symbols, volatilities):
-        for _ in range(25):
+        for _ in range(config.TEST_VOLATILITY_SAMPLE_SIZE):
             portfolio_manager.update_volatility_data(symbol, vol)
     
-    # Add correlations
+    # Add correlations using test data
     correlation_pairs = [
         ("BTCUSDT", "ETHUSDT", 0.7),
         ("BTCUSDT", "SOLUSDT", 0.6),
@@ -47,7 +47,7 @@ def test_dynamic_portfolio_allocation():
     ]
     
     for sym1, sym2, corr in correlation_pairs:
-        for _ in range(25):
+        for _ in range(config.TEST_VOLATILITY_SAMPLE_SIZE):
             portfolio_manager.update_correlation_data(sym1, sym2, corr)
     
     # Force rebalance

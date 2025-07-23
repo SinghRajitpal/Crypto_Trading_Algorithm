@@ -1,28 +1,8 @@
 from typing import Dict, Optional, Tuple, List, Any
 import time
 import numpy as np
-from dataclasses import dataclass
 from datetime import datetime, timedelta
-
-@dataclass
-class ProductionRiskParameters:
-    """Production Risk Parameters implementing the exact specifications from the document."""
-    
-    # Core position sizing parameters from document
-    risk_per_trade_pct: float = 0.008  # 0.8% risk per trade
-    kelly_fraction: float = 0.7  # Fractional Kelly criterion
-    base_cost_pct: float = 0.0014  # 0.14% base cost (0.04% + 0.1% spread)
-    min_atr_floor: float = 0.001  # Minimum ATR floor to prevent excessive sizing
-    
-    # Stop loss and take profit parameters
-    atr_stop_multiplier: float = 1.8  # SL = Entry ± 1.8×ATR
-    atr_trail_multiplier: float = 0.8  # Trail by 0.8×ATR
-    risk_reward_ratio: float = 2.0  # TP = Entry ± 2×|Entry-SL| (1:2 risk-reward)
-    partial_exit_ratio: float = 0.4  # 40% partial exit at 1:1
-    
-    # Dynamic leverage parameters
-    max_leverage: int = 10  # Cap leverage at 10x
-    target_volatility: float = 0.18  # Target volatility for scaling
+import config
 
 
 class ProductionRiskManager:
@@ -42,7 +22,6 @@ class ProductionRiskManager:
             portfolio_manager: Reference to the production portfolio manager.
         """
         self.portfolio_manager = portfolio_manager
-        self.risk_params = ProductionRiskParameters()
         
         # Risk tracking data structures
         self.drawdown_history: List[Tuple[datetime, float]] = []  # 3-day drawdown history
@@ -54,12 +33,12 @@ class ProductionRiskManager:
         self.daily_pnl = 0.0
         self.max_drawdown_hit = False
         
-        print(f"[ProductionRisk] Initialized with 0.8% risk, {self.risk_params.kelly_fraction} Kelly fraction")
+        print(f"[ProductionRisk] Initialized with {config.RISK_PER_TRADE_PCT*100}% risk, {config.KELLY_FRACTION} Kelly fraction")
     
     @property
     def risk_per_trade(self) -> float:
         """Get risk per trade as a decimal (0.008 for 0.8%)."""
-        return self.risk_params.risk_per_trade_pct
+        return config.RISK_PER_TRADE_PCT
     
     def calculate_dynamic_cost_adjustment(self, volatility_norm: float) -> float:
         """Calculate dynamic cost adjustment based on normalized volatility.
@@ -73,8 +52,8 @@ class ProductionRiskManager:
             Adjusted cost in USD terms (not percentage).
         """
         # FIXED: Return cost as absolute value for subtraction, not percentage for multiplication
-        cost_multiplier = 1 + 0.5 * volatility_norm
-        return self.risk_params.base_cost_pct * cost_multiplier
+        cost_multiplier = 1 + config.VOLATILITY_COST_MULTIPLIER * volatility_norm
+        return config.BASE_COST_PCT * cost_multiplier
     
     def calculate_position_size(self, symbol: str, allocated_capital: float, atr_value: float, 
                               entry_price: float, volatility_norm: float = 0.5) -> Dict[str, Any]:
@@ -84,22 +63,27 @@ class ProductionRiskManager:
         Args:
             symbol: Trading pair symbol.
             allocated_capital: Capital allocated to this symbol from portfolio manager.
-            atr_value: Current ATR value.
+            atr_value: Current ATR value (raw price units).
             entry_price: Entry price for position.
             volatility_norm: Normalized volatility for cost adjustment.
             
         Returns:
             Dictionary with position sizing information.
         """
+        # CRITICAL FIX: Normalize raw ATR to percentage volatility
+        # ATR comes from algorithm strategies as raw price units, need to convert to percentage
+        normalized_atr = atr_value / entry_price if entry_price > 0 else 0.02
+        normalized_atr = max(0.005, min(normalized_atr, 0.15))  # Bound between 0.5% and 15%
+        
         # Apply ATR floor from document
-        atr_adjusted = max(atr_value, self.risk_params.min_atr_floor)
+        atr_adjusted = max(normalized_atr, config.MIN_ATR_FLOOR)
         
         # Calculate dynamic cost adjustment
         dynamic_cost = self.calculate_dynamic_cost_adjustment(volatility_norm)
         
         # FIXED: Core formula exactly as specified in document
         # Size = (0.8% × Allocated × 0.7) / max(ATR, 0.001) - dynamic_cost
-        numerator = self.risk_params.risk_per_trade_pct * allocated_capital * self.risk_params.kelly_fraction
+        numerator = config.RISK_PER_TRADE_PCT * allocated_capital * config.KELLY_FRACTION
         base_position_size_usdt = numerator / atr_adjusted
         
         # CRITICAL FIX: Apply dynamic cost as SUBTRACTION, not multiplication
@@ -122,7 +106,7 @@ class ProductionRiskManager:
         # Calculate leverage using dynamic leverage engine
         leverage = self.calculate_dynamic_leverage(symbol, atr_adjusted)
         
-        # Check minimum notional value requirement (Binance: $100)
+                # Check minimum notional value requirement (Binance: $100)
         min_notional = 100.0  # Minimum order value in USD
         current_notional = position_size_contracts * entry_price  # Actual notional value
         
@@ -162,8 +146,8 @@ class ProductionRiskManager:
             print(f"[ProductionRisk] Margin capped at allocated capital")
         
         # Calculate stop loss and take profit distances based on ATR
-        stop_loss_distance = self.risk_params.atr_stop_multiplier * atr_adjusted
-        take_profit_distance = self.risk_params.risk_reward_ratio * stop_loss_distance
+        stop_loss_distance = config.ATR_STOP_MULTIPLIER * atr_adjusted
+        take_profit_distance = config.RISK_REWARD_RATIO * stop_loss_distance
         
         print(f"[ProductionRisk] Position sizing for {symbol}:")
         print(f"[ProductionRisk]   Allocated capital: ${allocated_capital:.2f}")
@@ -200,25 +184,29 @@ class ProductionRiskManager:
         """
         # FIXED: Base leverage calculation with proper volatility adjustment
         # lev_base = 10 × min(1, target_vol/σ)
-        vol_adjustment = min(1.0, self.risk_params.target_volatility / max(atr_value, 0.001))
-        base_leverage_float = self.risk_params.max_leverage * vol_adjustment
+        vol_adjustment = min(1.0, config.TARGET_VOLATILITY / max(atr_value, 0.001))
+        base_leverage_float = config.MAX_LEVERAGE * vol_adjustment
         base_leverage = max(1, int(base_leverage_float))
         
-        # Drawdown factor: 0.8 if rolling 3-day DD >10%; 0.5 if >14%
-        dd_3d = self.get_rolling_drawdown_3d()
+        # FIXED: Drawdown factor - drawdowns are negative, so check absolute values
+        # dd_factor = 0.8 if rolling 3-day DD >10%; 0.5 if >14%
+        dd_3d = abs(self.get_rolling_drawdown_3d())  # Get absolute value for comparison
         if dd_3d > 0.14:
-            dd_factor = 0.5  # Severely reduce leverage
+            dd_factor = 0.5  # Severely reduce leverage (>14% drawdown)
         elif dd_3d > 0.10:
-            dd_factor = 0.8  # Moderately reduce leverage
+            dd_factor = 0.8  # Moderately reduce leverage (>10% drawdown)
         else:
-            dd_factor = 1.0  # No reduction
+            dd_factor = 1.0  # No reduction (<10% drawdown)
         
-        # Sharpe factor: max(0.5, min(1, rolling_30d_sharpe / 1.5))
+        # FIXED: Sharpe factor with proper handling of all cases
+        # sharpe_factor = max(0.5, min(1, rolling_30d_sharpe / 1.5))
         sharpe_30d = self.get_rolling_sharpe_30d()
         if sharpe_30d > 0:
             sharpe_factor = max(0.5, min(1.0, sharpe_30d / 1.5))
+        elif sharpe_30d < 0:
+            sharpe_factor = 0.5  # Minimum factor for negative Sharpe
         else:
-            sharpe_factor = 0.7  # Conservative default for no/negative Sharpe
+            sharpe_factor = 0.7  # Conservative default for zero Sharpe
         
         # Equity curve slope factor: scale by 0.7 if slope < -5% over 60 bars
         equity_slope = self.get_equity_curve_slope()
@@ -232,7 +220,7 @@ class ProductionRiskManager:
         # FIXED: Apply the exact formula from document
         # lev = min(10, base_leverage × dd_factor × sharpe_factor × slope_factor) - funding_adjustment
         final_leverage_float = base_leverage * dd_factor * sharpe_factor * slope_factor - funding_adjustment
-        final_leverage = max(1, min(int(final_leverage_float), self.risk_params.max_leverage))
+        final_leverage = max(1, min(int(final_leverage_float), config.MAX_LEVERAGE))
         
         print(f"[ProductionRisk] Dynamic leverage for {symbol}: {final_leverage}x")
         print(f"[ProductionRisk]   ATR: {atr_value:.6f}, Vol adjustment: {vol_adjustment:.3f}")
@@ -259,10 +247,10 @@ class ProductionRiskManager:
             Tuple of (stop_loss_price, take_profit_price).
         """
         # SL = Entry ± 1.8×ATR (exactly as specified in document)
-        stop_distance = self.risk_params.atr_stop_multiplier * atr_adjusted
+        stop_distance = config.ATR_STOP_MULTIPLIER * atr_adjusted
         
         # TP = Entry ± 2×|Entry-SL| (1:2 risk-reward as specified)
-        tp_distance = self.risk_params.risk_reward_ratio * stop_distance
+        tp_distance = config.RISK_REWARD_RATIO * stop_distance
         
         if side.lower() in ["buy", "long"]:
             stop_loss_price = entry_price - stop_distance
@@ -279,86 +267,46 @@ class ProductionRiskManager:
     
     def validate_trade(self, symbol: str, action: str, side: str, entry_price: float, 
                       atr_value: float) -> Dict[str, Any]:
-        """Validate trade using production risk criteria.
+        """Validate a trade against production risk criteria.
         
         Args:
             symbol: Trading pair symbol.
-            action: Trade action ("open", "close", etc.).
+            action: Trade action ("open" or "close").
             side: Position side ("buy" or "sell").
-            entry_price: Entry price.
-            atr_value: Current ATR value.
+            entry_price: Entry price for the trade.
+            atr_value: Current ATR value (raw ATR in price units).
             
         Returns:
-            Validation result with position information.
+            Validation result dictionary.
         """
-        if action != "open":
-            return {"valid": True, "reason": f"No validation needed for {action}"}
-        
-        # Check if max drawdown hit
-        if self.max_drawdown_hit:
-            return {"valid": False, "reason": "Max drawdown limit reached"}
-        
         # Get allocated capital from portfolio manager
         allocated_capital = self.portfolio_manager.get_allocated_capital(symbol)
         if allocated_capital <= 0:
-            return {"valid": False, "reason": "No capital allocated to this symbol"}
+            return {
+                "valid": False,
+                "reason": f"No capital allocated to {symbol}",
+                "allocated_capital": 0
+            }
+        
+        print(f"[ProductionRisk] Validating {action} {side} trade for {symbol}")
+        print(f"[ProductionRisk]   Entry price: ${entry_price:.2f}")
+        print(f"[ProductionRisk]   Allocated capital: ${allocated_capital:.2f}")
+        print(f"[ProductionRisk]   Raw ATR: {atr_value:.6f}")
+        
+        # CRITICAL FIX: Normalize raw ATR to percentage volatility
+        # ATR comes from algorithm strategies as raw price units, need to convert to percentage
+        normalized_atr = atr_value / entry_price if entry_price > 0 else 0.02
+        normalized_atr = max(0.005, min(normalized_atr, 0.15))  # Bound between 0.5% and 15%
+        
+        print(f"[ProductionRisk]   Normalized ATR: {normalized_atr:.6f} ({normalized_atr*100:.2f}%)")
         
         # Calculate normalized volatility for cost adjustment
         portfolio_avg_vol = self.get_portfolio_average_volatility()
         # Improved volatility normalization with better bounds
         if portfolio_avg_vol > 0:
-            volatility_norm = min(max(atr_value / portfolio_avg_vol, 0.1), 3.0)  # Bound between 0.1x and 3x
+            volatility_norm = min(max(normalized_atr / portfolio_avg_vol, 0.1), 3.0)  # Bound between 0.1x and 3x
         else:
             volatility_norm = 1.0
-        
-        # Calculate position size using production formula
-        try:
-            position_info = self.calculate_position_size(
-                symbol=symbol,
-                allocated_capital=allocated_capital,
-                atr_value=atr_value,
-                entry_price=entry_price,
-                volatility_norm=volatility_norm
-            )
-            
-            # Additional validation: position should not exceed allocated capital
-            if position_info["size_usdt"] > allocated_capital:
-                return {
-                    "valid": False, 
-                    "reason": f"Position size ${position_info['size_usdt']:.2f} exceeds allocated capital ${allocated_capital:.2f}"
-                }
-            
-            # Validate margin requirements
-            if position_info["margin_usdt"] > allocated_capital:
-                return {
-                    "valid": False,
-                    "reason": f"Margin required ${position_info['margin_usdt']:.2f} exceeds allocated capital ${allocated_capital:.2f}"
-                }
-            
-            # Calculate stop loss and take profit
-            stop_loss_price, take_profit_price = self.calculate_stop_loss_take_profit(
-                entry_price, side, position_info["atr_adjusted"]
-            )
-            
-            position_info.update({
-                "stop_loss_price": stop_loss_price,
-                "take_profit_price": take_profit_price,
-                "side": side,
-                "validation_checks": {
-                    "position_vs_allocation": position_info["size_usdt"] / allocated_capital,
-                    "margin_vs_allocation": position_info["margin_usdt"] / allocated_capital,
-                    "volatility_norm": volatility_norm
-                }
-            })
-            
-            return {
-                "valid": True,
-                "reason": "Production risk validation passed",
-                "position_info": position_info
-            }
-            
-        except Exception as e:
-            return {"valid": False, "reason": f"Position sizing error: {str(e)}"}
     
     def update_drawdown_history(self, drawdown_pct: float) -> None:
         """Update 3-day drawdown history."""
@@ -388,10 +336,15 @@ class ProductionRiskManager:
             self.equity_curve.pop(0)
     
     def get_rolling_drawdown_3d(self) -> float:
-        """Get maximum drawdown over last 3 days."""
+        """Get maximum drawdown over last 3 days.
+        
+        Returns:
+            Maximum drawdown as negative value (e.g., -0.05 for 5% drawdown).
+        """
         if not self.drawdown_history:
             return 0.0
-        return max(dd for _, dd in self.drawdown_history)
+        # Return the most negative (worst) drawdown
+        return min(dd for _, dd in self.drawdown_history)
     
     def get_rolling_sharpe_30d(self) -> float:
         """Get current 30-day Sharpe ratio."""
@@ -486,10 +439,10 @@ class ProductionRiskManager:
             "kill_switches": kill_switches,
             "risk_status": risk_status,
             "risk_parameters": {
-                "risk_per_trade": self.risk_params.risk_per_trade_pct,
-                "kelly_fraction": self.risk_params.kelly_fraction,
-                "max_leverage": self.risk_params.max_leverage,
-                "base_cost": self.risk_params.base_cost_pct
+                "risk_per_trade": config.RISK_PER_TRADE_PCT,
+                "kelly_fraction": config.KELLY_FRACTION,
+                "max_leverage": config.MAX_LEVERAGE,
+                "base_cost": config.BASE_COST_PCT
             }
         }
 
