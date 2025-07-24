@@ -98,7 +98,8 @@ class ProductionExecutionEngine:
             correlation_data: Correlations with other symbols.
         """
         # Update volatility data (EMA of 1-min ATR(30) over 60 bars)
-        self.portfolio_manager.update_volatility_data(symbol, atr_value)
+        current_price = ohlcv_data.get('close', 0.0)  # Use close price for normalization
+        self.portfolio_manager.update_volatility_data(symbol, atr_value, current_price)
         
         # Update correlation data (EMA of pairwise returns over 60 bars)
         if correlation_data:
@@ -262,7 +263,7 @@ class ProductionExecutionEngine:
             
             # Add this symbol to volatility data if missing
             if symbol not in self.portfolio_manager.volatility_data:
-                self.portfolio_manager.update_volatility_data(symbol, atr_value)
+                self.portfolio_manager.update_volatility_data(symbol, atr_value, current_price)
                 print(f"[ProductionExecution] Added volatility data for {symbol}")
             
             # Force rebalance if needed

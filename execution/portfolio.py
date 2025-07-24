@@ -56,21 +56,32 @@ class ProductionPortfolioManager:
         
         print(f"[ProductionPortfolio] Initialized with ${total_capital:.2f}, target_vol={self.target_volatility:.1%}")
     
-    def update_volatility_data(self, symbol: str, atr_value: float) -> None:
+    def update_volatility_data(self, symbol: str, atr_value: float, current_price: Optional[float] = None) -> None:
         """Update volatility data (EMA of 1-min ATR(30)) for a symbol.
         
         Args:
             symbol: Trading pair symbol.
             atr_value: Current ATR value.
+            current_price: Current price for normalization (optional).
         """
         if symbol not in self.volatility_data:
             self.volatility_data[symbol] = []
+        
+        # Normalize ATR to percentage if current price is available
+        # This ensures volatility data is in percentage form for comparison with target_volatility
+        if current_price and current_price > 0:
+            normalized_atr = atr_value / current_price
+            print(f"[ProductionPortfolio] {symbol}: Raw ATR {atr_value:.6f} → Normalized {normalized_atr:.6f} ({normalized_atr*100:.3f}%)")
+        else:
+            # Fallback: assume ATR is already normalized if no price provided
+            normalized_atr = atr_value if atr_value < 1.0 else atr_value / 100.0
+            print(f"[ProductionPortfolio] {symbol}: Using ATR {normalized_atr:.6f} (assuming normalized)")
         
         # Keep rolling window of 60 bars for EMA calculation
         if len(self.volatility_data[symbol]) >= self.lookback_bars:
             self.volatility_data[symbol].pop(0)
         
-        self.volatility_data[symbol].append(atr_value)
+        self.volatility_data[symbol].append(normalized_atr)
     
     def update_correlation_data(self, symbol1: str, symbol2: str, correlation: float) -> None:
         """Update correlation data (EMA of pairwise returns) between symbol pairs.

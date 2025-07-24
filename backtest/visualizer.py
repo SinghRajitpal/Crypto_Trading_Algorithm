@@ -1,8 +1,8 @@
 """backtest/visualizer.py
 
-QuantStats-based visualization system for backtesting analysis.
-Uses a custom quantstats workaround to bypass pandas 2.0+ compatibility issues.
-Provides professional-grade performance analytics and tear sheet reports.
+QuantStats-Lumi based visualization system for backtesting analysis.
+Uses quantstats-lumi for reliable pandas 2.0+ compatibility and enhanced features.
+Provides production-grade performance analytics and comprehensive tear sheet reports.
 """
 
 import os
@@ -14,13 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 import numpy as np
-import quantstats as qs
-
-# Import the quantstats workaround for HTML generation
-try:
-    from .quantstats_workaround import create_working_quantstats_html_report
-except ImportError:
-    from quantstats_workaround import create_working_quantstats_html_report
+import quantstats_lumi as qs
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -29,20 +23,22 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # Constants
 _CACHE_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "data", "cache")
 
-# Configure quantstats
+# Configure quantstats-lumi
 qs.extend_pandas()
 
 
 class QuantStatsVisualizer:
     """
-    Professional backtesting visualization system with QuantStats metrics.
+    Production-grade backtesting visualization system with QuantStats-Lumi metrics.
     
     Features:
-    - Comprehensive QuantStats metrics (18+ professional indicators)
-    - Custom quantstats HTML report generation (bypasses pandas 2.0+ issues)
-    - Professional HTML reports with embedded charts
-    - Clean CSV/JSON exports with all data
-    - Reliable visualization without matplotlib dependencies
+    - Comprehensive QuantStats-Lumi metrics (25+ professional indicators)
+    - Native quantstats-lumi HTML report generation (full pandas 2.0+ compatibility)
+    - Professional HTML reports with embedded charts and analytics
+    - Enhanced metrics including Ulcer Index, Gain to Pain Ratio, Information Ratio
+    - Benchmark comparison with Alpha, Beta, R-Squared analysis
+    - Clean CSV/JSON exports with all performance data
+    - Production-ready visualization with improved performance and reliability
     """
 
     def __init__(self, initial_capital: float = 10_000.0):
@@ -61,9 +57,20 @@ class QuantStatsVisualizer:
         df = pd.read_csv(cache_path, index_col=0, parse_dates=True)
         close_series = df['close'].copy()
         
+        # Ensure proper timezone handling
+        if close_series.index.tz is None:
+            close_series.index = close_series.index.tz_localize('UTC')
+        elif close_series.index.tz != pd.Timestamp.now().tz:
+            close_series.index = close_series.index.tz_convert('UTC')
+        
+        # Filter by date range with proper timezone handling
         if start is not None:
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=pd.Timestamp.now().tz)
             close_series = close_series[close_series.index >= start]
         if end is not None:
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=pd.Timestamp.now().tz)
             close_series = close_series[close_series.index <= end]
             
         return close_series
@@ -436,9 +443,9 @@ class QuantStatsVisualizer:
     def _extract_quantstats_metrics(self, returns: pd.Series, 
                                    benchmark_returns: Optional[pd.Series] = None,
                                    symbol: str = "Portfolio") -> Dict[str, Any]:
-        """Extract comprehensive metrics using quantstats with fixes for short timeframes."""
+        """Extract comprehensive metrics using quantstats-lumi built-in metrics reports."""
         
-        print(f"[Visualizer] Extracting metrics for {symbol} with {len(returns)} returns")
+        print(f"[Visualizer] Extracting QuantStats-Lumi metrics for {symbol} with {len(returns)} returns")
         
         if returns.empty or returns.isna().all() or len(returns) == 0:
             print(f"[Visualizer] No valid returns data for {symbol}")
@@ -450,184 +457,132 @@ class QuantStatsVisualizer:
                 'Sharpe Ratio': 0.0,
                 'Sortino Ratio': 0.0,
                 'Max Drawdown (%)': 0.0,
-                'Calmar Ratio': 0.0,
-                'Total Trades': 0,
-                'Win Rate (%)': 0.0,
+                'Final Equity': self.initial_capital,
             }
         
-        # Check if we have very short timeframe data (less than 30 days worth)
-        is_short_timeframe = len(returns) < 30
-        
-        def safe_calc(func, default=0.0, use_custom=False, custom_func=None):
-            try:
-                if use_custom and custom_func:
-                    result = custom_func()
-                else:
-                    result = func()
-                if pd.isna(result) or np.isinf(result):
-                    return default
-                # Cap extremely high values that are unrealistic for short timeframes
-                if is_short_timeframe and abs(result) > 1000:
-                    return default
-                return result
-            except (ZeroDivisionError, ValueError, RuntimeWarning, Exception) as e:
-                print(f"[Visualizer] Warning: Metric calculation failed: {e}")
-                return default
-        
-        # Basic performance metrics
-        total_return = safe_calc(lambda: qs.stats.comp(returns) * 100)
-        
-        # For CAGR, use a more conservative approach for short timeframes
-        if is_short_timeframe:
-            # Calculate simple annualized return instead of CAGR for short periods
-            period_days = len(returns)
-            if period_days > 0 and total_return != 0:
-                # Simple annualized return = (total_return / period_days) * 365
-                cagr = (total_return / period_days) * 365
-                # Cap unrealistic values
-                cagr = max(-100, min(1000, cagr))  # Cap between -100% and 1000%
-            else:
-                cagr = 0.0
-        else:
-            cagr = safe_calc(lambda: qs.stats.cagr(returns) * 100)
-        
-        # Volatility calculation with scaling adjustment for short timeframes
-        if is_short_timeframe:
-            # Use raw volatility without excessive annualization
-            volatility = safe_calc(lambda: returns.std() * 100)
-        else:
-            volatility = safe_calc(lambda: qs.stats.volatility(returns) * 100)
-        
-        # Risk-adjusted metrics with adjustments for short timeframes
-        if is_short_timeframe:
-            # Calculate Sharpe ratio manually for short timeframes
-            if volatility != 0 and len(returns) > 1:
-                mean_return = returns.mean()
-                sharpe = (mean_return / (returns.std() + 1e-8)) * np.sqrt(len(returns))
-                sharpe = max(-5, min(10, sharpe))  # Cap between -5 and 10
-            else:
-                sharpe = 0.0
-        else:
-            sharpe = safe_calc(lambda: qs.stats.sharpe(returns))
-        
-        sortino = safe_calc(lambda: qs.stats.sortino(returns))
-        
-        # For Calmar, avoid division by very small drawdowns
-        max_dd_value = safe_calc(lambda: abs(qs.stats.max_drawdown(returns)))
-        if max_dd_value > 0.01:  # Only calculate if drawdown > 1%
-            if is_short_timeframe:
-                calmar = cagr / (max_dd_value * 100) if max_dd_value > 0 else 0
-                calmar = max(-100, min(100, calmar))  # Cap extreme values
-            else:
-                calmar = safe_calc(lambda: qs.stats.calmar(returns))
-        else:
-            calmar = 0.0
-        
-        # Risk metrics
-        max_drawdown = max_dd_value * 100
-        
-        # Fix CVaR calculation to handle empty slices
-        def safe_cvar():
-            try:
-                returns_clean = returns.dropna()
-                if len(returns_clean) < 2:
-                    return -5.0  # Default reasonable value
-                
-                var_95 = np.percentile(returns_clean, 5)
-                tail_returns = returns_clean[returns_clean <= var_95]
-                
-                if len(tail_returns) > 0:
-                    return tail_returns.mean() * 100
-                else:
-                    # If no tail returns, use the minimum return
-                    return returns_clean.min() * 100 if not returns_clean.empty else -5.0
-            except Exception as e:
-                print(f"[Visualizer] CVaR calculation failed: {e}")
-                return -5.0  # Default reasonable value
-        
-        def safe_var():
-            try:
-                returns_clean = returns.dropna()
-                if len(returns_clean) < 2:
-                    return -2.0
-                return np.percentile(returns_clean, 5) * 100
-            except Exception as e:
-                print(f"[Visualizer] VaR calculation failed: {e}")
-                return -2.0
-        
-        var = safe_calc(lambda: safe_var(), -1.0)
-        cvar = safe_calc(lambda: safe_cvar(), -1.0)
-        
-        # Trading metrics
-        win_rate = safe_calc(lambda: qs.stats.win_rate(returns) * 100)
-        win_loss_ratio = safe_calc(lambda: qs.stats.win_loss_ratio(returns), 1.0)
-        kelly = safe_calc(lambda: qs.stats.kelly_criterion(returns))
-        payoff_ratio = safe_calc(lambda: qs.stats.payoff_ratio(returns), 1.0)
-        
-        # Extreme values
-        best_day = safe_calc(lambda: returns.max() * 100)
-        worst_day = safe_calc(lambda: returns.min() * 100)
-        
-        # Distribution metrics
-        skew = safe_calc(lambda: returns.skew())
-        kurtosis = safe_calc(lambda: returns.kurtosis())
-        
-        metrics = {
-            'Symbol': symbol,
-            'Total Return (%)': round(total_return, 2),
-            'CAGR (%)': round(cagr, 2),
-            'Volatility (%)': round(volatility, 2),
-            'Sharpe Ratio': round(sharpe, 3),
-            'Sortino Ratio': round(sortino, 3),
-            'Calmar Ratio': round(calmar, 3),
-            'Max Drawdown (%)': round(max_drawdown, 2),
-            'VaR (95%) (%)': round(var, 2),
-            'CVaR (95%) (%)': round(cvar, 2),
-            'Win Rate (%)': round(win_rate, 2),
-            'Win/Loss Ratio': round(win_loss_ratio, 3),
-            'Payoff Ratio': round(payoff_ratio, 3),
-            'Kelly Criterion': round(kelly, 3),
-            'Best Day (%)': round(best_day, 2),
-            'Worst Day (%)': round(worst_day, 2),
-            'Skewness': round(skew, 3),
-            'Kurtosis': round(kurtosis, 3),
-        }
-        
-        print(f"[Visualizer] Calculated metrics for {symbol}: Total Return: {total_return:.2f}%, CAGR: {cagr:.2f}%, Sharpe: {sharpe:.3f}")
-        
-        # Add benchmark comparison if available
-        if benchmark_returns is not None and not benchmark_returns.empty and len(benchmark_returns) > 1:
-            print(f"[Visualizer] Adding benchmark comparison with {len(benchmark_returns)} benchmark returns")
-            try:
-                aligned_benchmark = benchmark_returns.reindex(returns.index).ffill().dropna()
-                if not aligned_benchmark.empty and len(aligned_benchmark) > 1:
-                    try:
-                        # Calculate beta manually
+        # Use quantstats-lumi's comprehensive metrics report
+        try:
+            # Get full metrics report from quantstats-lumi
+            full_metrics_report = qs.reports.metrics(returns, mode='full', display=False, benchmark=benchmark_returns)
+            
+            # Convert the series to a more usable dictionary format
+            metrics_dict = {}
+            if isinstance(full_metrics_report, pd.Series):
+                for key, value in full_metrics_report.items():
+                    if pd.notna(value) and value != '':
+                        try:
+                            # Try to convert to float if it's a numeric string
+                            if isinstance(value, str):
+                                # Handle percentage strings
+                                if value.endswith('%'):
+                                    metrics_dict[key] = float(value.rstrip('%'))
+                                # Handle numeric strings
+                                elif value.replace('.', '').replace('-', '').isdigit():
+                                    metrics_dict[key] = float(value)
+                                else:
+                                    metrics_dict[key] = value
+                            else:
+                                metrics_dict[key] = float(value) if isinstance(value, (int, float)) else value
+                        except (ValueError, TypeError):
+                            metrics_dict[key] = value
+            
+            # Calculate final equity from cumulative returns
+            final_equity = self.initial_capital * (1 + qs.stats.comp(returns))
+            
+            # Map quantstats-lumi metrics to our standardized format
+            standardized_metrics = {
+                'Symbol': symbol,
+                'Total Return (%)': round(qs.stats.comp(returns) * 100, 2),
+                'CAGR (%)': round(qs.stats.cagr(returns) * 100, 2),
+                'Expected Return (%)': round(qs.stats.expected_return(returns) * 100, 3),
+                'Volatility (%)': round(qs.stats.volatility(returns) * 100, 2),
+                'Sharpe Ratio': round(qs.stats.sharpe(returns), 3),
+                'Sortino Ratio': round(qs.stats.sortino(returns), 3),
+                'Calmar Ratio': round(qs.stats.calmar(returns), 3),
+                'Max Drawdown (%)': round(abs(qs.stats.max_drawdown(returns)) * 100, 2),
+                'Ulcer Index': round(qs.stats.ulcer_index(returns), 4),
+                'Recovery Factor': round(qs.stats.recovery_factor(returns), 2),
+                'VaR (95%) (%)': round(qs.stats.var(returns) * 100, 2),
+                'CVaR (95%) (%)': round(qs.stats.cvar(returns) * 100, 2),
+                'Win Rate (%)': round(qs.stats.win_rate(returns) * 100, 2),
+                'Profit Factor': round(qs.stats.profit_factor(returns), 3),
+                'Gain to Pain Ratio': round(qs.stats.gain_to_pain_ratio(returns), 3),
+                'Tail Ratio': round(qs.stats.tail_ratio(returns), 3),
+                'Kelly Criterion': round(qs.stats.kelly_criterion(returns), 3),
+                'Best Day (%)': round(returns.max() * 100, 2),
+                'Worst Day (%)': round(returns.min() * 100, 2),
+                'Skewness': round(returns.skew(), 3),
+                'Kurtosis': round(returns.kurtosis(), 3),
+                'Final Equity': round(final_equity, 2),
+            }
+            
+            # Add benchmark comparison metrics if benchmark is provided
+            if benchmark_returns is not None and not benchmark_returns.empty and len(benchmark_returns) > 1:
+                print(f"[Visualizer] Adding benchmark comparison metrics")
+                try:
+                    aligned_benchmark = benchmark_returns.reindex(returns.index).ffill().dropna()
+                    if not aligned_benchmark.empty and len(aligned_benchmark) > 1:
+                        # Use quantstats-lumi functions where available
+                        information_ratio = qs.stats.information_ratio(returns, aligned_benchmark)
+                        r_squared = qs.stats.r_squared(returns, aligned_benchmark)
+                        
+                        # Calculate beta and alpha manually (not directly available)
                         covariance = returns.cov(aligned_benchmark)
                         benchmark_var = aligned_benchmark.var()
                         beta = covariance / benchmark_var if benchmark_var != 0 else 0
                         
-                        # Calculate alpha manually (portfolio return - beta * benchmark return)
-                        portfolio_return = returns.mean() * len(returns)  # Total return for period
+                        portfolio_return = returns.mean() * len(returns)
                         benchmark_return = aligned_benchmark.mean() * len(aligned_benchmark)
                         alpha = (portfolio_return - beta * benchmark_return) * 100
                         
-                        # Calculate R-squared
                         correlation = returns.corr(aligned_benchmark)
-                        r_squared = correlation ** 2 if not pd.isna(correlation) else 0
                         
-                        metrics.update({
+                        standardized_metrics.update({
                             'Alpha (%)': round(alpha, 2),
                             'Beta': round(beta, 3),
+                            'Information Ratio': round(information_ratio, 3),
                             'R-Squared': round(r_squared, 3),
+                            'Correlation': round(correlation, 3),
                         })
-                        print(f"[Visualizer] Added benchmark metrics: Alpha: {alpha:.2f}%, Beta: {beta:.3f}")
-                    except Exception as e:
-                        print(f"[Visualizer] Benchmark comparison failed: {e}")
-            except Exception as e:
-                print(f"[Visualizer] Benchmark alignment failed: {e}")
+                        
+                        print(f"[Visualizer] Added benchmark metrics: Alpha: {alpha:.2f}%, Beta: {beta:.3f}, Info Ratio: {information_ratio:.3f}")
+                except Exception as e:
+                    print(f"[Visualizer] Benchmark comparison failed: {e}")
+            
+            print(f"[Visualizer] QuantStats-Lumi metrics extracted for {symbol}: Return: {standardized_metrics['Total Return (%)']}%, Sharpe: {standardized_metrics['Sharpe Ratio']}")
+            return standardized_metrics
+            
+        except Exception as e:
+            print(f"[Visualizer] Error using QuantStats-Lumi metrics report: {e}")
+            # Fallback to individual metric calculations
+            return self._fallback_metrics_calculation(returns, benchmark_returns, symbol)
+    
+    def _fallback_metrics_calculation(self, returns: pd.Series, 
+                                    benchmark_returns: Optional[pd.Series] = None,
+                                    symbol: str = "Portfolio") -> Dict[str, Any]:
+        """Fallback individual metrics calculation if full report fails."""
         
-        return metrics
+        def safe_calc(func, default=0.0):
+            try:
+                result = func()
+                if pd.isna(result) or np.isinf(result):
+                    return default
+                return result
+            except Exception:
+                return default
+        
+        final_equity = self.initial_capital * (1 + safe_calc(lambda: qs.stats.comp(returns)))
+        
+        return {
+            'Symbol': symbol,
+            'Total Return (%)': round(safe_calc(lambda: qs.stats.comp(returns) * 100), 2),
+            'CAGR (%)': round(safe_calc(lambda: qs.stats.cagr(returns) * 100), 2),
+            'Volatility (%)': round(safe_calc(lambda: qs.stats.volatility(returns) * 100), 2),
+            'Sharpe Ratio': round(safe_calc(lambda: qs.stats.sharpe(returns)), 3),
+            'Sortino Ratio': round(safe_calc(lambda: qs.stats.sortino(returns)), 3),
+            'Max Drawdown (%)': round(safe_calc(lambda: abs(qs.stats.max_drawdown(returns)) * 100), 2),
+            'Final Equity': round(final_equity, 2),
+        }
 
     def generate_comprehensive_plots(self, returns: pd.Series, 
                                    equity_curve: pd.Series,
@@ -637,7 +592,7 @@ class QuantStatsVisualizer:
         Generate comprehensive performance plots.
         
         This method creates the directory structure and prepares plot file paths
-        that the quantstats workaround will use for plot generation.
+        that quantstats-lumi will use for enhanced visualization generation.
         """
         
         print(f"[Visualizer] Setting up plot generation in: {output_dir}")
@@ -671,7 +626,7 @@ class QuantStatsVisualizer:
                            metrics: Dict[str, Any], plot_files: Dict[str, str],
                            benchmark_returns: Optional[pd.Series] = None,
                            output_file: str = "performance_report.html") -> str:
-        """Generate comprehensive HTML performance report using the quantstats workaround."""
+        """Generate comprehensive HTML performance report using quantstats-lumi."""
         
         if "portfolio" in output_file.lower():
             title = "Portfolio Backtest Performance Report"
@@ -686,15 +641,66 @@ class QuantStatsVisualizer:
         else:
             title = "Backtest Performance Report"
         
-        success = create_working_quantstats_html_report(
-            returns=returns,
-            output_file=output_file,
-            title=title,
-            benchmark=benchmark_returns,
-            initial_capital=self.initial_capital
-        )
-        
-        return output_file if success else None
+        try:
+            # Use quantstats-lumi's native HTML report generation
+            # Production-ready with full pandas 2.0+ compatibility and enhanced features
+            print(f"🔧 Generating {title}")
+            print(f"📁 Output: {output_file}")
+            
+            # Ensure output directory exists
+            output_dir = os.path.dirname(output_file)
+            if output_dir:
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+            
+            # Clean and prepare returns data
+            if returns.empty:
+                print("⚠️  Warning: Empty returns series provided")
+                returns = pd.Series([0.0], index=[pd.Timestamp.now()], name="Strategy Returns")
+            
+            # Clean returns data - remove infinite and extreme values
+            orig_len = len(returns)
+            returns = returns.replace([np.inf, -np.inf], np.nan).dropna()
+            if len(returns) != orig_len:
+                print(f"⚠️  Cleaned {orig_len - len(returns)} invalid returns")
+            
+            # Ensure proper datetime index
+            if not isinstance(returns.index, pd.DatetimeIndex):
+                if len(returns) > 0:
+                    returns.index = pd.date_range(start='2023-01-01', periods=len(returns), freq='D')
+            
+            # Prepare benchmark if provided
+            if benchmark_returns is not None and not benchmark_returns.empty:
+                if not isinstance(benchmark_returns.index, pd.DatetimeIndex):
+                    if len(benchmark_returns) > 0:
+                        benchmark_returns.index = pd.date_range(start='2023-01-01', periods=len(benchmark_returns), freq='D')
+                # Align benchmark with returns index
+                benchmark_returns = benchmark_returns.reindex(returns.index, method='ffill').dropna()
+            
+            # Generate comprehensive HTML report using quantstats-lumi
+            # Enhanced with professional-grade analytics and visualizations
+            qs.reports.html(
+                returns,
+                output=output_file,
+                title=title,
+                benchmark=benchmark_returns,
+                rf=0.0,  # Risk-free rate
+                download_filename=os.path.basename(output_file),
+                figfmt='png',
+                template_path=None,
+                compounding=True,
+                periods_per_year=252  # Trading days per year
+            )
+            
+            print(f"✅ HTML report generated successfully!")
+            print(f"📄 Report saved to: {output_file}")
+            
+            return output_file
+            
+        except Exception as e:
+            print(f"❌ Error generating HTML report: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
     def save_results(self, portfolio_returns: pd.Series, portfolio_metrics: Dict[str, Any],
                     asset_results: Dict[str, Tuple[pd.Series, Dict[str, Any]]],
                     trades_df: pd.DataFrame, save_dir: str,
@@ -797,29 +803,59 @@ class QuantStatsVisualizer:
                      asset_metrics: Dict[str, Dict[str, Any]]):
         """Print a formatted summary of key metrics."""
         
-        print("\n" + "="*60)
-        print("PORTFOLIO PERFORMANCE SUMMARY")
-        print("="*60)
+        print("\n" + "="*80)
+        print("PORTFOLIO PERFORMANCE SUMMARY (QuantStats-Lumi Enhanced)")
+        print("="*80)
         
-        key_metrics = ['Total Return (%)', 'CAGR (%)', 'Volatility (%)', 
-                      'Sharpe Ratio', 'Sortino Ratio', 'Max Drawdown (%)', 
-                      'Win Rate (%)', 'Calmar Ratio']
-        
-        for metric in key_metrics:
+        # Core performance metrics
+        core_metrics = ['Total Return (%)', 'CAGR (%)', 'Expected Return (%)', 'Volatility (%)']
+        for metric in core_metrics:
             if metric in portfolio_metrics:
                 value = portfolio_metrics[metric]
-                print(f"{metric:<25} {value:>10.2f}")
+                print(f"{metric:<30} {value:>12.2f}")
         
+        print("\n" + "-"*80)
+        print("RISK-ADJUSTED METRICS")
+        print("-"*80)
+        
+        risk_metrics = ['Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Information Ratio']
+        for metric in risk_metrics:
+            if metric in portfolio_metrics:
+                value = portfolio_metrics[metric]
+                print(f"{metric:<30} {value:>12.3f}")
+        
+        print("\n" + "-"*80)
+        print("RISK METRICS")
+        print("-"*80)
+        
+        risk_detail_metrics = ['Max Drawdown (%)', 'Ulcer Index', 'VaR (95%) (%)', 'CVaR (95%) (%)']
+        for metric in risk_detail_metrics:
+            if metric in portfolio_metrics:
+                value = portfolio_metrics[metric]
+                print(f"{metric:<30} {value:>12.2f}")
+        
+        print("\n" + "-"*80)
+        print("TRADING METRICS")
+        print("-"*80)
+        
+        trading_metrics = ['Win Rate (%)', 'Profit Factor', 'Gain to Pain Ratio', 'Payoff Ratio', 'Kelly Criterion']
+        for metric in trading_metrics:
+            if metric in portfolio_metrics:
+                value = portfolio_metrics[metric]
+                print(f"{metric:<30} {value:>12.3f}")
+
         if asset_metrics:
-            print("\n" + "-"*60)
+            print("\n" + "="*80)
             print("INDIVIDUAL ASSET PERFORMANCE")
-            print("-"*60)
+            print("="*80)
             
             for symbol, metrics in asset_metrics.items():
-                print(f"\n{symbol}:")
-                for metric in ['Total Return (%)', 'Max Drawdown (%)', 'Sharpe Ratio', 'Win Rate (%)']:
+                print(f"\n📊 {symbol}:")
+                key_asset_metrics = ['Total Return (%)', 'Sharpe Ratio', 'Max Drawdown (%)', 
+                                   'Win Rate (%)', 'Profit Factor']
+                for metric in key_asset_metrics:
                     if metric in metrics:
                         value = metrics[metric]
-                        print(f"  {metric:<23} {value:>10.2f}")
+                        print(f"  {metric:<28} {value:>10.2f}")
         
-        print("="*60)
+        print("="*80)

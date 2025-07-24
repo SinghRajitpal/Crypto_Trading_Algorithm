@@ -47,6 +47,9 @@ class SimBroker:
         # log times align with the simulated candle rather than wall-clock.
         self._bar_ts: Optional[str] = None
 
+        # Add exchange attribute for compatibility with order manager
+        self.exchange = self
+
     # Plumbing helpers
 
     def _now_iso(self) -> str:
@@ -304,6 +307,32 @@ class SimBroker:
             equity += margin_locked + pnl
 
         return equity
+
+    async def set_leverage(self, symbol: str, leverage: int):
+        """Set leverage for a symbol (no-op in backtest, used for compatibility)."""
+        return {"status": "success", "symbol": symbol, "leverage": leverage}
+
+    # Exchange-style methods for order manager compatibility
+    async def create_order(self, symbol: str, type: str, side: str, amount: float, 
+                          price: Optional[float] = None, params: Optional[Dict] = None):
+        """Exchange-style order creation for compatibility with order manager."""
+        if type == 'market':
+            result = await self.open_position(symbol, side, amount, price)
+            if result["status"] == "success":
+                return {"id": f"sim_{len(self._trade_log)}", "status": "filled"}
+            else:
+                raise Exception(f"Order failed: {result.get('error', 'Unknown error')}")
+        else:
+            # For non-market orders, just return a mock filled order
+            return {"id": f"sim_{len(self._trade_log)}", "status": "filled"}
+
+    async def fetch_order(self, order_id: str, symbol: str):
+        """Fetch order status (mock implementation)."""
+        return {"id": order_id, "status": "filled", "filled": 1.0}
+
+    async def cancel_order(self, order_id: str, symbol: str):
+        """Cancel order (mock implementation)."""
+        return {"id": order_id, "status": "canceled"}
 
     def reset(self):
         self._cash = self.initial_capital

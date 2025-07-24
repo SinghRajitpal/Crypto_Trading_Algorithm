@@ -158,8 +158,10 @@ class BacktestingEngine:
                     await self.broker.close_position(sym, slippage_bp=3.0)
                     try:
                         # Release *all* allocation reserved for this symbol
-                        self.execution_engine.portfolio_manager.release_allocation(sym)
-                    except KeyError:
+                        allocation_amount = self.execution_engine.portfolio_manager.get_allocated_capital(sym)
+                        if allocation_amount > 0:
+                            self.execution_engine.portfolio_manager.release_allocation(sym, allocation_amount)
+                    except (KeyError, AttributeError):
                         # Symbol might not have an entry if it was never allocated
                         pass
 
@@ -199,8 +201,11 @@ class BacktestingEngine:
 
         for sym in closed.keys():
             try:
-                self.execution_engine.portfolio_manager.release_allocation(sym)
-            except KeyError:
+                # Get the current allocation amount before releasing
+                allocation_amount = self.execution_engine.portfolio_manager.get_allocated_capital(sym)
+                if allocation_amount > 0:
+                    self.execution_engine.portfolio_manager.release_allocation(sym, allocation_amount)
+            except (KeyError, AttributeError):
                 pass
 
         # Close fetcher exchange connection cleanly
@@ -209,22 +214,16 @@ class BacktestingEngine:
         trades = self.broker.trade_log()
         final_equity = await self.broker.equity()
 
-        # Metrics
-        try:
-            from backtest.metrics import Metrics
-            metrics = Metrics(trades, self.broker.initial_capital)
-            summary = metrics.summary()
-            equity_curve = metrics.equity_curve()
-        except Exception as e:
-            print(f"[Backtesting] Metrics error: {e}")
-            summary = {}
-            equity_curve = None
+        # Basic trade statistics only (detailed metrics will be handled by QuantStats-Lumi)
+        # Handle case where trades DataFrame might be empty or have no 'type' column
+        trade_count = 0
+        if not trades.empty and "type" in trades.columns:
+            trade_count = int((trades["type"] == "close").sum())
+        
         return {
             "trades": trades,
             "final_cash": final_equity,  # kept key name for CLI compatibility
-            "trade_count": int((trades["type"] == "close").sum()),
-            "summary": summary,
-            "equity_curve": equity_curve,
+            "trade_count": trade_count,
         }
 
 # ---------------------------------------------------------------------------
@@ -328,11 +327,11 @@ if __name__ == "__main__":
 
         print(f"[Backtesting] Saving report to {save_dir}")
 
-    # Visualization / stats with quantstats only -------------------------
+    # Visualization / stats with quantstats-lumi only -------------------------
     try:
         from backtest.visualizer import QuantStatsVisualizer
         
-        print("\nPORTFOLIO STATISTICS (QuantStats):")
+        print("\nPORTFOLIO STATISTICS (QuantStats-Lumi):")
         
         # Extract just symbol names and timeframe
         symbol_names = [sym for sym, _ in symbols]
@@ -368,12 +367,24 @@ if __name__ == "__main__":
                     asset_results[symbol] = (asset_returns, asset_metrics)
                 
             except Exception as e:
-                print(f"[QuantStats] Could not analyze asset {symbol}: {e}")
+                print(f"[QuantStats-Lumi] Could not analyze asset {symbol}: {e}")
         
-        # Print comprehensive metrics summary
+        # Print comprehensive metrics summary using QuantStats-Lumi
         visualizer.print_summary(portfolio_metrics, {k: v[1] for k, v in asset_results.items()})
         
-        # Save results with comprehensive QuantStats tear sheets
+        # Additional trade information
+        final_equity_display = portfolio_metrics.get("Final Equity", result["final_cash"])
+        print(f"\n📊 TRADE SUMMARY")
+        print(f"Trades executed: {result['trade_count']}")
+        print(f"Period: {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}")
+        
+        if result['trade_count'] > 0:
+            print(f"\n📋 RECENT TRADES:")
+            recent_trades = result['trades'].tail(3)
+            for _, trade in recent_trades.iterrows():
+                print(f"  {trade['timestamp']} | {trade['symbol']} | {trade['type']} | Size: {trade.get('size', 'N/A')} | PnL: {trade.get('pnl', 'N/A')}")
+        
+        # Save results with comprehensive QuantStats-Lumi tear sheets
         if args.save and save_dir is not None:
             visualizer.save_results(
                 portfolio_returns=portfolio_returns,
@@ -386,24 +397,33 @@ if __name__ == "__main__":
                 benchmark_symbol=symbol_names[0] if symbol_names else None
             )
         
-        # Use final equity from our metrics
+        
+        # Use final equity from quantstats-lumi metrics
         final_equity_display = portfolio_metrics.get("Final Equity", result["final_cash"])
         
     except ImportError as e:
-        print(f"[QuantStats] Required packages not installed: {e}")
-        print("Please install: pip install quantstats")
+        print(f"[QuantStats-Lumi] Required packages not installed: {e}")
+        print("Please install: pip install quantstats-lumi")
         final_equity_display = result["final_cash"]
+        print(f"\nBack-test complete (Basic Mode)")
+        print(f"Trades executed: {result['trade_count']}")
+        print(f"Final equity: {final_equity_display:.2f} USDT")
     except Exception as e:
-        print(f"[QuantStats] Could not generate visualizations: {e}")
+        print(f"[QuantStats-Lumi] Could not generate visualizations: {e}")
         final_equity_display = result["final_cash"]
+        print(f"\nBack-test complete (Basic Mode)")
+        print(f"Trades executed: {result['trade_count']}")
+        print(f"Final equity: {final_equity_display:.2f} USDT")
 
-    print("\nBack-test complete")
-    print(f"Trades executed : {result['trade_count']}")
-    print(f"Final equity    : {final_equity_display:.2f} USDT")
-    if result['trade_count']:
-        print("Last trades:\n", result['trades'].tail())
-
+    # Success message for QuantStats-Lumi mode
+    if 'portfolio_metrics' in locals() and portfolio_metrics:
+        print(f"\n🎉 Back-test complete with QuantStats-Lumi analytics!")
+    
     if args.save and save_dir is not None:
-        print(f"[Backtesting] Results saved to {save_dir}")
+        print(f"📁 Results saved to {save_dir}")
 
-    # Finished – plots shown above. No extra debug prints.
+    # Display recent trades if available
+    if result['trade_count'] > 0 and not ('portfolio_metrics' in locals() and portfolio_metrics):
+        print(f"\nLast trades:\n{result['trades'].tail()}")
+
+    # Finished – comprehensive analysis shown above.

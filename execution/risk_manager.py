@@ -40,25 +40,57 @@ class ProductionRiskManager:
         """Get risk per trade as a decimal (0.008 for 0.8%)."""
         return config.RISK_PER_TRADE_PCT
     
-    def calculate_dynamic_cost_adjustment(self, volatility_norm: float) -> float:
-        """Calculate dynamic cost adjustment based on normalized volatility.
+    def calculate_dynamic_cost_adjustment(self, volatility_norm: float, entry_price: float, 
+                                       position_size_contracts: float) -> Dict[str, float]:
+        """Calculate comprehensive dynamic cost adjustment based on market conditions.
         
-        Formula from document: dynamic_cost = base_cost × (1 + 0.5 × normalized_volatility)
+        Includes: trading fees, spread, slippage, commission, and funding costs.
         
         Args:
             volatility_norm: Normalized volatility measure.
+            entry_price: Entry price for the position.
+            position_size_contracts: Position size in contracts.
             
         Returns:
-            Adjusted cost in USD terms (not percentage).
+            Dictionary with detailed cost breakdown and total cost.
         """
-        # FIXED: Return cost as absolute value for subtraction, not percentage for multiplication
-        cost_multiplier = 1 + config.VOLATILITY_COST_MULTIPLIER * volatility_norm
-        return config.BASE_COST_PCT * cost_multiplier
+        # Base costs (as percentages of notional value)
+        trading_fee_pct = config.BASE_TRADING_FEE_PCT
+        spread_pct = config.BASE_SPREAD_PCT  
+        commission_pct = config.BASE_COMMISSION_PCT
+        funding_pct = config.FUNDING_RATE_8H_PCT
+        
+        # Dynamic slippage increases with volatility and position size
+        position_notional = position_size_contracts * entry_price
+        
+        # Slippage increases with volatility and position size (market impact)
+        volatility_slippage = config.BASE_SLIPPAGE_PCT * (1 + volatility_norm * 0.5)
+        
+        # Market impact: larger positions have higher slippage
+        market_impact_factor = min(2.0, max(1.0, position_notional / 10000))  # Scale with position size
+        dynamic_slippage_pct = volatility_slippage * market_impact_factor
+        
+        # Total cost percentage
+        total_cost_pct = trading_fee_pct + spread_pct + dynamic_slippage_pct + commission_pct + funding_pct
+        
+        # Convert to absolute USD costs
+        cost_breakdown = {
+            "trading_fee_usd": position_notional * trading_fee_pct,
+            "spread_cost_usd": position_notional * spread_pct,
+            "slippage_cost_usd": position_notional * dynamic_slippage_pct,
+            "commission_usd": position_notional * commission_pct,
+            "funding_cost_usd": position_notional * funding_pct,
+            "total_cost_usd": position_notional * total_cost_pct,
+            "total_cost_pct": total_cost_pct,
+            "market_impact_factor": market_impact_factor
+        }
+        
+        return cost_breakdown
     
     def calculate_position_size(self, symbol: str, allocated_capital: float, atr_value: float, 
                               entry_price: float, volatility_norm: float = 0.5) -> Dict[str, Any]:
-        """Calculate position size using the document's exact formula:
-        Size = (0.8% × Allocated × 0.7) / max(ATR, 0.001) - dynamic_cost
+        """Calculate position size using the document's exact formula with comprehensive cost accounting:
+        Size = (0.8% × Allocated × 0.7) / max(ATR, 0.001) - total_trading_costs
         
         Args:
             symbol: Trading pair symbol.
@@ -68,7 +100,7 @@ class ProductionRiskManager:
             volatility_norm: Normalized volatility for cost adjustment.
             
         Returns:
-            Dictionary with position sizing information.
+            Dictionary with position sizing information and detailed cost breakdown.
         """
         # CRITICAL FIX: Normalize raw ATR to percentage volatility
         # ATR comes from algorithm strategies as raw price units, need to convert to percentage
@@ -78,18 +110,21 @@ class ProductionRiskManager:
         # Apply ATR floor from document
         atr_adjusted = max(normalized_atr, config.MIN_ATR_FLOOR)
         
-        # Calculate dynamic cost adjustment
-        dynamic_cost = self.calculate_dynamic_cost_adjustment(volatility_norm)
-        
-        # FIXED: Core formula exactly as specified in document
-        # Size = (0.8% × Allocated × 0.7) / max(ATR, 0.001) - dynamic_cost
+        # STEP 1: Calculate base position size using Kelly formula
+        # Size = (0.8% × Allocated × 0.7) / max(ATR, 0.001)
         numerator = config.RISK_PER_TRADE_PCT * allocated_capital * config.KELLY_FRACTION
         base_position_size_usdt = numerator / atr_adjusted
         
-        # CRITICAL FIX: Apply dynamic cost as SUBTRACTION, not multiplication
-        # Calculate dynamic cost in USD terms
-        dynamic_cost_usd = dynamic_cost * allocated_capital  # Convert percentage to USD
-        position_size_usdt = base_position_size_usdt - dynamic_cost_usd
+        # STEP 2: Initial position size in contracts (for cost calculation)
+        initial_position_contracts = base_position_size_usdt / entry_price if entry_price > 0 else 0
+        
+        # STEP 3: Calculate comprehensive trading costs
+        cost_breakdown = self.calculate_dynamic_cost_adjustment(
+            volatility_norm, entry_price, initial_position_contracts
+        )
+        
+        # STEP 4: Subtract total costs from position size
+        position_size_usdt = base_position_size_usdt - cost_breakdown["total_cost_usd"]
         
         # CRITICAL SAFETY: Ensure position size never exceeds allocated capital
         max_position_size = allocated_capital * 0.95  # Maximum 95% of allocated capital
@@ -103,10 +138,15 @@ class ProductionRiskManager:
         # Convert to contracts
         position_size_contracts = position_size_usdt / entry_price if entry_price > 0 else 0
         
+        # STEP 5: Recalculate final costs with actual position size
+        final_cost_breakdown = self.calculate_dynamic_cost_adjustment(
+            volatility_norm, entry_price, position_size_contracts
+        )
+        
         # Calculate leverage using dynamic leverage engine
         leverage = self.calculate_dynamic_leverage(symbol, atr_adjusted)
         
-                # Check minimum notional value requirement (Binance: $100)
+        # Check minimum notional value requirement (Binance: $100)
         min_notional = 100.0  # Minimum order value in USD
         current_notional = position_size_contracts * entry_price  # Actual notional value
         
@@ -154,7 +194,13 @@ class ProductionRiskManager:
         print(f"[ProductionRisk]   ATR: {atr_value:.6f} (floor-adjusted: {atr_adjusted:.6f})")
         print(f"[ProductionRisk]   Size: {position_size_contracts:.6f} contracts (${position_size_usdt:.2f})")
         print(f"[ProductionRisk]   Leverage: {leverage}x, Margin: ${margin_required:.2f}")
-        print(f"[ProductionRisk]   Dynamic cost: {dynamic_cost:.4%}")
+        print(f"[ProductionRisk]   Total costs: ${final_cost_breakdown['total_cost_usd']:.2f} ({final_cost_breakdown['total_cost_pct']:.2%})")
+        print(f"[ProductionRisk]   Cost breakdown:")
+        print(f"[ProductionRisk]     - Trading fees: ${final_cost_breakdown['trading_fee_usd']:.2f}")
+        print(f"[ProductionRisk]     - Spread cost: ${final_cost_breakdown['spread_cost_usd']:.2f}")
+        print(f"[ProductionRisk]     - Slippage: ${final_cost_breakdown['slippage_cost_usd']:.2f}")
+        print(f"[ProductionRisk]     - Commission: ${final_cost_breakdown['commission_usd']:.2f}")
+        print(f"[ProductionRisk]     - Funding (8h): ${final_cost_breakdown['funding_cost_usd']:.2f}")
         print(f"[ProductionRisk]   Position/Allocated: {(position_size_usdt/allocated_capital)*100:.1f}%")
         
         return {
@@ -163,12 +209,14 @@ class ProductionRiskManager:
             "margin_usdt": margin_required,
             "leverage": leverage,
             "risk_amount": numerator,
-            "dynamic_cost": dynamic_cost,
             "atr_adjusted": atr_adjusted,
             "stop_loss_distance": stop_loss_distance,
             "take_profit_distance": take_profit_distance,
             "entry_price": entry_price,
-            "allocated_capital": allocated_capital
+            "allocated_capital": allocated_capital,
+            "cost_breakdown": final_cost_breakdown,
+            "total_costs_usd": final_cost_breakdown["total_cost_usd"],
+            "cost_pct": final_cost_breakdown["total_cost_pct"]
         }
     
     def calculate_dynamic_leverage(self, symbol: str, atr_value: float) -> int:
@@ -307,6 +355,68 @@ class ProductionRiskManager:
             volatility_norm = min(max(normalized_atr / portfolio_avg_vol, 0.1), 3.0)  # Bound between 0.1x and 3x
         else:
             volatility_norm = 1.0
+        
+        # Calculate position size using allocated capital
+        position_result = self.calculate_position_size(
+            symbol=symbol,
+            allocated_capital=allocated_capital,
+            atr_value=normalized_atr,  # Use normalized ATR
+            entry_price=entry_price
+        )
+        
+        if position_result["size_contracts"] <= 0:
+            return {
+                "valid": False,
+                "reason": f"Invalid position size calculated: {position_result['size_contracts']}",
+                "allocated_capital": allocated_capital
+            }
+        
+        # Calculate dynamic leverage
+        leverage = self.calculate_dynamic_leverage(symbol, normalized_atr)
+        
+        # Calculate stop loss and take profit
+        stop_loss, take_profit = self.calculate_stop_loss_take_profit(
+            entry_price=entry_price,
+            side=side,
+            atr_adjusted=normalized_atr * entry_price  # Convert back to price units for SL/TP
+        )
+        
+        # Perform risk checks
+        kill_switches = self.check_kill_switches()
+        
+        if kill_switches["trading_halt"]:
+            return {
+                "valid": False,
+                "reason": "Trading halted due to maximum drawdown",
+                "allocated_capital": allocated_capital
+            }
+        
+        if kill_switches["full_flatten"]:
+            return {
+                "valid": False,
+                "reason": "Position flattening due to negative equity slope",
+                "allocated_capital": allocated_capital
+            }
+        
+        # All checks passed - return valid trade
+        return {
+            "valid": True,
+            "position_info": {
+                "symbol": symbol,
+                "side": side,
+                "size_contracts": position_result["size_contracts"],  # Fixed key name
+                "size_usdt": position_result["size_usdt"],
+                "margin_usdt": position_result["margin_usdt"],
+                "leverage": position_result["leverage"],
+                "entry_price": entry_price,
+                "stop_loss_price": stop_loss,  # Fixed key name
+                "take_profit_price": take_profit,  # Fixed key name
+                "allocated_capital": allocated_capital,
+                "atr_value": normalized_atr,
+                "volatility_norm": volatility_norm
+            },
+            "allocated_capital": allocated_capital
+        }
     
     def update_drawdown_history(self, drawdown_pct: float) -> None:
         """Update 3-day drawdown history."""
