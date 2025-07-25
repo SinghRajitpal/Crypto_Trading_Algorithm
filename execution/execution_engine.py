@@ -426,13 +426,21 @@ class ProductionExecutionEngine:
             if atr_value is None:
                 return {"valid": False, "reason": "Missing ATR value for validation"}
             
-            # Validate using risk manager
+            # Extract signal confidence for position sizing adjustment
+            signal_confidence = getattr(signal, 'signal_confidence', 0.5)
+            strategy_confidence = signal.metadata.get('strategy_confidence', 0.5)
+            
+            # Combine confidences (geometric mean for conservative approach)
+            combined_confidence = (signal_confidence * strategy_confidence) ** 0.5
+            
+            # Validate using risk manager with confidence adjustment
             result = self.risk_manager.validate_trade(
                 symbol=signal.symbol,
                 action=signal.action,
                 side=signal.side,
                 entry_price=current_price,
-                atr_value=atr_value
+                atr_value=atr_value,
+                signal_confidence=combined_confidence
             )
             
             # Add position information to signal metadata if valid
@@ -444,7 +452,8 @@ class ProductionExecutionEngine:
                     "stop_loss_price": position_info["stop_loss_price"],
                     "take_profit_price": position_info["take_profit_price"],
                     "reward_risk_ratio": abs((position_info["take_profit_price"] - current_price) / 
-                                           (current_price - position_info["stop_loss_price"]))
+                                           (current_price - position_info["stop_loss_price"])),
+                    "combined_confidence": combined_confidence
                 })
             
             return result

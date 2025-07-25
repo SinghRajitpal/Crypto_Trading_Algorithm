@@ -412,6 +412,15 @@ class ProductionPortfolioManager:
             return self.allocation_weights[symbol].allocated_capital
         return 0.0
     
+    def get_all_allocations(self) -> Dict[str, float]:
+        """Get all current allocations.
+        
+        Returns:
+            Dictionary mapping symbol to allocated capital.
+        """
+        return {symbol: weights.allocated_capital 
+                for symbol, weights in self.allocation_weights.items()}
+    
     def get_portfolio_summary(self) -> Dict[str, Any]:
         """Get comprehensive portfolio summary.
         

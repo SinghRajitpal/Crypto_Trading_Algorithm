@@ -82,7 +82,7 @@ class OrderManager:
             position_side = 'LONG' if side == 'buy' else 'SHORT'
             
             # Place the main market order with position side
-            main_order = await self.binance_client.exchange.create_order(
+            main_order = await self.binance_client.create_order(
                 symbol=symbol,
                 type='market',
                 side=side,
@@ -100,7 +100,7 @@ class OrderManager:
             if stop_loss:
                 try:
                     sl_side = 'sell' if side == 'buy' else 'buy'  # Opposite side
-                    sl_order = await self.binance_client.exchange.create_order(
+                    sl_order = await self.binance_client.create_order(
                         symbol=symbol,
                         type='stop_market',
                         side=sl_side,
@@ -122,7 +122,7 @@ class OrderManager:
                 try:
                     tp_side = 'sell' if side == 'buy' else 'buy'  # Opposite side
                     # Use take profit market order for proper take profit execution
-                    tp_order = await self.binance_client.exchange.create_order(
+                    tp_order = await self.binance_client.create_order(
                         symbol=symbol,
                         type='take_profit_market',  # Proper take profit market order
                         side=tp_side,
@@ -213,7 +213,7 @@ class OrderManager:
                 for tracked_order in open_orders:
                     try:
                         # Fetch current order status
-                        order_status = await self.binance_client.exchange.fetch_order(
+                        order_status = await self.binance_client.fetch_order(
                             tracked_order.order_id, 
                             tracked_order.symbol
                         )
@@ -252,7 +252,7 @@ class OrderManager:
                 # Only cancel if still open
                 if associated_order.status == 'open':
                     try:
-                        await self.binance_client.exchange.cancel_order(
+                        await self.binance_client.cancel_order(
                             order_id, 
                             associated_order.symbol
                         )

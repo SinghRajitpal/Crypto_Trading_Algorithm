@@ -3,6 +3,19 @@ import time
 import numpy as np
 from datetime import datetime, timedelta
 import config
+from dataclasses import dataclass
+
+
+@dataclass
+class ProductionRiskParameters:
+    """Risk parameters container for production system."""
+    risk_per_trade_pct: float = config.RISK_PER_TRADE_PCT
+    kelly_fraction: float = config.KELLY_FRACTION
+    max_leverage: int = config.MAX_LEVERAGE
+    base_cost_pct: float = config.BASE_COST_PCT
+    atr_stop_multiplier: float = config.ATR_STOP_MULTIPLIER
+    risk_reward_ratio: float = config.RISK_REWARD_RATIO
+    min_atr_floor: float = config.MIN_ATR_FLOOR
 
 
 class ProductionRiskManager:
@@ -22,6 +35,9 @@ class ProductionRiskManager:
             portfolio_manager: Reference to the production portfolio manager.
         """
         self.portfolio_manager = portfolio_manager
+        
+        # Initialize risk parameters
+        self.risk_params = ProductionRiskParameters()
         
         # Risk tracking data structures
         self.drawdown_history: List[Tuple[datetime, float]] = []  # 3-day drawdown history
@@ -104,8 +120,10 @@ class ProductionRiskManager:
         """
         # CRITICAL FIX: Normalize raw ATR to percentage volatility
         # ATR comes from algorithm strategies as raw price units, need to convert to percentage
-        normalized_atr = atr_value / entry_price if entry_price > 0 else 0.02
-        normalized_atr = max(0.005, min(normalized_atr, 0.15))  # Bound between 0.5% and 15%
+        raw_normalized_atr = atr_value / entry_price if entry_price > 0 else 0.02
+        
+        # Now cap the normalized ATR for calculation purposes
+        normalized_atr = max(0.005, min(raw_normalized_atr, 0.15))  # Bound between 0.5% and 15%
         
         # Apply ATR floor from document
         atr_adjusted = max(normalized_atr, config.MIN_ATR_FLOOR)
@@ -231,8 +249,18 @@ class ProductionRiskManager:
             Dynamic leverage value.
         """
         # FIXED: Base leverage calculation with proper volatility adjustment
-        # lev_base = 10 × min(1, target_vol/σ)
-        vol_adjustment = min(1.0, config.TARGET_VOLATILITY / max(atr_value, 0.001))
+        # Higher volatility = lower leverage
+        atr_pct = atr_value  # Already in percentage form
+        
+        # Use a reasonable volatility threshold for crypto (4% ATR threshold)
+        normal_vol_threshold = 0.04  # 4% volatility threshold
+        
+        if atr_pct <= normal_vol_threshold:
+            vol_adjustment = 1.0  # Normal or low volatility
+        else:
+            # Reduce leverage when volatility exceeds threshold
+            vol_adjustment = normal_vol_threshold / atr_pct
+            
         base_leverage_float = config.MAX_LEVERAGE * vol_adjustment
         base_leverage = max(1, int(base_leverage_float))
         
@@ -314,7 +342,7 @@ class ProductionRiskManager:
         return stop_loss_price, take_profit_price
     
     def validate_trade(self, symbol: str, action: str, side: str, entry_price: float, 
-                      atr_value: float) -> Dict[str, Any]:
+                      atr_value: float, signal_confidence: float = 0.5) -> Dict[str, Any]:
         """Validate a trade against production risk criteria.
         
         Args:
@@ -323,6 +351,7 @@ class ProductionRiskManager:
             side: Position side ("buy" or "sell").
             entry_price: Entry price for the trade.
             atr_value: Current ATR value (raw ATR in price units).
+            signal_confidence: Combined signal confidence (0.0 to 1.0).
             
         Returns:
             Validation result dictionary.
@@ -340,11 +369,28 @@ class ProductionRiskManager:
         print(f"[ProductionRisk]   Entry price: ${entry_price:.2f}")
         print(f"[ProductionRisk]   Allocated capital: ${allocated_capital:.2f}")
         print(f"[ProductionRisk]   Raw ATR: {atr_value:.6f}")
+        print(f"[ProductionRisk]   Signal confidence: {signal_confidence:.3f}")
+        
+        # Apply confidence-based adjustment to allocated capital
+        # Higher confidence allows larger positions, lower confidence reduces size
+        confidence_multiplier = 0.5 + (signal_confidence * 0.75)  # Range: 0.5x to 1.25x
+        adjusted_allocated_capital = allocated_capital * confidence_multiplier
+        
+        print(f"[ProductionRisk]   Confidence multiplier: {confidence_multiplier:.3f}")
+        print(f"[ProductionRisk]   Adjusted allocated capital: ${adjusted_allocated_capital:.2f}")
         
         # CRITICAL FIX: Normalize raw ATR to percentage volatility
         # ATR comes from algorithm strategies as raw price units, need to convert to percentage
-        normalized_atr = atr_value / entry_price if entry_price > 0 else 0.02
-        normalized_atr = max(0.005, min(normalized_atr, 0.15))  # Bound between 0.5% and 15%
+        raw_normalized_atr = atr_value / entry_price if entry_price > 0 else 0.02
+        
+        # Special handling for extreme volatility BEFORE capping
+        # Use the RAW normalized ATR for extreme volatility detection
+        if raw_normalized_atr > 0.10:  # If volatility > 10%, apply additional risk reduction
+            extreme_vol_factor = min(0.10 / raw_normalized_atr, 0.05)  # Cap at 5% of normal sizing for extreme cases
+            adjusted_allocated_capital *= extreme_vol_factor  # Reduce allocated capital directly
+        
+        # Now cap the normalized ATR for calculation purposes
+        normalized_atr = max(0.005, min(raw_normalized_atr, 0.15))  # Bound between 0.5% and 15%
         
         print(f"[ProductionRisk]   Normalized ATR: {normalized_atr:.6f} ({normalized_atr*100:.2f}%)")
         
@@ -356,10 +402,10 @@ class ProductionRiskManager:
         else:
             volatility_norm = 1.0
         
-        # Calculate position size using allocated capital
+        # Calculate position size using adjusted allocated capital
         position_result = self.calculate_position_size(
             symbol=symbol,
-            allocated_capital=allocated_capital,
+            allocated_capital=adjusted_allocated_capital,
             atr_value=normalized_atr,  # Use normalized ATR
             entry_price=entry_price
         )
@@ -518,10 +564,19 @@ class ProductionRiskManager:
         dd_3d = self.get_rolling_drawdown_3d()
         equity_slope = self.get_equity_curve_slope()
         
+        # Check if daily loss exceeds threshold (e.g., -20% daily loss should trigger halt)
+        daily_loss_pct = abs(self.daily_pnl) / 10000.0 if self.daily_pnl < 0 else 0.0
+        excessive_daily_loss = daily_loss_pct > 0.10  # >10% daily loss
+        extreme_daily_loss = daily_loss_pct > 0.14   # >14% daily loss should trigger full flatten
+        
+        # Check if max daily loss exceeded (from config)
+        max_daily_loss = getattr(self, 'max_daily_loss', 1000.0)  # Default $1000
+        daily_loss_limit_exceeded = abs(self.daily_pnl) > max_daily_loss if self.daily_pnl < 0 else False
+        
         kill_switches = {
             "partial_flatten": dd_3d > 0.14,  # If DD >14%, flatten 30% of positions
-            "full_flatten": equity_slope < -0.10,  # If equity slope < -10%, full flatten
-            "trading_halt": self.max_drawdown_hit  # If max drawdown hit, halt trading
+            "full_flatten": (equity_slope < -0.10 or extreme_daily_loss),  # Equity slope < -10% OR extreme daily loss
+            "trading_halt": (self.max_drawdown_hit or excessive_daily_loss or daily_loss_limit_exceeded)
         }
         
         return kill_switches
