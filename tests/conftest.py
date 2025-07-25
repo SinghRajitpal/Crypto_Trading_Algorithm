@@ -19,7 +19,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from algorithm.algo_engine import AlgoEngine
 from execution.execution_engine import ProductionExecutionEngine
 from execution.portfolio import ProductionPortfolioManager, AllocationWeights
-from execution.risk_manager import ProductionRiskManager, ProductionRiskParameters
+from execution.risk_manager import ProductionRiskManager
 from execution.stress_handler import StressHandlingModule
 from execution.order_manager import OrderManager
 from execution.executor import OrderExecutor
