@@ -45,6 +45,10 @@ class BacktestingEngine:
         end,
         initial_capital: float = 10_000.0,
     ) -> None:
+        # Validate date range
+        if start >= end:
+            raise ValueError(f"Start date {start} must be before end date {end}")
+        
         self.symbols = symbols
         # Build helper mapping symbol -> list[timeframe] for quick lookup
         self._symbol_tfs: Dict[str, List[str]] = {}
@@ -53,6 +57,7 @@ class BacktestingEngine:
         self.strategy = strategy
         self.start = start
         self.end = end
+        self.initial_capital = initial_capital  # Store for later use
 
         # Simulated broker
         self.broker = SimBroker(initial_capital)
@@ -224,6 +229,8 @@ class BacktestingEngine:
             "trades": trades,
             "final_cash": final_equity,  # kept key name for CLI compatibility
             "trade_count": trade_count,
+            "total_return_pct": float((final_equity / self.initial_capital - 1) * 100),
+            "max_drawdown_pct": 0.0,  # Placeholder - would need trade history to calculate properly
         }
 
 # ---------------------------------------------------------------------------

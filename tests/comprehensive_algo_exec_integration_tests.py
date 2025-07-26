@@ -191,7 +191,7 @@ class MockDataEngineAdvanced:
             del self.candles_data[symbol]
 
 
-class TestIntegrationStrategy(BaseStrategy):
+class IntegrationTestStrategy(BaseStrategy):
     """Test strategy for algorithm-execution integration testing."""
     
     def __init__(self, params=None, strategy_id="integration_test_strategy"):
@@ -285,7 +285,7 @@ class TestAlgorithmExecutionIntegration(unittest.TestCase):
             total_capital=10000.0
         )
         
-        self.test_strategy = TestIntegrationStrategy()
+        self.test_strategy = IntegrationTestStrategy()
         
     def tearDown(self):
         """Clean up after tests."""
@@ -520,7 +520,7 @@ class TestAlgorithmEngineAdvanced(unittest.TestCase):
         self.mock_binance_client = MockBinanceClientAdvanced()
         self.data_engine = MockDataEngineAdvanced(self.mock_binance_client)
         self.algo_engine = AlgoEngine(self.data_engine)
-        self.test_strategy = TestIntegrationStrategy()
+        self.test_strategy = IntegrationTestStrategy()
         
     def test_signal_generation_under_volatility_spikes(self):
         """Test signal generation behavior during volatility spikes."""
@@ -558,7 +558,7 @@ class TestAlgorithmEngineAdvanced(unittest.TestCase):
             timeframe = "1m"
             
             # Configure strategy to throw exception
-            class ErrorStrategy(TestIntegrationStrategy):
+            class ErrorStrategy(IntegrationTestStrategy):
                 def __init__(self):
                     super().__init__()
                     self.call_count = 0
@@ -810,7 +810,7 @@ class TestStressScenarios(unittest.TestCase):
             binance_client=self.mock_binance_client,
             total_capital=10000.0
         )
-        self.test_strategy = TestIntegrationStrategy()
+        self.test_strategy = IntegrationTestStrategy()
         
     def test_flash_crash_scenario(self):
         """Test system behavior during flash crash scenario."""
