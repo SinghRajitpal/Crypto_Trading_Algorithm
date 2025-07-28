@@ -1,0 +1,75 @@
+{
+  "metrics": {
+    "Symbol": "Portfolio",
+    "Total Return (%)": 88.97,
+    "CAGR (%)": 0.0,
+    "Volatility (%)": 0.0,
+    "Sharpe Ratio": 0.0,
+    "Sortino Ratio": 0.0,
+    "Calmar Ratio": 0.0,
+    "Max Drawdown (%)": 0.0,
+    "Final Equity": 18897.27
+  },
+  "per_asset_stats": {
+    "BTCUSDT": {
+      "Symbol": "BTCUSDT",
+      "Total Return (%)": 74.68,
+      "CAGR (%)": 0.0,
+      "Volatility (%)": 0.0,
+      "Sharpe Ratio": 0.0,
+      "Sortino Ratio": 0.0,
+      "Calmar Ratio": 0.0,
+      "Max Drawdown (%)": 0.0,
+      "Final Equity": 17468.12
+    },
+    "ETHUSDT": {
+      "Symbol": "ETHUSDT",
+      "Total Return (%)": 23.52,
+      "CAGR (%)": 0.0,
+      "Volatility (%)": 0.0,
+      "Sharpe Ratio": 0.0,
+      "Sortino Ratio": 0.0,
+      "Calmar Ratio": 0.0,
+      "Max Drawdown (%)": 0.0,
+      "Final Equity": 12351.81
+    },
+    "SOLUSDT": {
+      "Symbol": "SOLUSDT",
+      "Total Return (%)": -7.31,
+      "CAGR (%)": -37.49,
+      "Expected Return (%)": -0.126,
+      "Volatility (%)": 0.98,
+      "Final Equity": 9269.09,
+      "Sharpe Ratio": -2.367,
+      "Max Drawdown (%)": 7.59,
+      "Ulcer Index": 0.0099,
+      "Sortino Ratio": -2.368,
+      "Calmar Ratio": -4.941,
+      "Recovery Factor": 0.96,
+      "VaR (95%) (%)": -1.73,
+      "CVaR (95%) (%)": -7.59,
+      "Win Rate (%)": 98.33,
+      "Profit Factor": 0.04,
+      "Gain to Pain Ratio": -0.96,
+      "Tail Ratio": 11.962,
+      "Kelly Criterion": -23.776,
+      "Best Day (%)": 0.03,
+      "Worst Day (%)": -7.59,
+      "Skewness": -7.746,
+      "Kurtosis": 59.995
+    }
+  },
+  "timespan": {
+    "start": "2024-01-01T00:00:00+00:00",
+    "end": "2024-03-01T00:00:00+00:00",
+    "days": 60
+  },
+  "benchmark": "BTCUSDT",
+  "reports_generated": {
+    "portfolio_html_report": "portfolio_performance/portfolio_performance_report.html",
+    "asset_html_reports": [],
+    "portfolio_stats": "portfolio_performance/portfolio_stats.csv",
+    "asset_stats": "individual_asset_performance/per_asset_stats.csv",
+    "plots_directory": null
+  }
+}

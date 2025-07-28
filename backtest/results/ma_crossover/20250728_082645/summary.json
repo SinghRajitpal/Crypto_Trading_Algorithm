@@ -1,0 +1,67 @@
+{
+  "metrics": {
+    "Symbol": "Portfolio",
+    "Total Return (%)": 0.3,
+    "CAGR (%)": 202.77,
+    "Expected Return (%)": 0.001,
+    "Volatility (%)": 0.63,
+    "Sharpe Ratio": 0.61,
+    "Sortino Ratio": 0.924,
+    "Calmar Ratio": 595.566,
+    "Max Drawdown (%)": 0.34,
+    "Ulcer Index": 0.0015,
+    "Recovery Factor": 0.89,
+    "VaR (95%) (%)": -0.05,
+    "CVaR (95%) (%)": -0.08,
+    "Win Rate (%)": 49.12,
+    "Profit Factor": 1.094,
+    "Gain to Pain Ratio": 1.751,
+    "Tail Ratio": 1.09,
+    "Kelly Criterion": 0.042,
+    "Best Day (%)": 0.14,
+    "Worst Day (%)": -0.11,
+    "Skewness": 0.412,
+    "Kurtosis": 2.837,
+    "Final Equity": 10030.17
+  },
+  "per_asset_stats": {
+    "BTCUSDT": {
+      "Symbol": "BTCUSDT",
+      "Total Return (%)": 0.3,
+      "CAGR (%)": 202.77,
+      "Expected Return (%)": 0.001,
+      "Volatility (%)": 0.36,
+      "Sharpe Ratio": 1.067,
+      "Sortino Ratio": 20.466,
+      "Calmar Ratio": 12196.851,
+      "Max Drawdown (%)": 0.02,
+      "Ulcer Index": 0.0002,
+      "Recovery Factor": 18.15,
+      "VaR (95%) (%)": -0.03,
+      "CVaR (95%) (%)": -0.03,
+      "Win Rate (%)": 50.0,
+      "Profit Factor": 19.148,
+      "Gain to Pain Ratio": 18.148,
+      "Tail Ratio": NaN,
+      "Kelly Criterion": 0.474,
+      "Best Day (%)": 0.32,
+      "Worst Day (%)": -0.02,
+      "Skewness": 16.869,
+      "Kurtosis": 285.428,
+      "Final Equity": 10030.17
+    }
+  },
+  "timespan": {
+    "start": "2025-07-27T08:26:35.175513+00:00",
+    "end": "2025-07-28T08:26:35.175513+00:00",
+    "days": 1
+  },
+  "benchmark": "BTCUSDT",
+  "reports_generated": {
+    "portfolio_html_report": "portfolio_performance/portfolio_performance_report.html",
+    "asset_html_reports": [],
+    "portfolio_stats": "portfolio_performance/portfolio_stats.csv",
+    "asset_stats": "individual_asset_performance/per_asset_stats.csv",
+    "plots_directory": null
+  }
+}

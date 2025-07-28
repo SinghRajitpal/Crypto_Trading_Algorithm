@@ -23,10 +23,15 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import asyncio
 from datetime import UTC
 from typing import Dict, List, Tuple, Any
+import warnings
 
 import pandas as pd
+import numpy as np
 import json  # Needed for writing summary.json when --save is enabled
 from utils.logging_config import get_logger, console_log
+
+# Only suppress FutureWarning, keep RuntimeWarnings visible to fix underlying issues
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Get logger for this module
 logger = get_logger(__name__)
@@ -260,6 +265,7 @@ if __name__ == "__main__":
     parser.add_argument("--end", type=str, default=None, help="End date (DD/MM/YYYY). Defaults to today if omitted")
     # Optional flag to persist stats & plots -------------------------------------------------
     parser.add_argument("--save", action="store_true", help="Save back-test stats and plots to disk")
+    parser.add_argument("--individual-plots", action="store_true", help="Generate individual asset HTML reports (default: False)")
     args = parser.parse_args()
 
     if not args.symbols.strip() or args.symbols.strip().upper() == "ALL":
@@ -311,6 +317,10 @@ if __name__ == "__main__":
     # Console log: Backtest initialization
     console_log(f"🚀 Starting backtest for {len(symbols)} symbols using {strategy.strategy_id} strategy", "INFO")
     console_log(f"📅 Period: {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}", "INFO")
+    if args.individual_plots:
+        console_log("📊 Individual asset HTML reports: ENABLED", "INFO")
+    else:
+        console_log("📊 Individual asset HTML reports: DISABLED (use --individual-plots to enable)", "INFO")
 
     engine = BacktestingEngine(
         symbols=symbols,
@@ -373,7 +383,7 @@ if __name__ == "__main__":
         )
         
         console_log("📊 Analyzing individual assets...", "INFO")
-        # Generate individual asset analysis
+        # Generate individual asset analysis (only calculate metrics, not HTML reports)
         asset_results = {}
         for symbol in symbol_names:
             try:
@@ -419,7 +429,8 @@ if __name__ == "__main__":
                 save_dir=save_dir,
                 start_date=start_dt,
                 end_date=end_dt,
-                benchmark_symbol=symbol_names[0] if symbol_names else None
+                benchmark_symbol=symbol_names[0] if symbol_names else None,
+                generate_individual_plots=args.individual_plots  # Pass the flag
             )
             console_log(f"📁 Reports saved to: {save_dir}", "INFO")
         

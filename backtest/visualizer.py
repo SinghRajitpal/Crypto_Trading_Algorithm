@@ -20,9 +20,10 @@ from utils.logging_config import get_logger, console_log
 # Get logger for this module
 logger = get_logger(__name__)
 
-# Suppress warnings for cleaner output
-warnings.filterwarnings("ignore", category=UserWarning)
+# Suppress only FutureWarning for cleaner output (keep RuntimeWarnings visible to fix issues)
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+# Do NOT suppress RuntimeWarnings - we need to see and fix them!
 
 # Constants
 _CACHE_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "data", "cache")
@@ -451,6 +452,7 @@ class QuantStatsVisualizer:
         
         logger.debug(f"Extracting QuantStats-Lumi metrics for {symbol} with {len(returns)} returns")
         
+        # Validate returns data first
         if returns.empty or returns.isna().all() or len(returns) == 0:
             logger.warning(f"No valid returns data for {symbol}")
             return {
@@ -464,92 +466,242 @@ class QuantStatsVisualizer:
                 'Final Equity': self.initial_capital,
             }
         
+        # Clean the returns data to prevent numerical issues
+        returns_cleaned = returns.copy()
+        
+        # Remove infinite values
+        inf_mask = np.isinf(returns_cleaned)
+        if inf_mask.any():
+            logger.warning(f"Removing {inf_mask.sum()} infinite values from returns")
+            returns_cleaned = returns_cleaned[~inf_mask]
+        
+        # Remove NaN values
+        nan_mask = returns_cleaned.isna()
+        if nan_mask.any():
+            logger.warning(f"Removing {nan_mask.sum()} NaN values from returns")
+            returns_cleaned = returns_cleaned.dropna()
+        
+        # Check if we still have valid data after cleaning
+        if returns_cleaned.empty or len(returns_cleaned) == 0:
+            logger.warning(f"No valid returns left after cleaning for {symbol}")
+            return {
+                'Symbol': symbol,
+                'Total Return (%)': 0.0,
+                'CAGR (%)': 0.0,
+                'Volatility (%)': 0.0,
+                'Sharpe Ratio': 0.0,
+                'Sortino Ratio': 0.0,
+                'Max Drawdown (%)': 0.0,
+                'Final Equity': self.initial_capital,
+            }
+        
+        # Check for all-zero returns (no variation)
+        if (returns_cleaned == 0).all():
+            logger.warning(f"All returns are zero for {symbol}")
+            return {
+                'Symbol': symbol,
+                'Total Return (%)': 0.0,
+                'CAGR (%)': 0.0,
+                'Volatility (%)': 0.0,
+                'Sharpe Ratio': 0.0,
+                'Sortino Ratio': 0.0,
+                'Max Drawdown (%)': 0.0,
+                'Final Equity': self.initial_capital,
+            }
+        
+        # Check for edge cases that cause QuantStats issues
+        returns_std = returns_cleaned.std()
+        negative_returns = returns_cleaned[returns_cleaned < 0]
+        positive_returns = returns_cleaned[returns_cleaned > 0]
+        
+        # If there's no volatility (all returns are the same), many metrics will be undefined
+        if returns_std == 0 or pd.isna(returns_std):
+            logger.warning(f"Zero volatility detected for {symbol} - using simplified metrics")
+            total_return = returns_cleaned.iloc[0] if len(returns_cleaned) > 0 else 0
+            return {
+                'Symbol': symbol,
+                'Total Return (%)': round(total_return * 100, 2),
+                'CAGR (%)': 0.0,
+                'Volatility (%)': 0.0,
+                'Sharpe Ratio': 0.0,
+                'Sortino Ratio': 0.0,
+                'Calmar Ratio': 0.0,
+                'Max Drawdown (%)': 0.0,
+                'Final Equity': round(self.initial_capital * (1 + total_return), 2),
+            }
+        
+        # If there are no negative returns, some risk metrics can't be calculated
+        has_negative_returns = len(negative_returns) > 0
+        has_positive_returns = len(positive_returns) > 0
+        
+        logger.debug(f"Returns analysis for {symbol}: std={returns_std:.6f}, neg_count={len(negative_returns)}, pos_count={len(positive_returns)}")
+        
         # Use quantstats-lumi's comprehensive metrics report
         try:
-            # Get full metrics report from quantstats-lumi
-            full_metrics_report = qs.reports.metrics(returns, mode='full', display=False, benchmark=benchmark_returns)
-            
-            # Convert the series to a more usable dictionary format
-            metrics_dict = {}
-            if isinstance(full_metrics_report, pd.Series):
-                for key, value in full_metrics_report.items():
-                    if pd.notna(value) and value != '':
-                        try:
-                            # Try to convert to float if it's a numeric string
-                            if isinstance(value, str):
-                                # Handle percentage strings
-                                if value.endswith('%'):
-                                    metrics_dict[key] = float(value.rstrip('%'))
-                                # Handle numeric strings
-                                elif value.replace('.', '').replace('-', '').isdigit():
-                                    metrics_dict[key] = float(value)
-                                else:
-                                    metrics_dict[key] = value
-                            else:
-                                metrics_dict[key] = float(value) if isinstance(value, (int, float)) else value
-                        except (ValueError, TypeError):
-                            metrics_dict[key] = value
+            # Safe calculation wrapper
+            def safe_calc(func, default_value=0.0):
+                try:
+                    result = func()
+                    if pd.isna(result) or np.isinf(result):
+                        return default_value
+                    return result
+                except (ZeroDivisionError, ValueError, RuntimeError) as e:
+                    logger.debug(f"Metric calculation failed: {e}")
+                    return default_value
             
             # Calculate final equity from cumulative returns
-            final_equity = self.initial_capital * (1 + qs.stats.comp(returns))
+            total_return = safe_calc(lambda: qs.stats.comp(returns_cleaned))
+            final_equity = self.initial_capital * (1 + total_return)
             
-            # Map quantstats-lumi metrics to our standardized format
-            standardized_metrics = {
+            # Calculate metrics safely, with special handling for edge cases
+            metrics = {
                 'Symbol': symbol,
-                'Total Return (%)': round(qs.stats.comp(returns) * 100, 2),
-                'CAGR (%)': round(qs.stats.cagr(returns) * 100, 2),
-                'Expected Return (%)': round(qs.stats.expected_return(returns) * 100, 3),
-                'Volatility (%)': round(qs.stats.volatility(returns) * 100, 2),
-                'Sharpe Ratio': round(qs.stats.sharpe(returns), 3),
-                'Sortino Ratio': round(qs.stats.sortino(returns), 3),
-                'Calmar Ratio': round(qs.stats.calmar(returns), 3),
-                'Max Drawdown (%)': round(abs(qs.stats.max_drawdown(returns)) * 100, 2),
-                'Ulcer Index': round(qs.stats.ulcer_index(returns), 4),
-                'Recovery Factor': round(qs.stats.recovery_factor(returns), 2),
-                'VaR (95%) (%)': round(qs.stats.var(returns) * 100, 2),
-                'CVaR (95%) (%)': round(qs.stats.cvar(returns) * 100, 2),
-                'Win Rate (%)': round(qs.stats.win_rate(returns) * 100, 2),
-                'Profit Factor': round(qs.stats.profit_factor(returns), 3),
-                'Gain to Pain Ratio': round(qs.stats.gain_to_pain_ratio(returns), 3),
-                'Tail Ratio': round(qs.stats.tail_ratio(returns), 3),
-                'Kelly Criterion': round(qs.stats.kelly_criterion(returns), 3),
-                'Best Day (%)': round(returns.max() * 100, 2),
-                'Worst Day (%)': round(returns.min() * 100, 2),
-                'Skewness': round(returns.skew(), 3),
-                'Kurtosis': round(returns.kurtosis(), 3),
+                'Total Return (%)': round(total_return * 100, 2),
+                'CAGR (%)': round(safe_calc(lambda: qs.stats.cagr(returns_cleaned)) * 100, 2),
+                'Expected Return (%)': round(safe_calc(lambda: qs.stats.expected_return(returns_cleaned)) * 100, 3),
+                'Volatility (%)': round(returns_std * 100, 2),  # Calculate directly to avoid QuantStats issues
                 'Final Equity': round(final_equity, 2),
             }
+            
+            # Only calculate risk-adjusted metrics if we have sufficient variation
+            if returns_std > 1e-8:  # Minimum threshold for meaningful calculations
+                metrics.update({
+                    'Sharpe Ratio': round(safe_calc(lambda: qs.stats.sharpe(returns_cleaned)), 3),
+                    'Max Drawdown (%)': round(safe_calc(lambda: abs(qs.stats.max_drawdown(returns_cleaned))) * 100, 2),
+                    'Ulcer Index': round(safe_calc(lambda: qs.stats.ulcer_index(returns_cleaned)), 4),
+                })
+                
+                # Only calculate Sortino if we have negative returns
+                if has_negative_returns:
+                    metrics['Sortino Ratio'] = round(safe_calc(lambda: qs.stats.sortino(returns_cleaned)), 3)
+                else:
+                    logger.debug(f"No negative returns for {symbol}, skipping Sortino calculation")
+                    metrics['Sortino Ratio'] = 0.0
+                    
+                # Only calculate Calmar if we have drawdown
+                max_dd = safe_calc(lambda: abs(qs.stats.max_drawdown(returns_cleaned)))
+                if max_dd > 0:
+                    metrics['Calmar Ratio'] = round(safe_calc(lambda: qs.stats.calmar(returns_cleaned)), 3)
+                else:
+                    metrics['Calmar Ratio'] = 0.0
+                    
+                # Recovery factor - only meaningful if we have drawdown
+                max_dd = safe_calc(lambda: abs(qs.stats.max_drawdown(returns_cleaned)))
+                if max_dd > 1e-6:  # Only calculate if we have meaningful drawdown
+                    metrics['Recovery Factor'] = round(safe_calc(lambda: qs.stats.recovery_factor(returns_cleaned)), 2)
+                else:
+                    metrics['Recovery Factor'] = 0.0  # No drawdown = no recovery needed
+                
+            else:
+                # Zero volatility case
+                metrics.update({
+                    'Sharpe Ratio': 0.0,
+                    'Sortino Ratio': 0.0,
+                    'Calmar Ratio': 0.0,
+                    'Max Drawdown (%)': 0.0,
+                    'Ulcer Index': 0.0,
+                    'Recovery Factor': 0.0,
+                })
+            
+            # VaR and CVaR calculations - only if we have enough data and variation
+            if len(returns_cleaned) >= 20 and has_negative_returns:  # Need sufficient data AND negative returns for meaningful VaR/CVaR
+                # For CVaR, we need to ensure there are returns below the VaR threshold
+                var_95 = safe_calc(lambda: qs.stats.var(returns_cleaned))
+                returns_below_var = returns_cleaned[returns_cleaned < var_95]
+                
+                if len(returns_below_var) > 0:  # Only calculate CVaR if we have returns below VaR
+                    metrics.update({
+                        'VaR (95%) (%)': round(var_95 * 100, 2),
+                        'CVaR (95%) (%)': round(safe_calc(lambda: qs.stats.cvar(returns_cleaned)) * 100, 2),
+                    })
+                else:
+                    # Not enough extreme negative returns for CVaR
+                    metrics.update({
+                        'VaR (95%) (%)': round(var_95 * 100, 2),
+                        'CVaR (95%) (%)': round(var_95 * 100, 2),  # Use VaR as approximation
+                    })
+            else:
+                logger.debug(f"Insufficient data for VaR/CVaR calculation for {symbol}: len={len(returns_cleaned)}, has_neg={has_negative_returns}")
+                metrics.update({
+                    'VaR (95%) (%)': 0.0,
+                    'CVaR (95%) (%)': 0.0,
+                })
+            
+            # Win rate and trading metrics
+            win_rate = (returns_cleaned > 0).mean() * 100 if len(returns_cleaned) > 0 else 0
+            metrics['Win Rate (%)'] = round(win_rate, 2)
+            
+            # Profit factor - only if we have both positive and negative returns
+            if has_positive_returns and has_negative_returns:
+                metrics['Profit Factor'] = round(safe_calc(lambda: qs.stats.profit_factor(returns_cleaned), 1.0), 3)
+                metrics['Gain to Pain Ratio'] = round(safe_calc(lambda: qs.stats.gain_to_pain_ratio(returns_cleaned)), 3)
+                metrics['Tail Ratio'] = round(safe_calc(lambda: qs.stats.tail_ratio(returns_cleaned)), 3)
+            else:
+                logger.debug(f"Insufficient return variation for {symbol}, skipping profit factor calculations")
+                metrics.update({
+                    'Profit Factor': 1.0 if has_positive_returns else 0.0,
+                    'Gain to Pain Ratio': 0.0,
+                    'Tail Ratio': 0.0,
+                })
+            
+            # Kelly criterion
+            metrics['Kelly Criterion'] = round(safe_calc(lambda: qs.stats.kelly_criterion(returns_cleaned)), 3)
+            
+            # Basic statistics
+            metrics.update({
+                'Best Day (%)': round(returns_cleaned.max() * 100, 2) if len(returns_cleaned) > 0 else 0.0,
+                'Worst Day (%)': round(returns_cleaned.min() * 100, 2) if len(returns_cleaned) > 0 else 0.0,
+                'Skewness': round(safe_calc(lambda: returns_cleaned.skew()), 3),
+                'Kurtosis': round(safe_calc(lambda: returns_cleaned.kurtosis()), 3),
+            })
+            
+            standardized_metrics = metrics
             
             # Add benchmark comparison metrics if benchmark is provided
             if benchmark_returns is not None and not benchmark_returns.empty and len(benchmark_returns) > 1:
                 logger.debug(f"Adding benchmark comparison metrics")
                 try:
-                    aligned_benchmark = benchmark_returns.reindex(returns.index).ffill().dropna()
-                    if not aligned_benchmark.empty and len(aligned_benchmark) > 1:
-                        # Use quantstats-lumi functions where available
-                        information_ratio = qs.stats.information_ratio(returns, aligned_benchmark)
-                        r_squared = qs.stats.r_squared(returns, aligned_benchmark)
+                    # Clean and align benchmark data
+                    benchmark_cleaned = benchmark_returns.copy()
+                    benchmark_cleaned = benchmark_cleaned.replace([np.inf, -np.inf], np.nan).dropna()
+                    
+                    if not benchmark_cleaned.empty and len(benchmark_cleaned) > 1:
+                        aligned_benchmark = benchmark_cleaned.reindex(returns_cleaned.index).ffill().dropna()
                         
-                        # Calculate beta and alpha manually (not directly available)
-                        covariance = returns.cov(aligned_benchmark)
-                        benchmark_var = aligned_benchmark.var()
-                        beta = covariance / benchmark_var if benchmark_var != 0 else 0
-                        
-                        portfolio_return = returns.mean() * len(returns)
-                        benchmark_return = aligned_benchmark.mean() * len(aligned_benchmark)
-                        alpha = (portfolio_return - beta * benchmark_return) * 100
-                        
-                        correlation = returns.corr(aligned_benchmark)
-                        
-                        standardized_metrics.update({
-                            'Alpha (%)': round(alpha, 2),
-                            'Beta': round(beta, 3),
-                            'Information Ratio': round(information_ratio, 3),
-                            'R-Squared': round(r_squared, 3),
-                            'Correlation': round(correlation, 3),
-                        })
-                        
-                        logger.debug(f"Added benchmark metrics: Alpha: {alpha:.2f}%, Beta: {beta:.3f}, Info Ratio: {information_ratio:.3f}")
+                        if not aligned_benchmark.empty and len(aligned_benchmark) > 1 and aligned_benchmark.std() > 0:
+                            # Use quantstats-lumi functions safely
+                            information_ratio = safe_calc(lambda: qs.stats.information_ratio(returns_cleaned, aligned_benchmark))
+                            r_squared = safe_calc(lambda: qs.stats.r_squared(returns_cleaned, aligned_benchmark))
+                            
+                            # Calculate beta and alpha manually (with error handling)
+                            try:
+                                covariance = returns_cleaned.cov(aligned_benchmark)
+                                benchmark_var = aligned_benchmark.var()
+                                beta = covariance / benchmark_var if benchmark_var != 0 and not pd.isna(benchmark_var) else 0
+                                
+                                portfolio_return = returns_cleaned.mean() * len(returns_cleaned)
+                                benchmark_return = aligned_benchmark.mean() * len(aligned_benchmark)
+                                alpha = (portfolio_return - beta * benchmark_return) * 100
+                                
+                                correlation = returns_cleaned.corr(aligned_benchmark)
+                                
+                                # Only add if values are valid
+                                if not pd.isna(alpha) and not np.isinf(alpha):
+                                    standardized_metrics['Alpha (%)'] = round(alpha, 2)
+                                if not pd.isna(beta) and not np.isinf(beta):
+                                    standardized_metrics['Beta'] = round(beta, 3)
+                                if not pd.isna(information_ratio) and not np.isinf(information_ratio):
+                                    standardized_metrics['Information Ratio'] = round(information_ratio, 3)
+                                if not pd.isna(r_squared) and not np.isinf(r_squared):
+                                    standardized_metrics['R-Squared'] = round(r_squared, 3)
+                                if not pd.isna(correlation) and not np.isinf(correlation):
+                                    standardized_metrics['Correlation'] = round(correlation, 3)
+                                
+                                logger.debug(f"Added benchmark metrics successfully")
+                            except Exception as e:
+                                logger.debug(f"Benchmark calculation error: {e}")
+                        else:
+                            logger.debug("Insufficient benchmark data for comparison")
                 except Exception as e:
                     logger.warning(f"Benchmark comparison failed: {e}")
             
@@ -559,7 +711,7 @@ class QuantStatsVisualizer:
         except Exception as e:
             logger.error(f"Error using QuantStats-Lumi metrics report: {e}")
             # Fallback to individual metric calculations
-            return self._fallback_metrics_calculation(returns, benchmark_returns, symbol)
+            return self._fallback_metrics_calculation(returns_cleaned, benchmark_returns, symbol)
     
     def _fallback_metrics_calculation(self, returns: pd.Series, 
                                     benchmark_returns: Optional[pd.Series] = None,
@@ -627,7 +779,7 @@ class QuantStatsVisualizer:
         return plot_files
 
     def generate_html_report(self, returns: pd.Series, equity_curve: pd.Series,
-                           metrics: Dict[str, Any], plot_files: Dict[str, str],
+                           metrics: Dict[str, Any], plot_files: Optional[Dict[str, str]],
                            benchmark_returns: Optional[pd.Series] = None,
                            output_file: str = "performance_report.html") -> str:
         """Generate comprehensive HTML performance report using quantstats-lumi."""
@@ -682,6 +834,7 @@ class QuantStatsVisualizer:
             
             # Generate comprehensive HTML report using quantstats-lumi
             # Enhanced with professional-grade analytics and visualizations
+            # NOTE: QuantStats may create its own plots directory - this is internal to QuantStats
             qs.reports.html(
                 returns,
                 output=output_file,
@@ -709,16 +862,24 @@ class QuantStatsVisualizer:
                     asset_results: Dict[str, Tuple[pd.Series, Dict[str, Any]]],
                     trades_df: pd.DataFrame, save_dir: str,
                     start_date: datetime, end_date: datetime,
-                    benchmark_symbol: Optional[str] = None):
-        """Save all results with comprehensive HTML reports."""
+                    benchmark_symbol: Optional[str] = None,
+                    generate_individual_plots: bool = False):
+        """Save all results with comprehensive HTML reports.
+        
+        Args:
+            generate_individual_plots: If True, generates individual asset HTML reports.
+                                     If False, only generates portfolio reports and saves metrics.
+        """
         
         Path(save_dir).mkdir(parents=True, exist_ok=True)
         port_dir = os.path.join(save_dir, "portfolio_performance")
         indiv_dir = os.path.join(save_dir, "individual_asset_performance")
-        plots_dir = os.path.join(save_dir, "plots")
+        # Only create plots directory if individual plots are requested
+        plots_dir = os.path.join(save_dir, "plots") if generate_individual_plots else None
         Path(port_dir).mkdir(parents=True, exist_ok=True)
         Path(indiv_dir).mkdir(parents=True, exist_ok=True)
-        Path(plots_dir).mkdir(parents=True, exist_ok=True)
+        if plots_dir:
+            Path(plots_dir).mkdir(parents=True, exist_ok=True)
         
         benchmark_returns = None
         if benchmark_symbol:
@@ -736,48 +897,65 @@ class QuantStatsVisualizer:
             except Exception:
                 pass
         
+        # Always generate portfolio reports
         if portfolio_returns is not None and not portfolio_returns.empty:
             equity_curve = (1 + portfolio_returns).cumprod() * self.initial_capital
             
-            portfolio_plots_dir = os.path.join(plots_dir, "portfolio")
-            Path(portfolio_plots_dir).mkdir(exist_ok=True)
+            # Only create plots if individual plots are requested
+            plot_files = None
+            if generate_individual_plots and plots_dir:
+                portfolio_plots_dir = os.path.join(plots_dir, "portfolio")
+                Path(portfolio_plots_dir).mkdir(exist_ok=True)
+                
+                plot_files = self.generate_comprehensive_plots(
+                    portfolio_returns, equity_curve, benchmark_returns, portfolio_plots_dir
+                )
             
-            plot_files = self.generate_comprehensive_plots(
-                portfolio_returns, equity_curve, benchmark_returns, portfolio_plots_dir
-            )
-            
+            # Always generate portfolio HTML report (but without plots if not requested)
             portfolio_html = os.path.join(port_dir, "portfolio_performance_report.html")
             self.generate_html_report(
                 portfolio_returns, equity_curve, portfolio_metrics, 
                 plot_files, benchmark_returns, portfolio_html
             )
             
+            # Always save portfolio stats CSV
             portfolio_df = pd.Series(portfolio_metrics, name='Portfolio')
             portfolio_df.to_csv(os.path.join(port_dir, "portfolio_stats.csv"))
         
+        # Process individual assets - always calculate metrics, only generate plots if requested
         asset_metrics = {}
         for symbol, (returns, metrics) in asset_results.items():
             if returns is not None and not returns.empty:
-                asset_plots_dir = os.path.join(plots_dir, symbol)
-                Path(asset_plots_dir).mkdir(exist_ok=True)
-                
-                asset_equity = (1 + returns).cumprod() * self.initial_capital
-                
-                asset_plot_files = self.generate_comprehensive_plots(
-                    returns, asset_equity, benchmark_returns, asset_plots_dir
-                )
-                
-                asset_html = os.path.join(indiv_dir, f"{symbol}_performance_report.html")
-                self.generate_html_report(
-                    returns, asset_equity, metrics, 
-                    asset_plot_files, benchmark_returns, asset_html
-                )
-                
+                # Always store the metrics
                 asset_metrics[symbol] = metrics
+                
+                # Only generate HTML reports and plots if individual plots are requested
+                if generate_individual_plots and plots_dir:
+                    asset_plots_dir = os.path.join(plots_dir, symbol)
+                    Path(asset_plots_dir).mkdir(exist_ok=True)
+                    
+                    asset_equity = (1 + returns).cumprod() * self.initial_capital
+                    
+                    asset_plot_files = self.generate_comprehensive_plots(
+                        returns, asset_equity, benchmark_returns, asset_plots_dir
+                    )
+                    
+                    asset_html = os.path.join(indiv_dir, f"{symbol}_performance_report.html")
+                    self.generate_html_report(
+                        returns, asset_equity, metrics, 
+                        asset_plot_files, benchmark_returns, asset_html
+                    )
         
+        # Always save individual asset metrics CSV
         if asset_metrics:
             asset_df = pd.DataFrame(asset_metrics).T
             asset_df.to_csv(os.path.join(indiv_dir, "per_asset_stats.csv"))
+        
+        # Prepare summary with conditional HTML reports list
+        asset_html_reports = []
+        if generate_individual_plots:
+            asset_html_reports = [f"individual_asset_performance/{symbol}_performance_report.html" 
+                                for symbol in asset_results.keys()]
         
         summary = {
             "metrics": portfolio_metrics,
@@ -790,11 +968,10 @@ class QuantStatsVisualizer:
             "benchmark": benchmark_symbol,
             "reports_generated": {
                 "portfolio_html_report": "portfolio_performance/portfolio_performance_report.html",
-                "asset_html_reports": [f"individual_asset_performance/{symbol}_performance_report.html" 
-                                     for symbol in asset_results.keys()],
+                "asset_html_reports": asset_html_reports,
                 "portfolio_stats": "portfolio_performance/portfolio_stats.csv",
                 "asset_stats": "individual_asset_performance/per_asset_stats.csv",
-                "plots_directory": "plots/"
+                "plots_directory": "plots/" if generate_individual_plots else None
             }
         }
         
