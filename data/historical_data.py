@@ -28,6 +28,10 @@ import pandas as pd
 
 # ccxt has both sync and async versions; we stick to async for consistency
 import ccxt.async_support as ccxt
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 # Helper functions
 
@@ -153,9 +157,7 @@ class HistoricalDataFetcher:
 
             # If end is before latest cached we already have full data
             if end_ms is not None and end_ms <= latest_cached:
-                print(
-                    f"[HistoricalData] Cache hit – returning {file_path} without download."
-                )
+                logger.info(f"Cache hit – returning {file_path} without download.")
                 return existing_df
         else:
             since_ms_needed = since_ms
@@ -164,8 +166,8 @@ class HistoricalDataFetcher:
         all_rows: List[List] = []
         fetch_since = since_ms_needed
 
-        print(
-            f"[HistoricalData] Downloading {symbol_norm} {timeframe} starting "
+        logger.info(
+            f"Downloading {symbol_norm} {timeframe} starting "
             f"{datetime.fromtimestamp(fetch_since/1000, UTC) if fetch_since else 'from earliest'} "
             f"→ {'up to ' + str(datetime.fromtimestamp(end_ms/1000, UTC)) if end_ms else 'latest'}"
         )
@@ -217,7 +219,7 @@ class HistoricalDataFetcher:
             date_format="%Y-%m-%dT%H:%M:%S.%fZ",
             index_label="timestamp",
         )
-        print(f"[HistoricalData] Saved {len(new_df)} rows → {file_path}")
+        logger.info(f"Saved {len(new_df)} rows → {file_path}")
 
         return combined
 
@@ -277,14 +279,14 @@ class HistoricalDataFetcher:
 
             # already fully covered by cache?
             if end_ms is not None and end_ms <= latest_cached:
-                print(f"[HistoricalData] Funding cache hit – returning {file_path}")
+                logger.info(f"Funding cache hit – returning {file_path}")
                 return existing
         else:
             since_needed = since_ms
 
         # Binance API returns max 1000 rows – loop until range covered ---------------
-        print(
-            f"[HistoricalData] Downloading funding rates for {symbol_uc} starting "
+        logger.info(
+            f"Downloading funding rates for {symbol_uc} starting "
             f"{datetime.fromtimestamp(since_needed/1000, UTC) if since_needed else 'from earliest'}"
             f" → {'up to ' + str(datetime.fromtimestamp(end_ms/1000, UTC)) if end_ms else 'latest'}"
         )
@@ -353,7 +355,7 @@ class HistoricalDataFetcher:
 
         # Persist
         combined.to_csv(file_path, index=True, header=True, index_label="timestamp")
-        print(f"[HistoricalData] Saved {len(new_series)} funding rows → {file_path}")
+        logger.info(f"Saved {len(new_series)} funding rows → {file_path}")
 
         return combined
 

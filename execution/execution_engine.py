@@ -8,6 +8,10 @@ from execution.executor import OrderExecutor
 from execution.stress_handler import StressHandlingModule
 import traceback
 from datetime import datetime, timedelta
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 class ProductionExecutionEngine:
     """Production Execution Engine implementing the complete workflow from the document:
@@ -61,31 +65,31 @@ class ProductionExecutionEngine:
         # Initialize symbols from config
         self.portfolio_manager.process_symbols_from_config()
         
-        print(f"[ProductionExecution] Initialized with ${total_capital:.2f} USDT capital")
-        print(f"[ProductionExecution] Target volatility: 18%, Max allocation: 85%")
+        logger.info(f"ProductionExecution initialized with ${total_capital:.2f} USDT capital")
+        logger.info(f"Target volatility: 18%, Max allocation: 85%")
     
     async def setup(self):
         """Setup the execution engine asynchronously."""
         try:
             await self.binance_client.setup_account_config()
-            print("[ProductionExecution] ✅ Account configuration completed")
+            logger.info("Account configuration completed")
             
             # Start order manager monitoring
             await self.order_manager.start_monitoring()
-            print("[ProductionExecution] ✅ Order manager monitoring started")
+            logger.info("Order manager monitoring started")
             
         except Exception as e:
-            print(f"[ProductionExecution] ⚠️ Setup warning: {e}")
+            logger.warning(f"Setup warning: {e}")
     
     async def cleanup(self):
         """Cleanup the execution engine."""
         try:
             # Stop order manager monitoring
             await self.order_manager.stop_monitoring()
-            print("[ProductionExecution] ✅ Order manager monitoring stopped")
+            logger.info("Order manager monitoring stopped")
             
         except Exception as e:
-            print(f"[ProductionExecution] ⚠️ Cleanup warning: {e}")
+            logger.warning(f"Cleanup warning: {e}")
     
     def update_market_data_bar(self, symbol: str, ohlcv_data: Dict[str, float], 
                               atr_value: float, correlation_data: Dict[str, float] = None) -> None:
@@ -131,10 +135,10 @@ class ProductionExecutionEngine:
         active_symbols = list(self.portfolio_manager.volatility_data.keys())
         
         if not active_symbols:
-            print("[ProductionExecution] No active symbols for rebalancing")
+            logger.debug("No active symbols for rebalancing")
             return False
         
-        print("[ProductionExecution] Daily rebalance triggered")
+        logger.info("Daily rebalance triggered")
         
         # Perform rebalancing using production allocation system
         new_allocations = self.portfolio_manager.rebalance_portfolio(active_symbols)
@@ -143,10 +147,10 @@ class ProductionExecutionEngine:
         total_allocated = sum(a.allocated_capital for a in new_allocations.values())
         turnover = self._calculate_turnover(new_allocations)
         
-        print(f"[ProductionExecution] Rebalance completed:")
-        print(f"[ProductionExecution]   Total allocated: ${total_allocated:.2f}")
-        print(f"[ProductionExecution]   Turnover: {turnover:.2%}")
-        print(f"[ProductionExecution]   High vol regime: {self.portfolio_manager.is_high_volatility_regime()}")
+        logger.info(f"Rebalance completed:")
+        logger.info(f"  Total allocated: ${total_allocated:.2f}")
+        logger.info(f"  Turnover: {turnover:.2%}")
+        logger.info(f"  High vol regime: {self.portfolio_manager.is_high_volatility_regime()}")
         
         return True
     
@@ -208,8 +212,8 @@ class ProductionExecutionEngine:
             if atr_value is None:
                 return {"status": "error", "reason": "Missing ATR value for production sizing"}
             
-            print(f"\\n[ProductionExecution] Processing signal: {symbol} {action.upper()}/{side.upper()}")
-            print(f"[ProductionExecution] Price: {current_price:.2f}, ATR: {atr_value:.6f}")
+            logger.info(f"Processing signal: {symbol} {action.upper()}/{side.upper()}")
+            logger.debug(f"Price: {current_price:.2f}, ATR: {atr_value:.6f}")
             
             # Handle different signal actions
             if action == "hold" or side == "none":
@@ -226,8 +230,8 @@ class ProductionExecutionEngine:
                 
         except Exception as e:
             error_msg = f"Error processing signal: {str(e)}"
-            print(f"[ProductionExecution] ❌ {error_msg}")
-            print(traceback.format_exc())
+            logger.error(error_msg)
+            logger.debug(traceback.format_exc())
             return {"status": "error", "reason": error_msg}
     
     async def _process_open_signal(self, signal, current_price: float, atr_value: float) -> Dict[str, Any]:
@@ -254,24 +258,24 @@ class ProductionExecutionEngine:
                     "symbol": symbol
                 }
         except Exception as e:
-            print(f"[ProductionExecution] Warning: Could not check positions: {e}")
+            logger.warning(f"Could not check positions: {e}")
         
         # CRITICAL: Ensure allocation exists before validating trade
         allocated_capital = self.portfolio_manager.get_allocated_capital(symbol)
         if allocated_capital <= 0:
-            print(f"[ProductionExecution] No allocation for {symbol} - checking if rebalance needed")
+            logger.info(f"No allocation for {symbol} - checking if rebalance needed")
             
             # Add this symbol to volatility data if missing
             if symbol not in self.portfolio_manager.volatility_data:
                 self.portfolio_manager.update_volatility_data(symbol, atr_value, current_price)
-                print(f"[ProductionExecution] Added volatility data for {symbol}")
+                logger.debug(f"Added volatility data for {symbol}")
             
             # Force rebalance if needed
             active_symbols = list(self.portfolio_manager.volatility_data.keys())
             if active_symbols:
                 allocations = self.portfolio_manager.rebalance_portfolio(active_symbols)
                 new_allocation = self.portfolio_manager.get_allocated_capital(symbol)
-                print(f"[ProductionExecution] After rebalance, {symbol} allocation: ${new_allocation:.2f}")
+                logger.info(f"After rebalance, {symbol} allocation: ${new_allocation:.2f}")
                 
                 if new_allocation <= 0:
                     return {
@@ -299,12 +303,12 @@ class ProductionExecutionEngine:
         # Extract position information
         position_info = risk_result["position_info"]
         
-        print(f"[ProductionExecution] Opening {side.upper()} position:")
-        print(f"[ProductionExecution]   Size: {position_info['size_contracts']:.6f} contracts")
-        print(f"[ProductionExecution]   Leverage: {position_info['leverage']}x")
-        print(f"[ProductionExecution]   Margin: ${position_info['margin_usdt']:.2f}")
-        print(f"[ProductionExecution]   SL: {position_info['stop_loss_price']:.2f}")
-        print(f"[ProductionExecution]   TP: {position_info['take_profit_price']:.2f}")
+        logger.info(f"Opening {side.upper()} position:")
+        logger.debug(f"  Size: {position_info['size_contracts']:.6f} contracts")
+        logger.debug(f"  Leverage: {position_info['leverage']}x")
+        logger.debug(f"  Margin: ${position_info['margin_usdt']:.2f}")
+        logger.debug(f"  SL: {position_info['stop_loss_price']:.2f}")
+        logger.debug(f"  TP: {position_info['take_profit_price']:.2f}")
         
         # CRITICAL FIX: Use order manager for proper SL/TP tracking
         # Instead of direct execution, use the order manager which handles automatic cancellation
@@ -323,10 +327,10 @@ class ProductionExecutionEngine:
             )
             
             if order_result.get('status') == 'success':
-                print(f"[ProductionExecution] ✅ Position opened with automated SL/TP tracking")
-                print(f"[ProductionExecution]   Main Order ID: {order_result.get('main_order_id')}")
-                print(f"[ProductionExecution]   SL Order ID: {order_result.get('stop_loss_order_id')}")
-                print(f"[ProductionExecution]   TP Order ID: {order_result.get('take_profit_order_id')}")
+                logger.info(f"Position opened with automated SL/TP tracking")
+                logger.debug(f"  Main Order ID: {order_result.get('main_order_id')}")
+                logger.debug(f"  SL Order ID: {order_result.get('stop_loss_order_id')}")
+                logger.debug(f"  TP Order ID: {order_result.get('take_profit_order_id')}")
                 
                 return {
                     "status": "success",
@@ -342,7 +346,7 @@ class ProductionExecutionEngine:
                 }
             else:
                 error_msg = order_result.get('error', 'Unknown error from order manager')
-                print(f"[ProductionExecution] ❌ Order manager failed: {error_msg}")
+                logger.error(f"Order manager failed: {error_msg}")
                 return {
                     "status": "error",
                     "reason": error_msg,
@@ -351,7 +355,7 @@ class ProductionExecutionEngine:
         
         except Exception as e:
             error_msg = f"Error in order manager execution: {str(e)}"
-            print(f"[ProductionExecution] ❌ {error_msg}")
+            logger.error(error_msg)
             return {
                 "status": "error",
                 "reason": error_msg,
@@ -360,7 +364,7 @@ class ProductionExecutionEngine:
     
     async def _process_exit_signal(self, symbol: str) -> Dict[str, Any]:
         """Process exit position signal."""
-        print(f"[ProductionExecution] Exiting position for {symbol}")
+        logger.info(f"Exiting position for {symbol}")
         return await self.order_executor.execute_close_position(symbol)
     
     def handle_disconnect(self, lag_seconds: float) -> None:
@@ -371,7 +375,7 @@ class ProductionExecutionEngine:
     def resume_trading(self) -> None:
         """Resume trading after connection restored."""
         self.trading_paused = False
-        print("[ProductionExecution] Trading resumed")
+        logger.info("Trading resumed")
     
     def get_comprehensive_metrics(self) -> Dict[str, Any]:
         """Get comprehensive system metrics."""
@@ -476,7 +480,7 @@ class ProductionExecutionEngine:
         Args:
             percentage: Percentage of positions to flatten (0.3 = 30%, 1.0 = 100%).
         """
-        print(f"[ProductionExecution] ⚠️ Emergency flattening {percentage:.0%} of positions")
+        logger.critical(f"Emergency flattening {percentage:.0%} of positions")
         
         # Get all open positions (simplified)
         # Would implement actual position flattening logic

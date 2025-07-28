@@ -1,0 +1,6 @@
+,Symbol,Total Return (%),CAGR (%),Expected Return (%),Volatility (%),Sharpe Ratio,Sortino Ratio,Calmar Ratio,Max Drawdown (%),Ulcer Index,Recovery Factor,VaR (95%) (%),CVaR (95%) (%),Win Rate (%),Profit Factor,Gain to Pain Ratio,Tail Ratio,Kelly Criterion,Best Day (%),Worst Day (%),Skewness,Kurtosis,Final Equity
+BTCUSDT,BTCUSDT,4.52,74.58,0.148,15.78,3.488,inf,inf,0.0,0.0,inf,-1.21,-1.21,100.0,inf,inf,,,4.52,0.0,5.477,30.0,10452.34
+ETHUSDT,ETHUSDT,-6.05,-54.46,-0.208,21.12,-3.488,-3.488,-8.995,6.05,0.0112,1.0,-2.02,-6.05,0.0,0.0,-1.0,,,0.0,-6.05,-5.477,30.0,9394.59
+XRPUSDT,XRPUSDT,-7.07,-60.27,-0.244,24.65,-3.488,-3.488,-8.528,7.07,0.0131,1.0,-2.36,-7.07,0.0,0.0,-1.0,,,0.0,-7.07,-5.477,30.0,9293.26
+BNBUSDT,BNBUSDT,-9.23,-70.46,-0.322,32.19,-3.488,-3.488,-7.636,9.23,0.0171,1.0,-3.08,-9.23,0.0,0.0,-1.0,,,0.0,-9.23,-5.477,30.0,9077.27
+SOLUSDT,SOLUSDT,-3.03,-32.09,-0.102,10.56,-3.488,-3.488,-10.605,3.03,0.0056,1.0,-1.01,-3.03,0.0,0.0,-1.0,,,0.0,-3.03,-5.477,30.0,9697.39

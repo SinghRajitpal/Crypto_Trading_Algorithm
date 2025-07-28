@@ -1,8 +1,12 @@
 from typing import Dict, Any, List
 import numpy as np
 from collections import deque
+from utils.logging_config import get_logger, console_log
 from .base_strategy import BaseStrategy
 from ..trade_signal import TradeSignal
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 class MACrossoverStrategy(BaseStrategy):
     """Moving Average Crossover Strategy for crypto futures trading in hedge mode.

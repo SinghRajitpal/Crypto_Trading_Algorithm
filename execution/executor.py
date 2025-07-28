@@ -1,5 +1,9 @@
 from typing import Dict, Any, Optional
 import time
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 class OrderExecutor:
     """Handles execution of trading orders.
@@ -30,7 +34,7 @@ class OrderExecutor:
         self.default_leverage = 5  # Default leverage of 5x
         self.default_margin_type = "isolated"  # Default to isolated margin
         
-        print("[OrderExecutor] Initialized")
+        logger.info("OrderExecutor initialized")
     
     async def execute_open_position(self, symbol, side, position_size, current_price=None, stop_loss_price=None, take_profit_price=None, leverage=None, margin_type=None):
         """Execute opening a position.
@@ -64,7 +68,7 @@ class OrderExecutor:
             # 1) Reserve portfolio allocation BEFORE sending the order
             # --------------------------------------------------------------
             if not self.portfolio_manager.reserve_allocation(symbol, margin_required):
-                print(f"[OrderExecutor] ❌ Allocation reserve failed for {symbol} – exceeds limits")
+                logger.error(f"Allocation reserve failed for {symbol} – exceeds limits")
                 return {
                     "status": "rejected",
                     "reason": "Allocation limit reached",
@@ -72,24 +76,24 @@ class OrderExecutor:
                 }
             
             # Log the execution
-            print(f"[OrderExecutor] Opening {side.upper()} position for {symbol}: {position_size:.6f} contracts")
-            print(f"[OrderExecutor] Notional: ${notional_value:.2f} (margin: ${margin_required:.2f}), Leverage: {leverage}x")
+            logger.info(f"Opening {side.upper()} position for {symbol}: {position_size:.6f} contracts")
+            logger.debug(f"Notional: ${notional_value:.2f} (margin: ${margin_required:.2f}), Leverage: {leverage}x")
             
             # Log Stop Loss and Take Profit details with clear formatting
-            print(f"[OrderExecutor] Risk Management:")
+            logger.debug(f"Risk Management:")
             if stop_loss_price:
                 # Calculate percentage from entry
                 stop_loss_pct = abs(stop_loss_price - current_price) / current_price * 100
-                print(f"  - Stop Loss: {stop_loss_price:.2f} ({stop_loss_pct:.2f}% from entry)")
+                logger.debug(f"  - Stop Loss: {stop_loss_price:.2f} ({stop_loss_pct:.2f}% from entry)")
             else:
-                print(f"  - Stop Loss: None")
+                logger.debug(f"  - Stop Loss: None")
             
             if take_profit_price:
                 # Calculate percentage from entry
                 take_profit_pct = abs(take_profit_price - current_price) / current_price * 100
-                print(f"  - Take Profit: {take_profit_price:.2f} ({take_profit_pct:.2f}% from entry)")
+                logger.debug(f"  - Take Profit: {take_profit_price:.2f} ({take_profit_pct:.2f}% from entry)")
             else:
-                print(f"  - Take Profit: None")
+                logger.debug(f"  - Take Profit: None")
             
             # Ensure stop loss and take profit are properly rounded
             if stop_loss_price is not None:
@@ -113,19 +117,19 @@ class OrderExecutor:
             # Check if execution was successful
             if result.get("status") == "error":
                 error_message = result.get("error", "Unknown error")
-                print(f"[OrderExecutor] ❌ Failed to open position for {symbol}: {error_message}")
+                logger.error(f"Failed to open position for {symbol}: {error_message}")
                 
                 # Add specific guidance based on error type
                 if "notional" in error_message.lower():
-                    print(f"[OrderExecutor] 💡 Recommendation: Increase position size or leverage to meet minimum notional value requirements")
+                    logger.info(f"Recommendation: Increase position size or leverage to meet minimum notional value requirements")
                     # Attempt to calculate how much would be needed
                     if current_price and notional_value < 100:
                         min_size = 100 / current_price
-                        print(f"[OrderExecutor] 💡 Minimum size needed: {min_size:.6f} at current price")
+                        logger.info(f"Minimum size needed: {min_size:.6f} at current price")
                 elif "lot_size" in error_message.lower():
-                    print(f"[OrderExecutor] 💡 Recommendation: Adjust position size to meet lot size requirements")
+                    logger.info(f"Recommendation: Adjust position size to meet lot size requirements")
                 elif "hedge" in error_message.lower() or "position side" in error_message.lower():
-                    print(f"[OrderExecutor] 💡 Order requires position side parameter. Your account is in hedge mode.")
+                    logger.info(f"Order requires position side parameter. Your account is in hedge mode.")
                 
                 # Roll-back reserved capital because order failed
                 try:
@@ -156,20 +160,20 @@ class OrderExecutor:
                 }
                 
             # Success - position opened
-            print(f"[OrderExecutor] ✅ Successfully opened {side.upper()} position for {symbol}")
+            logger.info(f"Successfully opened {side.upper()} position for {symbol}")
             
             # Check if stop loss and take profit orders were created
             has_sl = result.get('position', {}).get('stop_loss') is not None
             has_tp = result.get('position', {}).get('take_profit') is not None
             
             if has_sl and has_tp:
-                print(f"[OrderExecutor] ✅ Stop loss and take profit orders successfully placed")
+                logger.info(f"Stop loss and take profit orders successfully placed")
             elif has_sl:
-                print(f"[OrderExecutor] ✅ Stop loss order placed, but take profit order failed")
+                logger.warning(f"Stop loss order placed, but take profit order failed")
             elif has_tp:
-                print(f"[OrderExecutor] ✅ Take profit order placed, but stop loss order failed")
+                logger.warning(f"Take profit order placed, but stop loss order failed")
             else:
-                print(f"[OrderExecutor] ⚠️ Position opened but stop loss and take profit orders failed")
+                logger.warning(f"Position opened but stop loss and take profit orders failed")
             
             # Record the successful execution
             execution_record = {
@@ -200,7 +204,7 @@ class OrderExecutor:
             
         except Exception as e:
             error_message = f"Error executing open position: {str(e)}"
-            print(f"[OrderExecutor] ❌ {error_message}")
+            logger.error(error_message)
             
             # Roll-back reserved allocation (best-effort)
             try:
@@ -240,45 +244,45 @@ class OrderExecutor:
             Dictionary with execution result.
         """
         try:
-            print(f"\n[OrderExecutor] 🔒 Closing position for {symbol}")
+            logger.info(f"Closing position for {symbol}")
             if side:
-                print(f"[OrderExecutor] Closing {side.upper()} side only")
+                logger.debug(f"Closing {side.upper()} side only")
             
             # Check current allocation before closing
             current_allocation = 0
             try:
                 current_allocation = self.portfolio_manager.get_symbol_allocation(symbol)
                 if current_allocation > 0:
-                    print(f"[OrderExecutor] Current allocation: {current_allocation:.2f} USDT")
+                    logger.debug(f"Current allocation: {current_allocation:.2f} USDT")
                 else:
-                    print(f"[OrderExecutor] No allocation found for {symbol}")
+                    logger.debug(f"No allocation found for {symbol}")
             except Exception as e:
-                print(f"[OrderExecutor] ⚠️ Could not retrieve allocation: {e}")
+                logger.warning(f"Could not retrieve allocation: {e}")
             
             try:
                 positions = await self.binance_client.get_open_positions(symbol)
                 if not positions:
-                    print(f"[OrderExecutor] No open position found for {symbol}")
+                    logger.info(f"No open position found for {symbol}")
                     # Still release allocation if we have it (cleanup orphaned allocations)
                     if current_allocation > 0:
                         released = self.portfolio_manager.release_allocation(symbol)
-                        print(f"[OrderExecutor] Released orphaned allocation of {released:.2f} USDT")
+                        logger.info(f"Released orphaned allocation of {released:.2f} USDT")
                     return {"status": "no_position", "symbol": symbol}
                 
                 # Log position details before closing
                 pos = positions[0]
                 position_side = 'long' if float(pos.get('contracts', 0)) > 0 else 'short'
-                print(f"[OrderExecutor] Found {position_side.upper()} position:")
-                print(f"  - Size: {abs(float(pos.get('contracts', 0))):.6f} contracts")
-                print(f"  - Entry Price: {pos.get('entryPrice', 'N/A')}")
-                print(f"  - Unrealized PnL: {pos.get('unrealizedPnl', 'N/A')}")
+                logger.debug(f"Found {position_side.upper()} position:")
+                logger.debug(f"  - Size: {abs(float(pos.get('contracts', 0))):.6f} contracts")
+                logger.debug(f"  - Entry Price: {pos.get('entryPrice', 'N/A')}")
+                logger.debug(f"  - Unrealized PnL: {pos.get('unrealizedPnl', 'N/A')}")
                 
             except Exception as e:
-                print(f"[OrderExecutor] ⚠️ Error checking positions: {e}")
+                logger.warning(f"Error checking positions: {e}")
                 # Continue with close attempt even if check fails
             
             # Execute the close with realistic slippage
-            print(f"[OrderExecutor] Sending close request to exchange...")
+            logger.debug(f"Sending close request to exchange...")
             slippage_bp = 3.0  # 3 basis points = 0.03% realistic slippage
             result = await self.binance_client.close_position(symbol, side, slippage_bp=slippage_bp)
             
@@ -286,9 +290,9 @@ class OrderExecutor:
                 # Release allocation from portfolio manager
                 if current_allocation > 0:
                     released = self.portfolio_manager.release_allocation(symbol)
-                    print(f"[OrderExecutor] ✅ Released {released:.2f} USDT allocation for {symbol}")
+                    logger.info(f"Released {released:.2f} USDT allocation for {symbol}")
                 
-                print(f"[OrderExecutor] ✅ Successfully closed position for {symbol}")
+                logger.info(f"Successfully closed position for {symbol}")
                 
                 # Add to execution history
                 self.execution_history.append({
@@ -305,7 +309,7 @@ class OrderExecutor:
                 }
             else:
                 error_msg = result.get('error', 'Unknown error')
-                print(f"[OrderExecutor] ❌ Failed to close position for {symbol}: {error_msg}")
+                logger.error(f"Failed to close position for {symbol}: {error_msg}")
                 return {
                     "status": "error",
                     "reason": error_msg,
@@ -314,7 +318,7 @@ class OrderExecutor:
                 
         except Exception as e:
             error_msg = f"Error closing position: {str(e)}"
-            print(f"[OrderExecutor] ❌ {error_msg}")
+            logger.error(error_msg)
             return {
                 "status": "error",
                 "reason": error_msg,
@@ -349,7 +353,7 @@ class OrderExecutor:
             if action == "open":
                 # Ensure we have position info for risk management
                 if not position_info:
-                    print(f"[OrderExecutor] ❌ Cannot open position without risk validation info for {symbol}")
+                    logger.error(f"Cannot open position without risk validation info for {symbol}")
                     return {
                         "status": "error",
                         "reason": "Missing position information",
@@ -363,11 +367,11 @@ class OrderExecutor:
                 leverage = position_info.get("leverage", self.default_leverage)
                 
                 # Print full position details
-                print(f"[OrderExecutor] Position details for {symbol}:")
-                print(f"  - Size: {position_size:.6f} contracts")
-                print(f"  - Leverage: {leverage}x")
-                print(f"  - Stop Loss: {stop_loss_price}")
-                print(f"  - Take Profit: {take_profit_price}")
+                logger.debug(f"Position details for {symbol}:")
+                logger.debug(f"  - Size: {position_size:.6f} contracts")
+                logger.debug(f"  - Leverage: {leverage}x")
+                logger.debug(f"  - Stop Loss: {stop_loss_price}")
+                logger.debug(f"  - Take Profit: {take_profit_price}")
                 
                 # Execute the position
                 return await self.execute_open_position(
@@ -388,7 +392,7 @@ class OrderExecutor:
                 
             # Unknown action
             else:
-                print(f"[OrderExecutor] ❌ Unknown action: {action}")
+                logger.error(f"Unknown action: {action}")
                 return {
                     "status": "error",
                     "reason": f"Unknown action: {action}",
@@ -396,7 +400,7 @@ class OrderExecutor:
                 }
                 
         except Exception as e:
-            print(f"[OrderExecutor] ❌ Error processing signal execution: {str(e)}")
+            logger.error(f"Error processing signal execution: {str(e)}")
             return {
                 "status": "error",
                 "reason": str(e),

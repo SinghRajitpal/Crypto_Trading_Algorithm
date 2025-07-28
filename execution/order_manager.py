@@ -9,6 +9,10 @@ import asyncio
 import time
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 @dataclass
 class TrackedOrder:
@@ -44,7 +48,7 @@ class OrderManager:
             
         self.running = True
         self.monitoring_task = asyncio.create_task(self._monitor_orders())
-        print("[OrderManager] Started order monitoring")
+        logger.info("OrderManager started order monitoring")
     
     async def stop_monitoring(self):
         """Stop the order monitoring task."""
@@ -56,7 +60,7 @@ class OrderManager:
             except asyncio.CancelledError:
                 pass
             self.monitoring_task = None
-        print("[OrderManager] Stopped order monitoring")
+        logger.info("OrderManager stopped order monitoring")
     
     async def place_position_with_sltp(self, symbol: str, side: str, amount: float,
                                       stop_loss: Optional[float] = None,
@@ -76,7 +80,7 @@ class OrderManager:
             Dictionary with order results.
         """
         try:
-            print(f"[OrderManager] Placing {side.upper()} position for {symbol}")
+            logger.info(f"Placing {side.upper()} position for {symbol}")
             
             # Determine position side for hedge mode
             position_side = 'LONG' if side == 'buy' else 'SHORT'
@@ -93,7 +97,7 @@ class OrderManager:
             main_order_id = main_order['id']
             associated_orders = []
             
-            print(f"[OrderManager] ✅ Main order placed: {main_order_id}")
+            logger.info(f"Main order placed: {main_order_id}")
             
             # Place stop loss order if specified
             sl_order_id = None
@@ -112,9 +116,9 @@ class OrderManager:
                     )
                     sl_order_id = sl_order['id']
                     associated_orders.append(sl_order_id)
-                    print(f"[OrderManager] ✅ Stop loss order placed: {sl_order_id} @ {stop_loss}")
+                    logger.info(f"Stop loss order placed: {sl_order_id} @ {stop_loss}")
                 except Exception as e:
-                    print(f"[OrderManager] ❌ Failed to place stop loss: {e}")
+                    logger.error(f"Failed to place stop loss: {e}")
             
             # Place take profit order if specified
             tp_order_id = None
@@ -134,9 +138,9 @@ class OrderManager:
                     )
                     tp_order_id = tp_order['id']
                     associated_orders.append(tp_order_id)
-                    print(f"[OrderManager] ✅ Take profit market order placed: {tp_order_id} @ {take_profit}")
+                    logger.info(f"Take profit market order placed: {tp_order_id} @ {take_profit}")
                 except Exception as e:
-                    print(f"[OrderManager] ❌ Failed to place take profit: {e}")
+                    logger.error(f"Failed to place take profit: {e}")
             
             # Track the main order and associated SL/TP orders
             current_time = time.time()
@@ -191,7 +195,7 @@ class OrderManager:
             }
             
         except Exception as e:
-            print(f"[OrderManager] ❌ Failed to place position: {e}")
+            logger.error(f"Failed to place position: {e}")
             return {
                 'status': 'error',
                 'error': str(e)
@@ -222,7 +226,7 @@ class OrderManager:
                         
                         # If order was filled, cancel associated orders
                         if current_status == 'filled' and tracked_order.status == 'open':
-                            print(f"[OrderManager] 🎯 {tracked_order.order_type.upper()} order filled: {tracked_order.order_id}")
+                            logger.info(f"{tracked_order.order_type.upper()} order filled: {tracked_order.order_id}")
                             tracked_order.status = 'filled'
                             
                             # Cancel associated orders
@@ -233,14 +237,14 @@ class OrderManager:
                             tracked_order.status = current_status
                             
                     except Exception as e:
-                        print(f"[OrderManager] Error checking order {tracked_order.order_id}: {e}")
+                        logger.error(f"Error checking order {tracked_order.order_id}: {e}")
                 
                 await asyncio.sleep(2)  # Check every 2 seconds
                 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"[OrderManager] Error in order monitoring: {e}")
+                logger.error(f"Error in order monitoring: {e}")
                 await asyncio.sleep(5)
     
     async def _cancel_associated_orders(self, filled_order: TrackedOrder):
@@ -257,9 +261,9 @@ class OrderManager:
                             associated_order.symbol
                         )
                         associated_order.status = 'cancelled'
-                        print(f"[OrderManager] ✅ Cancelled {associated_order.order_type} order: {order_id}")
+                        logger.info(f"Cancelled {associated_order.order_type} order: {order_id}")
                     except Exception as e:
-                        print(f"[OrderManager] ❌ Failed to cancel order {order_id}: {e}")
+                        logger.error(f"Failed to cancel order {order_id}: {e}")
     
     def get_tracked_orders(self) -> Dict[str, TrackedOrder]:
         """Get all tracked orders."""

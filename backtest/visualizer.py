@@ -15,6 +15,10 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import quantstats_lumi as qs
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -85,7 +89,7 @@ class QuantStatsVisualizer:
             try:
                 price_data[symbol] = self._load_price_data(symbol, timeframe, start, end)
             except FileNotFoundError:
-                print(f"[QuantStats] ⚠️ Price data missing for {symbol} - skipping")
+                logger.warning(f"Price data missing for {symbol} - skipping")
                 continue
                 
         if not price_data:
@@ -109,8 +113,8 @@ class QuantStatsVisualizer:
         total_fees = trades_df['fee'].fillna(0).sum() if 'fee' in trades_df.columns else 0
         actual_final_equity = self.initial_capital + total_pnl - total_fees
         
-        print(f"[Visualizer] Ground truth from trades: Initial: ${self.initial_capital}, PnL: ${total_pnl:.2f}, Fees: ${total_fees:.2f}")
-        print(f"[Visualizer] Actual final equity from trades: ${actual_final_equity:.2f}")
+        logger.debug(f"Ground truth from trades: Initial: ${self.initial_capital}, PnL: ${total_pnl:.2f}, Fees: ${total_fees:.2f}")
+        logger.debug(f"Actual final equity from trades: ${actual_final_equity:.2f}")
         
         equity_curve = self._trades_to_equity_curve(trades_df, price_data)
         
@@ -120,10 +124,10 @@ class QuantStatsVisualizer:
             discrepancy = abs(calculated_final_equity - actual_final_equity)
             
             if discrepancy > 1.0:  # More than $1 difference
-                print(f"[Visualizer] Warning: Equity curve discrepancy: calculated ${calculated_final_equity:.2f} vs actual ${actual_final_equity:.2f}")
-                print(f"[Visualizer] Discrepancy: ${discrepancy:.2f} - this indicates an issue with equity curve calculation")
+                logger.warning(f"Equity curve discrepancy: calculated ${calculated_final_equity:.2f} vs actual ${actual_final_equity:.2f}")
+                logger.warning(f"Discrepancy: ${discrepancy:.2f} - this indicates an issue with equity curve calculation")
             else:
-                print(f"[Visualizer] Equity curve validation passed: ${calculated_final_equity:.2f} matches actual trades")
+                logger.debug(f"Equity curve validation passed: ${calculated_final_equity:.2f} matches actual trades")
         
         # Convert to returns - fix the calculation to be mathematically correct
         if not equity_curve.empty and len(equity_curve) > 1:
@@ -134,12 +138,12 @@ class QuantStatsVisualizer:
             time_span_hours = (equity_curve.index[-1] - equity_curve.index[0]).total_seconds() / 3600
             time_span_days = max(1, time_span_hours / 24)
             
-            print(f"[Visualizer] Time span: {time_span_hours:.2f} hours ({time_span_days:.2f} days)")
+            logger.debug(f"Time span: {time_span_hours:.2f} hours ({time_span_days:.2f} days)")
             
             # For very short backtests (less than 1 day), create a single return
             if time_span_days < 1.0:
-                print(f"[Visualizer] Short backtest detected ({time_span_hours:.2f} hours)")
-                print(f"[Visualizer] Creating single return from initial to final equity")
+                logger.info(f"Short backtest detected ({time_span_hours:.2f} hours)")
+                logger.debug(f"Creating single return from initial to final equity")
                 
                 # Create a single return that captures the total performance
                 single_return = expected_total_return
@@ -147,14 +151,14 @@ class QuantStatsVisualizer:
                                   index=[equity_curve.index[-1]], 
                                   name='Strategy')
                 
-                print(f"[Visualizer] Created single return: {single_return:.4f} ({single_return*100:.2f}%)")
+                logger.debug(f"Created single return: {single_return:.4f} ({single_return*100:.2f}%)")
                 
             else:
                 # For longer backtests, check if we need daily resampling
                 obs_per_day = len(equity_curve) / time_span_days
                 
                 if obs_per_day > 10 and time_span_days > 2:  # Only resample if we have many observations over multiple days
-                    print(f"[Visualizer] High-frequency data detected ({obs_per_day:.1f} obs/day), resampling to daily")
+                    logger.debug(f"High-frequency data detected ({obs_per_day:.1f} obs/day), resampling to daily")
                     daily_equity = equity_curve.resample('D').last().dropna()
                     
                     if len(daily_equity) > 1:
@@ -164,16 +168,16 @@ class QuantStatsVisualizer:
                         # Validate the resampled returns match expected
                         discrepancy = abs(calculated_total_return - expected_total_return)
                         if discrepancy > 0.05:  # More than 5% difference
-                            print(f"[Visualizer] Warning: Daily resampling caused {discrepancy*100:.2f}% discrepancy")
-                            print(f"[Visualizer] Falling back to period-based returns")
+                            logger.warning(f"Daily resampling caused {discrepancy*100:.2f}% discrepancy")
+                            logger.debug(f"Falling back to period-based returns")
                             # Fall back to a simple period return
                             returns = pd.Series([expected_total_return], 
                                               index=[equity_curve.index[-1]], 
                                               name='Strategy')
                         else:
-                            print(f"[Visualizer] Daily resampling successful: {len(returns)} daily returns")
+                            logger.debug(f"Daily resampling successful: {len(returns)} daily returns")
                     else:
-                        print(f"[Visualizer] Daily resampling yielded only one point, using period return")
+                        logger.debug(f"Daily resampling yielded only one point, using period return")
                         returns = pd.Series([expected_total_return], 
                                           index=[equity_curve.index[-1]], 
                                           name='Strategy')
@@ -184,15 +188,15 @@ class QuantStatsVisualizer:
                     
                     discrepancy = abs(calculated_total_return - expected_total_return)
                     if discrepancy > 0.05:  # More than 5% difference indicates equity curve issues
-                        print(f"[Visualizer] Warning: Equity curve returns don't match expected")
-                        print(f"[Visualizer] Calculated: {calculated_total_return:.4f}, Expected: {expected_total_return:.4f}")
-                        print(f"[Visualizer] Using expected return to ensure accuracy")
+                        logger.warning(f"Equity curve returns don't match expected")
+                        logger.warning(f"Calculated: {calculated_total_return:.4f}, Expected: {expected_total_return:.4f}")
+                        logger.debug(f"Using expected return to ensure accuracy")
                         # Use the known correct return instead of the faulty equity curve returns
                         returns = pd.Series([expected_total_return], 
                                           index=[equity_curve.index[-1]], 
                                           name='Strategy')
                     else:
-                        print(f"[Visualizer] Using {len(returns)} direct returns from equity curve")
+                        logger.debug(f"Using {len(returns)} direct returns from equity curve")
             
             # Clean and validate returns
             returns = returns.replace([np.inf, -np.inf], np.nan).dropna()
@@ -205,15 +209,15 @@ class QuantStatsVisualizer:
                 
             # Final validation
             final_cumulative_return = (1 + returns).prod() - 1 if len(returns) > 0 else 0
-            print(f"[Visualizer] Final returns: {len(returns)} observations")
+            logger.debug(f"Final returns: {len(returns)} observations")
             if len(returns) > 0:
-                print(f"[Visualizer] Returns range: {returns.min():.4f} to {returns.max():.4f}")
-            print(f"[Visualizer] Final cumulative return: {final_cumulative_return:.4f} ({final_cumulative_return*100:.2f}%)")
-            print(f"[Visualizer] Expected return: {expected_total_return:.4f} ({expected_total_return*100:.2f}%)")
+                logger.debug(f"Returns range: {returns.min():.4f} to {returns.max():.4f}")
+            logger.debug(f"Final cumulative return: {final_cumulative_return:.4f} ({final_cumulative_return*100:.2f}%)")
+            logger.debug(f"Expected return: {expected_total_return:.4f} ({expected_total_return*100:.2f}%)")
             
         else:
             # Handle empty or single-value equity curve case
-            print("[Visualizer] Warning: Empty or insufficient equity curve data")
+            logger.warning("Empty or insufficient equity curve data")
             returns = pd.Series(dtype=float, name='Strategy')
         
         benchmark_returns = None
@@ -230,7 +234,7 @@ class QuantStatsVisualizer:
         benchmark_prices = price_data[benchmark_symbol].dropna()
         
         if len(benchmark_prices) < 2:
-            print(f"[Visualizer] Insufficient benchmark data for {benchmark_symbol}")
+            logger.warning(f"Insufficient benchmark data for {benchmark_symbol}")
             return None
         
         # Check if we need to resample to daily frequency
@@ -238,7 +242,7 @@ class QuantStatsVisualizer:
         obs_per_day = len(benchmark_prices) / time_span_days
         
         if obs_per_day > 2:  # High-frequency data
-            print(f"[Visualizer] Resampling benchmark {benchmark_symbol} to daily frequency")
+            logger.debug(f"Resampling benchmark {benchmark_symbol} to daily frequency")
             daily_benchmark_prices = benchmark_prices.resample('D').last().dropna()
             if len(daily_benchmark_prices) > 1:
                 benchmark_returns = daily_benchmark_prices.pct_change().dropna()
@@ -253,7 +257,7 @@ class QuantStatsVisualizer:
         if benchmark_returns.index.tz is not None:
             benchmark_returns.index = benchmark_returns.index.tz_localize(None)
         
-        print(f"[Visualizer] Generated {len(benchmark_returns)} benchmark returns for {benchmark_symbol}")
+        logger.debug(f"Generated {len(benchmark_returns)} benchmark returns for {benchmark_symbol}")
         return benchmark_returns
 
     def _trades_to_equity_curve(self, trades_df: pd.DataFrame, 
@@ -266,7 +270,7 @@ class QuantStatsVisualizer:
         trades_df['timestamp'] = pd.to_datetime(trades_df['timestamp'])
         trades_df = trades_df.sort_values('timestamp')
         
-        print(f"[Visualizer] Processing trades: {len(trades_df[trades_df['type'] == 'open'])} opens, {len(trades_df[trades_df['type'] == 'close'])} closes, {len(trades_df[trades_df['type'] == 'funding'])} funding")
+        logger.debug(f"Processing trades: {len(trades_df[trades_df['type'] == 'open'])} opens, {len(trades_df[trades_df['type'] == 'close'])} closes, {len(trades_df[trades_df['type'] == 'funding'])} funding")
         
         # Start with initial capital - this should remain constant until there's actual P&L
         equity_curve = pd.Series(index=price_data.index, dtype=float, name='equity')
@@ -355,13 +359,13 @@ class QuantStatsVisualizer:
                 # Update equity: initial capital + realized P&L - fees + unrealized P&L
                 equity_curve.iloc[i] = self.initial_capital + cumulative_realized_pnl - cumulative_fees + unrealized_pnl_at_i
         
-        print(f"[Visualizer] Equity curve built: ${equity_curve.iloc[0]:.2f} → ${equity_curve.iloc[-1]:.2f}")
-        print(f"[Visualizer] Cumulative realized P&L: ${cumulative_realized_pnl:.2f}")
-        print(f"[Visualizer] Cumulative fees: ${cumulative_fees:.2f}")
+        logger.debug(f"Equity curve built: ${equity_curve.iloc[0]:.2f} → ${equity_curve.iloc[-1]:.2f}")
+        logger.debug(f"Cumulative realized P&L: ${cumulative_realized_pnl:.2f}")
+        logger.debug(f"Cumulative fees: ${cumulative_fees:.2f}")
         
         # Calculate final unrealized P&L
         final_unrealized_pnl = equity_curve.iloc[-1] - self.initial_capital - cumulative_realized_pnl + cumulative_fees
-        print(f"[Visualizer] Final unrealized P&L: ${final_unrealized_pnl:.2f}")
+        logger.debug(f"Final unrealized P&L: ${final_unrealized_pnl:.2f}")
         
         return equity_curve
     def generate_portfolio_report(self, trades_df: pd.DataFrame, symbols: List[str],
@@ -383,20 +387,20 @@ class QuantStatsVisualizer:
         Returns:
             Tuple of (HTML tear sheet path, metrics dictionary)
         """
-        print(f"[QuantStats] Generating portfolio report for {len(symbols)} symbols")
+        logger.info(f"Generating portfolio report for {len(symbols)} symbols")
         
         # Load price data
         try:
             price_data = self._load_multi_asset_prices(symbols, timeframe, start_date, end_date)
         except Exception as e:
-            print(f"[QuantStats] Error loading price data: {e}")
+            logger.error(f"Error loading price data: {e}")
             return None, {}
         
         # Convert trades to returns
         try:
             returns, benchmark_returns = self._trades_to_returns(trades_df, price_data, benchmark_symbol)
         except Exception as e:
-            print(f"[QuantStats] Error calculating returns: {e}")
+            logger.error(f"Error calculating returns: {e}")
             return None, {}
         
         # Generate quantstats metrics
@@ -415,24 +419,24 @@ class QuantStatsVisualizer:
         asset_trades = trades_df[trades_df['symbol'] == symbol].copy()
         
         if asset_trades.empty:
-            print(f"[QuantStats] No trades found for {symbol}")
+            logger.warning(f"No trades found for {symbol}")
             return None, {}
         
-        print(f"[QuantStats] Generating asset report for {symbol}")
+        logger.info(f"Generating asset report for {symbol}")
         
         # Load price data for this asset
         try:
             price_series = self._load_price_data(symbol, timeframe, start_date, end_date)
             price_df = pd.DataFrame({'close': price_series})
         except Exception as e:
-            print(f"[QuantStats] Error loading price data for {symbol}: {e}")
+            logger.error(f"Error loading price data for {symbol}: {e}")
             return None, {}
         
         # Convert trades to returns
         try:
             returns, benchmark_returns = self._trades_to_returns(asset_trades, price_df, benchmark_symbol)
         except Exception as e:
-            print(f"[QuantStats] Error calculating returns for {symbol}: {e}")
+            logger.error(f"Error calculating returns for {symbol}: {e}")
             return None, {}
         
         # Generate quantstats metrics
@@ -445,10 +449,10 @@ class QuantStatsVisualizer:
                                    symbol: str = "Portfolio") -> Dict[str, Any]:
         """Extract comprehensive metrics using quantstats-lumi built-in metrics reports."""
         
-        print(f"[Visualizer] Extracting QuantStats-Lumi metrics for {symbol} with {len(returns)} returns")
+        logger.debug(f"Extracting QuantStats-Lumi metrics for {symbol} with {len(returns)} returns")
         
         if returns.empty or returns.isna().all() or len(returns) == 0:
-            print(f"[Visualizer] No valid returns data for {symbol}")
+            logger.warning(f"No valid returns data for {symbol}")
             return {
                 'Symbol': symbol,
                 'Total Return (%)': 0.0,
@@ -518,7 +522,7 @@ class QuantStatsVisualizer:
             
             # Add benchmark comparison metrics if benchmark is provided
             if benchmark_returns is not None and not benchmark_returns.empty and len(benchmark_returns) > 1:
-                print(f"[Visualizer] Adding benchmark comparison metrics")
+                logger.debug(f"Adding benchmark comparison metrics")
                 try:
                     aligned_benchmark = benchmark_returns.reindex(returns.index).ffill().dropna()
                     if not aligned_benchmark.empty and len(aligned_benchmark) > 1:
@@ -545,15 +549,15 @@ class QuantStatsVisualizer:
                             'Correlation': round(correlation, 3),
                         })
                         
-                        print(f"[Visualizer] Added benchmark metrics: Alpha: {alpha:.2f}%, Beta: {beta:.3f}, Info Ratio: {information_ratio:.3f}")
+                        logger.debug(f"Added benchmark metrics: Alpha: {alpha:.2f}%, Beta: {beta:.3f}, Info Ratio: {information_ratio:.3f}")
                 except Exception as e:
-                    print(f"[Visualizer] Benchmark comparison failed: {e}")
+                    logger.warning(f"Benchmark comparison failed: {e}")
             
-            print(f"[Visualizer] QuantStats-Lumi metrics extracted for {symbol}: Return: {standardized_metrics['Total Return (%)']}%, Sharpe: {standardized_metrics['Sharpe Ratio']}")
+            logger.debug(f"QuantStats-Lumi metrics extracted for {symbol}: Return: {standardized_metrics['Total Return (%)']}%, Sharpe: {standardized_metrics['Sharpe Ratio']}")
             return standardized_metrics
             
         except Exception as e:
-            print(f"[Visualizer] Error using QuantStats-Lumi metrics report: {e}")
+            logger.error(f"Error using QuantStats-Lumi metrics report: {e}")
             # Fallback to individual metric calculations
             return self._fallback_metrics_calculation(returns, benchmark_returns, symbol)
     
@@ -595,7 +599,7 @@ class QuantStatsVisualizer:
         that quantstats-lumi will use for enhanced visualization generation.
         """
         
-        print(f"[Visualizer] Setting up plot generation in: {output_dir}")
+        logger.debug(f"Setting up plot generation in: {output_dir}")
         
         # Create output directory structure
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -619,7 +623,7 @@ class QuantStatsVisualizer:
             "distribution": os.path.join(distributions_dir, "returns_distribution.png")
         }
         
-        print(f"[Visualizer] Prepared {len(plot_files)} plot paths for quantstats generation")
+        logger.debug(f"Prepared {len(plot_files)} plot paths for quantstats generation")
         return plot_files
 
     def generate_html_report(self, returns: pd.Series, equity_curve: pd.Series,
@@ -644,8 +648,8 @@ class QuantStatsVisualizer:
         try:
             # Use quantstats-lumi's native HTML report generation
             # Production-ready with full pandas 2.0+ compatibility and enhanced features
-            print(f"🔧 Generating {title}")
-            print(f"📁 Output: {output_file}")
+            logger.info(f"Generating {title}")
+            logger.debug(f"Output: {output_file}")
             
             # Ensure output directory exists
             output_dir = os.path.dirname(output_file)
@@ -654,14 +658,14 @@ class QuantStatsVisualizer:
             
             # Clean and prepare returns data
             if returns.empty:
-                print("⚠️  Warning: Empty returns series provided")
+                logger.warning("Empty returns series provided")
                 returns = pd.Series([0.0], index=[pd.Timestamp.now()], name="Strategy Returns")
             
             # Clean returns data - remove infinite and extreme values
             orig_len = len(returns)
             returns = returns.replace([np.inf, -np.inf], np.nan).dropna()
             if len(returns) != orig_len:
-                print(f"⚠️  Cleaned {orig_len - len(returns)} invalid returns")
+                logger.warning(f"Cleaned {orig_len - len(returns)} invalid returns")
             
             # Ensure proper datetime index
             if not isinstance(returns.index, pd.DatetimeIndex):
@@ -691,13 +695,13 @@ class QuantStatsVisualizer:
                 periods_per_year=252  # Trading days per year
             )
             
-            print(f"✅ HTML report generated successfully!")
-            print(f"📄 Report saved to: {output_file}")
+            logger.info("HTML report generated successfully!")
+            logger.debug(f"Report saved to: {output_file}")
             
             return output_file
             
         except Exception as e:
-            print(f"❌ Error generating HTML report: {e}")
+            logger.error(f"Error generating HTML report: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -803,59 +807,87 @@ class QuantStatsVisualizer:
                      asset_metrics: Dict[str, Dict[str, Any]]):
         """Print a formatted summary of key metrics."""
         
-        print("\n" + "="*80)
-        print("PORTFOLIO PERFORMANCE SUMMARY (QuantStats-Lumi Enhanced)")
-        print("="*80)
+        logger.info("\n" + "="*80)
+        logger.info("PORTFOLIO PERFORMANCE SUMMARY (QuantStats-Lumi Enhanced)")
+        logger.info("="*80)
+        
+        # Console output for portfolio summary
+        console_log("\n" + "="*80, "INFO")
+        console_log("PORTFOLIO PERFORMANCE SUMMARY", "INFO")
+        console_log("="*80, "INFO")
         
         # Core performance metrics
         core_metrics = ['Total Return (%)', 'CAGR (%)', 'Expected Return (%)', 'Volatility (%)']
         for metric in core_metrics:
             if metric in portfolio_metrics:
                 value = portfolio_metrics[metric]
-                print(f"{metric:<30} {value:>12.2f}")
+                logger.info(f"{metric:<30} {value:>12.2f}")
+                console_log(f"{metric:<30} {value:>12.2f}", "INFO")
         
-        print("\n" + "-"*80)
-        print("RISK-ADJUSTED METRICS")
-        print("-"*80)
+        logger.info("\n" + "-"*80)
+        logger.info("RISK-ADJUSTED METRICS")
+        logger.info("-"*80)
+        
+        console_log("\n" + "-"*80, "INFO")
+        console_log("RISK-ADJUSTED METRICS", "INFO")
+        console_log("-"*80, "INFO")
         
         risk_metrics = ['Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio', 'Information Ratio']
         for metric in risk_metrics:
             if metric in portfolio_metrics:
                 value = portfolio_metrics[metric]
-                print(f"{metric:<30} {value:>12.3f}")
+                logger.info(f"{metric:<30} {value:>12.3f}")
+                console_log(f"{metric:<30} {value:>12.3f}", "INFO")
         
-        print("\n" + "-"*80)
-        print("RISK METRICS")
-        print("-"*80)
+        logger.info("\n" + "-"*80)
+        logger.info("RISK METRICS")
+        logger.info("-"*80)
+        
+        console_log("\n" + "-"*80, "INFO")
+        console_log("RISK METRICS", "INFO")
+        console_log("-"*80, "INFO")
         
         risk_detail_metrics = ['Max Drawdown (%)', 'Ulcer Index', 'VaR (95%) (%)', 'CVaR (95%) (%)']
         for metric in risk_detail_metrics:
             if metric in portfolio_metrics:
                 value = portfolio_metrics[metric]
-                print(f"{metric:<30} {value:>12.2f}")
+                logger.info(f"{metric:<30} {value:>12.2f}")
+                console_log(f"{metric:<30} {value:>12.2f}", "INFO")
         
-        print("\n" + "-"*80)
-        print("TRADING METRICS")
-        print("-"*80)
+        logger.info("\n" + "-"*80)
+        logger.info("TRADING METRICS")
+        logger.info("-"*80)
+        
+        console_log("\n" + "-"*80, "INFO")
+        console_log("TRADING METRICS", "INFO")
+        console_log("-"*80, "INFO")
         
         trading_metrics = ['Win Rate (%)', 'Profit Factor', 'Gain to Pain Ratio', 'Payoff Ratio', 'Kelly Criterion']
         for metric in trading_metrics:
             if metric in portfolio_metrics:
                 value = portfolio_metrics[metric]
-                print(f"{metric:<30} {value:>12.3f}")
+                logger.info(f"{metric:<30} {value:>12.3f}")
+                console_log(f"{metric:<30} {value:>12.3f}", "INFO")
 
         if asset_metrics:
-            print("\n" + "="*80)
-            print("INDIVIDUAL ASSET PERFORMANCE")
-            print("="*80)
+            logger.info("\n" + "="*80)
+            logger.info("INDIVIDUAL ASSET PERFORMANCE")
+            logger.info("="*80)
+            
+            console_log("\n" + "="*80, "INFO")
+            console_log("INDIVIDUAL ASSET PERFORMANCE", "INFO")
+            console_log("="*80, "INFO")
             
             for symbol, metrics in asset_metrics.items():
-                print(f"\n📊 {symbol}:")
+                logger.info(f"\n📊 {symbol}:")
+                console_log(f"\n📊 {symbol}:", "INFO")
                 key_asset_metrics = ['Total Return (%)', 'Sharpe Ratio', 'Max Drawdown (%)', 
                                    'Win Rate (%)', 'Profit Factor']
                 for metric in key_asset_metrics:
                     if metric in metrics:
                         value = metrics[metric]
-                        print(f"  {metric:<28} {value:>10.2f}")
+                        logger.info(f"  {metric:<28} {value:>10.2f}")
+                        console_log(f"  {metric:<28} {value:>10.2f}", "INFO")
         
-        print("="*80)
+        logger.info("="*80)
+        console_log("="*80, "INFO")

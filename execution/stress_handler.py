@@ -13,6 +13,10 @@ from typing import Dict, List, Any, Optional, Tuple
 import time
 from datetime import datetime, timedelta
 from dataclasses import dataclass
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 @dataclass
 class StressEvent:
@@ -64,7 +68,7 @@ class StressHandlingModule:
         # Event history
         self.stress_events: List[StressEvent] = []
         
-        print("[StressHandler] Initialized with document-specified thresholds")
+        logger.info("StressHandler initialized with document-specified thresholds")
     
     def check_flash_crash(self, symbol: str, price_data, atr_value: float) -> bool:
         """Check for flash crash conditions per document:
@@ -102,10 +106,10 @@ class StressHandlingModule:
         
         now = datetime.now()
         
-        print(f"[StressHandler] Flash crash check: drop={drop_pct:.2%}, threshold={flash_threshold:.2%} (4x{atr_pct:.2%})")
+        logger.debug(f"Flash crash check for {symbol}: drop={drop_pct:.2%}, threshold={flash_threshold:.2%} (4x{atr_pct:.2%})")
         
         if drop_pct >= flash_threshold:  # Changed from > to >= to match document spec
-            print(f"[StressHandler] ⚠️ Flash crash detected: {symbol} dropped {drop_pct:.2%} (>{flash_threshold:.2%})")
+            logger.warning(f"Flash crash detected: {symbol} dropped {drop_pct:.2%} (>{flash_threshold:.2%})")
             
             # Record the event
             self.flash_crash_events.append((now, symbol))
@@ -120,7 +124,7 @@ class StressHandlingModule:
                            if (now - evt[0]).total_seconds() < 60]
             
             if len(recent_events) > 5:
-                print("[StressHandler] ⚠️ Multiple flash crashes detected - de-risking portfolio by 30%")
+                logger.critical("Multiple flash crashes detected - de-risking portfolio by 30%")
                 self._derisk_portfolio(0.30, "multi_flash_crash")
                 
                 # Record major stress event
@@ -155,7 +159,7 @@ class StressHandlingModule:
         slippage_pct = abs(execution_price - expected_price) / expected_price
         
         if slippage_pct > self.slippage_threshold:
-            print(f"[StressHandler] ❌ Excessive slippage detected: {symbol} {slippage_pct:.3%} > {self.slippage_threshold:.3%}")
+            logger.error(f"Excessive slippage detected: {symbol} {slippage_pct:.3%} > {self.slippage_threshold:.3%}")
             
             # Record stress event
             stress_event = StressEvent(
@@ -190,8 +194,8 @@ class StressHandlingModule:
         
         if lag_seconds > self.connection_lag_threshold:
             if not self.forward_fill_active:
-                print(f"[StressHandler] ⚠️ Connection lag detected: {lag_seconds:.1f}s > {self.connection_lag_threshold}s")
-                print("[StressHandler] Activating forward-fill mode and pausing trading")
+                logger.warning(f"Connection lag detected: {lag_seconds:.1f}s > {self.connection_lag_threshold}s")
+                logger.info("Activating forward-fill mode and pausing trading")
                 
                 self._activate_forward_fill()
                 self._pause_trading()
@@ -202,7 +206,7 @@ class StressHandlingModule:
             return False
         else:
             if self.forward_fill_active:
-                print("[StressHandler] Connection restored, resuming normal operation")
+                logger.info("Connection restored, resuming normal operation")
                 self._deactivate_forward_fill()
                 self._resume_trading()
             
@@ -240,17 +244,17 @@ class StressHandlingModule:
         
         # Check minimum volume
         if volume_24h < self.min_daily_volume:
-            print(f"[StressHandler] ❌ Insufficient liquidity: {symbol} volume ${volume_24h:,.0f} < ${self.min_daily_volume:,.0f}")
+            logger.warning(f"Insufficient liquidity: {symbol} volume ${volume_24h:,.0f} < ${self.min_daily_volume:,.0f}")
             return False
         
         # Check spread
         if spread_pct > self.max_spread:
-            print(f"[StressHandler] ❌ Excessive spread: {symbol} {spread_pct:.3%} > {self.max_spread:.3%}")
+            logger.warning(f"Excessive spread: {symbol} {spread_pct:.3%} > {self.max_spread:.3%}")
             return False
         
         # Check funding rate
         if abs(funding_rate) > self.max_funding_rate:
-            print(f"[StressHandler] ⚠️ High funding rate: {symbol} {funding_rate:.3%} > {self.max_funding_rate:.3%}")
+            logger.warning(f"High funding rate: {symbol} {funding_rate:.3%} > {self.max_funding_rate:.3%}")
             
             # Exit position if funding too high
             if abs(funding_rate) > self.max_funding_rate:
@@ -276,14 +280,14 @@ class StressHandlingModule:
         
         # Drawdown kill switches
         if drawdown_pct > 0.14 and not self.kill_switches["drawdown_partial"]:
-            print(f"[StressHandler] 🚨 KILL SWITCH: Drawdown {drawdown_pct:.1%} > 14% - Flattening 30% of positions")
+            logger.critical(f"KILL SWITCH: Drawdown {drawdown_pct:.1%} > 14% - Flattening 30% of positions")
             self._emergency_flatten(0.30, "drawdown_kill_switch")
             self.kill_switches["drawdown_partial"] = True
             switches_triggered["drawdown_partial"] = True
         
         # Equity slope kill switch
         if equity_slope < -0.10 and not self.kill_switches["equity_slope"]:
-            print(f"[StressHandler] 🚨 KILL SWITCH: Equity slope {equity_slope:.1%} < -10% - Full flatten")
+            logger.critical(f"KILL SWITCH: Equity slope {equity_slope:.1%} < -10% - Full flatten")
             self._emergency_flatten(1.0, "equity_slope_kill_switch")
             self.kill_switches["equity_slope"] = True
             switches_triggered["equity_slope"] = True
@@ -332,13 +336,13 @@ class StressHandlingModule:
         passed = all(filters.values())
         
         if not filters["volume"]:
-            print(f"[StressHandler] ❌ Volume filter failed: ${volume_24h:,.0f} < ${self.min_daily_volume:,.0f}")
+            logger.warning(f"Volume filter failed: ${volume_24h:,.0f} < ${self.min_daily_volume:,.0f}")
         
         if not filters["spread"]:
-            print(f"[StressHandler] ❌ Spread filter failed: {spread_pct:.3%} > {self.max_spread:.3%}")
+            logger.warning(f"Spread filter failed: {spread_pct:.3%} > {self.max_spread:.3%}")
         
         if not filters["funding"]:
-            print(f"[StressHandler] ❌ Funding filter failed: {funding_rate_daily:.3%} > {self.max_funding_rate:.3%}")
+            logger.warning(f"Funding filter failed: {funding_rate_daily:.3%} > {self.max_funding_rate:.3%}")
         
         return {
             "passed": passed,
@@ -383,22 +387,22 @@ class StressHandlingModule:
             True if flattening was successful.
         """
         try:
-            print(f"[StressHandler] 🚨 Flattening {symbol} due to {reason}")
+            logger.critical(f"Flattening {symbol} due to {reason}")
             
             # Close existing positions for this symbol  
             if hasattr(self.execution_engine, 'order_executor'):
                 # For testing, just simulate the position closing
-                print(f"[StressHandler] ✅ Simulated flattening {symbol}")
+                logger.info(f"Simulated flattening {symbol}")
                 # Set trading pause flag
                 if hasattr(self.execution_engine, 'trading_paused'):
                     self.execution_engine.trading_paused = True
                 return True
             else:
-                print(f"[StressHandler] ⚠️ No order executor available - simulating flatten for {symbol}")
+                logger.warning(f"No order executor available - simulating flatten for {symbol}")
                 return True
                 
         except Exception as e:
-            print(f"[StressHandler] ❌ Error flattening {symbol}: {str(e)}")
+            logger.error(f"Error flattening {symbol}: {str(e)}")
             return False
     
     def _derisk_portfolio(self, reduction_factor: float, reason: str) -> bool:
@@ -412,7 +416,7 @@ class StressHandlingModule:
             True if de-risking was successful.
         """
         try:
-            print(f"[StressHandler] 🚨 De-risking portfolio by {reduction_factor:.1%} due to {reason}")
+            logger.critical(f"De-risking portfolio by {reduction_factor:.1%} due to {reason}")
             
             # Reduce position sizes by the given factor
             if hasattr(self.execution_engine, 'portfolio_manager'):
@@ -420,60 +424,60 @@ class StressHandlingModule:
                 for symbol, allocation in self.execution_engine.portfolio_manager.allocation_weights.items():
                     new_allocation = allocation.allocated_capital * (1 - reduction_factor)
                     allocation.allocated_capital = new_allocation
-                    print(f"[StressHandler]   {symbol}: Reduced to ${new_allocation:.2f}")
+                    logger.debug(f"{symbol}: Reduced to ${new_allocation:.2f}")
                 
-                print(f"[StressHandler] ✅ Portfolio de-risked by {reduction_factor:.1%}")
+                logger.info(f"Portfolio de-risked by {reduction_factor:.1%}")
                 return True
             else:
-                print(f"[StressHandler] ⚠️ No portfolio manager available - simulating de-risk")
+                logger.warning("No portfolio manager available - simulating de-risk")
                 return True
                 
         except Exception as e:
-            print(f"[StressHandler] ❌ Error de-risking portfolio: {str(e)}")
+            logger.error(f"Error de-risking portfolio: {str(e)}")
             return False
     
     def _activate_forward_fill(self) -> None:
         """Activate forward-fill mode for market data."""
         self.forward_fill_active = True
-        print("[StressHandler] Forward-fill mode activated")
+        logger.info("Forward-fill mode activated")
     
     def _deactivate_forward_fill(self) -> None:
         """Deactivate forward-fill mode."""
         self.forward_fill_active = False
-        print("[StressHandler] Forward-fill mode deactivated")
+        logger.info("Forward-fill mode deactivated")
     
     def _pause_trading(self) -> None:
         """Pause trading due to connection issues."""
         try:
             if hasattr(self.execution_engine, 'trading_active'):
                 self.execution_engine.trading_active = False
-                print("[StressHandler] Trading paused")
+                logger.warning("Trading paused")
             else:
-                print("[StressHandler] Trading pause simulated")
+                logger.debug("Trading pause simulated")
         except Exception as e:
-            print(f"[StressHandler] Error pausing trading: {str(e)}")
+            logger.error(f"Error pausing trading: {str(e)}")
     
     def _resume_trading(self) -> None:
         """Resume trading after connection restoration."""
         try:
             if hasattr(self.execution_engine, 'trading_active'):
                 self.execution_engine.trading_active = True
-                print("[StressHandler] Trading resumed")
+                logger.info("Trading resumed")
             else:
-                print("[StressHandler] Trading resume simulated")
+                logger.debug("Trading resume simulated")
         except Exception as e:
-            print(f"[StressHandler] Error resuming trading: {str(e)}")
+            logger.error(f"Error resuming trading: {str(e)}")
     
     def _derisk_portfolio(self, percentage: float, reason: str) -> None:
         """De-risk portfolio by specified percentage."""
-        print(f"[StressHandler] De-risking portfolio by {percentage:.0%} due to {reason}")
+        logger.critical(f"De-risking portfolio by {percentage:.0%} due to {reason}")
         
         # Would implement actual portfolio de-risking logic here
         # This would reduce position sizes across all holdings
     
     def _emergency_flatten(self, percentage: float, reason: str) -> None:
         """Emergency position flattening."""
-        print(f"[StressHandler] 🚨 EMERGENCY FLATTEN: {percentage:.0%} of positions ({reason})")
+        logger.critical(f"EMERGENCY FLATTEN: {percentage:.0%} of positions ({reason})")
         
         # Record critical stress event
         stress_event = StressEvent(
@@ -490,7 +494,7 @@ class StressHandlingModule:
     
     def _exit_position_funding(self, symbol: str, funding_rate: float) -> None:
         """Exit position due to high funding rate."""
-        print(f"[StressHandler] Exiting {symbol} due to high funding rate: {funding_rate:.3%}")
+        logger.warning(f"Exiting {symbol} due to high funding rate: {funding_rate:.3%}")
         
         # Would implement position exit logic here
     
@@ -567,19 +571,19 @@ class StressHandlingModule:
         Args:
             lag_seconds: Connection lag in seconds.
         """
-        print(f"[StressHandler] 🚨 HANDLING DISCONNECT: {lag_seconds:.1f}s lag")
+        logger.critical(f"HANDLING DISCONNECT: {lag_seconds:.1f}s lag")
         
         # Pause trading
-        print("[StressHandler] Pausing trading due to connection issues")
+        logger.warning("Pausing trading due to connection issues")
         
         # Activate forward-fill for OHLCV data
         self._activate_forward_fill()
         
         # Floor ATR/σ at 0.1% during disconnect
-        print("[StressHandler] Flooring ATR/σ at 0.1% during disconnect")
+        logger.info("Flooring ATR/σ at 0.1% during disconnect")
         
         # Alert via Telegram (would implement real alerting)
-        print("[StressHandler] Sending alert notification")
+        logger.info("Sending alert notification")
         
         # Record stress event
         stress_event = StressEvent(

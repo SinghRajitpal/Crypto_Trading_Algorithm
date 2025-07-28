@@ -8,6 +8,10 @@ import time
 # Add parent directory to path for standalone execution
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 class DataEngine:
     """Data Engine for collecting and providing market data.
@@ -40,7 +44,7 @@ class DataEngine:
         self.data_fetcher = DataFetcher(binance_client=binance_client, max_candles=max_candles)
         self.running = False
         
-        print(f"[DataEngine] Initialized with max_candles={max_candles}")
+        logger.info(f"DataEngine initialized with max_candles={max_candles}")
         
     async def run(self):
         """Run the data engine to continuously collect market data.
@@ -48,20 +52,20 @@ class DataEngine:
         This method starts the data fetcher and keeps it running until stopped.
         """
         if self.running:
-            print("[DataEngine] Already running")
+            logger.warning("DataEngine already running")
             return
             
         self.running = True
-        print("[DataEngine] Starting data collection")
+        logger.info("Starting data collection")
         
         try:
             await self.data_fetcher.run()
         except asyncio.CancelledError:
-            print("[DataEngine] Data collection task cancelled")
+            logger.info("Data collection task cancelled")
             self.running = False
             raise
         except Exception as e:
-            print(f"[DataEngine] Error during data collection: {e}")
+            logger.error(f"Error during data collection: {e}")
             self.running = False
             raise
         finally:
@@ -162,7 +166,7 @@ class DataEngine:
         try:
             candles = self.get_candles(symbol, "1m")
             if not candles or len(candles) < period + 5:
-                print(f"[DataEngine] Insufficient candles for {symbol} ATR calculation: {len(candles) if candles else 0} available, need {period + 5}")
+                logger.warning(f"Insufficient candles for {symbol} ATR calculation: {len(candles) if candles else 0} available, need {period + 5}")
                 return None
             
             # Import indicators for ATR calculation
@@ -185,11 +189,11 @@ class DataEngine:
                             float(candle[5])    # volume
                         ])
                     except (ValueError, IndexError) as e:
-                        print(f"[DataEngine] Error processing candle data for {symbol}: {e}")
+                        logger.debug(f"Error processing candle data for {symbol}: {e}")
                         continue
             
             if len(ohlcv_data) < period:
-                print(f"[DataEngine] Insufficient valid OHLCV data for {symbol}: {len(ohlcv_data)}")
+                logger.warning(f"Insufficient valid OHLCV data for {symbol}: {len(ohlcv_data)}")
                 return None
             
             # Extract price arrays for ATR calculation
@@ -200,7 +204,7 @@ class DataEngine:
             # Calculate ATR using the indicators module
             atr_values = indicators.atr(high_prices, low_prices, close_prices, period)
             if atr_values is None or len(atr_values) == 0:
-                print(f"[DataEngine] ATR calculation returned no values for {symbol}")
+                logger.warning(f"ATR calculation returned no values for {symbol}")
                 return None
             
             # Get latest ATR value and current price
@@ -214,14 +218,14 @@ class DataEngine:
                 # Apply realistic bounds for crypto markets
                 atr_percentage = max(0.005, min(atr_percentage, 0.15))  # 0.5% to 15%
                 
-                print(f"[DataEngine] {symbol} ATR calculation: ATR={latest_atr:.2f}, Price={current_price:.2f}, Vol={atr_percentage:.4f}")
+                logger.debug(f"{symbol} ATR calculation: ATR={latest_atr:.2f}, Price={current_price:.2f}, Vol={atr_percentage:.4f}")
                 return atr_percentage
             else:
-                print(f"[DataEngine] Invalid price data for {symbol}: ATR={latest_atr}, Price={current_price}")
+                logger.warning(f"Invalid price data for {symbol}: ATR={latest_atr}, Price={current_price}")
                 return None
                 
         except Exception as e:
-            print(f"[DataEngine] Error calculating ATR volatility for {symbol}: {e}")
+            logger.error(f"Error calculating ATR volatility for {symbol}: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -249,7 +253,7 @@ class DataEngine:
             'SOLUSDT': 0.030    # 3.0% - higher volatility
         }
         
-        print("[DataEngine] Calculating real-time volatilities for portfolio initialization...")
+        logger.info("Calculating real-time volatilities for portfolio initialization...")
         
         for symbol in symbols:
             try:
@@ -264,20 +268,20 @@ class DataEngine:
                         # Apply realistic bounds for crypto volatility
                         atr_volatility = max(0.005, min(atr_volatility, 0.10))  # 0.5% to 10%
                         volatilities[symbol] = atr_volatility
-                        print(f"[DataEngine] {symbol}: Real ATR volatility = {atr_volatility:.4f} ({atr_volatility*100:.2f}%)")
+                        logger.info(f"{symbol}: Real ATR volatility = {atr_volatility:.4f} ({atr_volatility*100:.2f}%)")
                         continue
                 
                 # Fallback to default if real calculation fails
                 default_vol = default_volatilities.get(symbol, 0.02)
                 volatilities[symbol] = default_vol
-                print(f"[DataEngine] {symbol}: Using default volatility = {default_vol:.4f} ({default_vol*100:.2f}%) [insufficient data]")
+                logger.warning(f"{symbol}: Using default volatility = {default_vol:.4f} ({default_vol*100:.2f}%) [insufficient data]")
                 
             except Exception as e:
-                print(f"[DataEngine] Error calculating volatility for {symbol}: {e}")
+                logger.error(f"Error calculating volatility for {symbol}: {e}")
                 # Use default volatility as fallback
                 default_vol = default_volatilities.get(symbol, 0.02)
                 volatilities[symbol] = default_vol
-                print(f"[DataEngine] {symbol}: Using default volatility = {default_vol:.4f} ({default_vol*100:.2f}%) [error fallback]")
+                logger.warning(f"{symbol}: Using default volatility = {default_vol:.4f} ({default_vol*100:.2f}%) [error fallback]")
         
         return volatilities
 
@@ -290,14 +294,14 @@ if __name__ == "__main__":
     data_engine = DataEngine(binance_client=client, max_candles=30)
     
     # Run this to collect some data first
-    print("Starting data collection. Press Ctrl+C to stop...")
+    logger.info("Starting data collection. Press Ctrl+C to stop...")
     try:
         asyncio.run(data_engine.run())
     except KeyboardInterrupt:
         # Stopping the data collection
-        print("\nStopped data collection.")
+        logger.info("Stopped data collection.")
     finally:
         # Make sure we close the connection
-        print("Closing connection...")
+        logger.info("Closing connection...")
         asyncio.run(client.close())
 

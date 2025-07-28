@@ -8,6 +8,11 @@ import time
 from datetime import datetime
 import traceback
 import numpy as np
+from utils.logging_config import get_logger, console_log
+import config
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 class TradingAlgorithm:
     """Main trading algorithm class that orchestrates the entire trading system.
@@ -62,7 +67,7 @@ class TradingAlgorithm:
         self.running = False
         self.data_task = None
         
-        print(f"[TradingAlgorithm] Pre-initialized with {strategy.strategy_id} strategy")
+        logger.info(f"Pre-initialized TradingAlgorithm with {strategy.strategy_id} strategy")
     
     async def start(self):
         """Starts the trading algorithm.
@@ -74,7 +79,7 @@ class TradingAlgorithm:
             Exception: Any exceptions are caught, logged, and cleanup is performed.
         """
         if self.running:
-            print("[TradingAlgorithm] Already running")
+            logger.warning("TradingAlgorithm is already running")
             return
             
         self.running = True
@@ -82,21 +87,21 @@ class TradingAlgorithm:
         try:
             # === STEP 1: Fetch actual capital from exchange ===
             if self.total_capital is None:
-                print("[TradingAlgorithm] Fetching actual capital from exchange...")
+                logger.info("Fetching actual capital from exchange...")
                 account_metrics = await self.binance_client.get_account_metrics()
                 self.total_capital = account_metrics['total_wallet_balance']
-                print(f"[TradingAlgorithm] ✅ Fetched actual capital: ${self.total_capital:.2f} USDT")
+                logger.success(f"Fetched actual capital: ${self.total_capital:.2f} USDT")
             else:
-                print(f"[TradingAlgorithm] Using provided capital: ${self.total_capital:.2f} USDT")
+                logger.info(f"Using provided capital: ${self.total_capital:.2f} USDT")
             
             # === STEP 2: Initialize components with actual capital ===
-            print("[TradingAlgorithm] Initializing components with actual capital...")
+            logger.info("Initializing components with actual capital...")
             
             # Initialize components with enough candles for indicator calculation
             max_candles = max(100, 5 * self.strategy.params.get('slow_ma_period', 20))
             max_candles += 5
             
-            print(f"[TradingAlgorithm] Initializing with {max_candles} candles per symbol")
+            logger.debug(f"Initializing with {max_candles} candles per symbol")
             
             # Initialize data engine for market data collection
             self.data_engine = DataEngine(binance_client=self.binance_client, max_candles=max_candles)
@@ -113,23 +118,22 @@ class TradingAlgorithm:
             # Set the algo engine on the strategy
             self.strategy.set_algo_engine(self.algo_engine)
             
-            print(f"[TradingAlgorithm] ✅ Components initialized with {self.strategy.strategy_id} strategy")
+            logger.success(f"Components initialized with {self.strategy.strategy_id} strategy")
             
             # === STEP 3: Setup execution engine and initialize portfolio ===
             await self.execution_engine.setup()
             
-            print("[TradingAlgorithm] Initializing portfolio allocations...")
+            logger.info("Initializing portfolio allocations...")
             
             # Start data collection first to get historical candles
             self.data_task = asyncio.create_task(self.data_engine.run())
-            print("[TradingAlgorithm] Started data collection task")
+            logger.info("Started data collection task")
             
             # Wait for initial data collection to complete
-            print("[TradingAlgorithm] Waiting for historical data collection...")
+            logger.info("Waiting for historical data collection...")
             await asyncio.sleep(8)  # Give enough time for candles to be fetched
             
             # Initialize portfolio with real market data
-            import config
             config_symbols = [symbol for symbol, _ in config.symbols]
             
             # Use the integrated portfolio initialization system
@@ -138,55 +142,53 @@ class TradingAlgorithm:
             )
             
             if initialization_success:
-                print("[TradingAlgorithm] ✅ Portfolio data initialization successful")
+                logger.success("Portfolio data initialization successful")
                 
                 # Force rebalance on startup by setting old timestamp
                 from datetime import datetime, timedelta
                 self.execution_engine.portfolio_manager.last_rebalance_time = datetime.now() - timedelta(hours=25)
                 
                 # Trigger initial rebalance with real data
-                print("[TradingAlgorithm] Executing initial portfolio rebalance...")
+                logger.info("Executing initial portfolio rebalance...")
                 rebalanced = self.execution_engine.process_daily_rebalance()
                 
                 if rebalanced:
-                    print("[TradingAlgorithm] ✅ Initial portfolio allocation completed")
+                    logger.success("Initial portfolio allocation completed")
                     # Verify allocation worked
                     summary = self.execution_engine.portfolio_manager.get_portfolio_summary()
-                    print(f"[TradingAlgorithm] Total allocated: ${summary['allocated_capital']:.2f} ({summary['allocation_percentage']:.1%})")
+                    logger.info(f"Total allocated: ${summary['allocated_capital']:.2f} ({summary['allocation_percentage']:.1%})")
                 else:
-                    print("[TradingAlgorithm] ⚠️ Initial rebalance failed - attempting manual rebalance")
+                    logger.warning("Initial rebalance failed - attempting manual rebalance")
                     # Manual fallback
                     allocations = self.execution_engine.portfolio_manager.rebalance_portfolio(config_symbols)
                     if allocations:
                         total = sum(a.allocated_capital for a in allocations.values())
-                        print(f"[TradingAlgorithm] ✅ Manual rebalance successful: ${total:.2f} allocated")
+                        logger.success(f"Manual rebalance successful: ${total:.2f} allocated")
             else:
-                print("[TradingAlgorithm] ❌ Portfolio initialization failed - using defaults")
+                logger.error("Portfolio initialization failed - using defaults")
             
             # Wait briefly for any remaining data to stabilize
             await asyncio.sleep(2)
-            
-            # Print header
-            print("\n" + "=" * 80)
-            print(f"{'CRYPTO TRADING BOT':^80}")
-            print(f"{'Strategy: ' + self.strategy.strategy_id:^80}")
-            print("=" * 80)
+            console_log("\n" + "=" * 80)
+            console_log(f"{'CRYPTO TRADING BOT':^80}")
+            console_log(f"{'Strategy: ' + self.strategy.strategy_id:^80}")
+            console_log("=" * 80)
             
             # Display portfolio and risk information
             portfolio_summary = self.execution_engine.get_portfolio_summary()
             risk_metrics = self.execution_engine.get_risk_metrics()
             
-            print("\nPORTFOLIO INITIALIZATION:")
-            print(f"Total Capital: ${portfolio_summary['total_capital']:.2f}")
-            print(f"Max Allocation: {portfolio_summary['allocation_percentage']*100:.1f}%")
-            print(f"Risk Status: {risk_metrics['risk_status'].upper()}")
+            console_log("\nPORTFOLIO INITIALIZATION:")
+            console_log(f"Total Capital: ${portfolio_summary['total_capital']:.2f}")
+            console_log(f"Max Allocation: {portfolio_summary['allocation_percentage']*100:.1f}%")
+            console_log(f"Risk Status: {risk_metrics['risk_status'].upper()}")
             
             # Display strategy risk parameters
-            print("\nSTRATEGY RISK PARAMETERS:")
-            print(f"ATR Stop Loss Multiplier: 1.8x")
-            print(f"ATR Take Profit Multiplier: 3.6x (1:2 risk-reward)")
-            print(f"Risk per Trade: 0.8% of allocated capital")
-            print("-" * 80)
+            console_log("\nSTRATEGY RISK PARAMETERS:")
+            console_log(f"ATR Stop Loss Multiplier: 1.8x")
+            console_log(f"ATR Take Profit Multiplier: 3.6x (1:2 risk-reward)")
+            console_log(f"Risk per Trade: 0.8% of allocated capital")
+            console_log("-" * 80)
             
             # Track the last processed time to avoid redundant updates
             last_processed_time = {}
@@ -208,7 +210,7 @@ class TradingAlgorithm:
                         # Get latest candle data
                         latest_candle = self.data_engine.get_latest_candle(symbol, "1m")
                         if not latest_candle:
-                            print(f"[TradingAlgorithm] No candle data available for {symbol}, skipping")
+                            logger.warning(f"No candle data available for {symbol}, skipping")
                             continue
                             
                         # Extract OHLCV values using the utility method
@@ -229,7 +231,7 @@ class TradingAlgorithm:
                         # Check and trigger daily rebalancing
                         rebalanced = self.execution_engine.process_daily_rebalance()
                         if rebalanced:
-                            print(f"[TradingAlgorithm] 🔄 Portfolio rebalanced")
+                            logger.info("Portfolio rebalanced")
                         
                         # Validate the signal with risk management
                         if signal.action == "open":
@@ -253,18 +255,18 @@ class TradingAlgorithm:
                         }
                         
                         # Output border
-                        print("\n" + "-" * 80)
+                        console_log("\n" + "-" * 80)
                         
                         # 1. Symbol and timestamp
                         readable_time = datetime.fromtimestamp(candle_data["timestamp"]/1000).strftime('%H:%M:%S %d/%m/%Y')
-                        print(f"{symbol:^15} | {readable_time:^25} | Status: {'🟢 ACTIVE':^15}")
-                        print("-" * 80)
+                        console_log(f"{symbol:^15} | {readable_time:^25} | Status: {'🟢 ACTIVE':^15}")
+                        console_log("-" * 80)
                         
                         # 2. OHLCV Price Data
                         price_change = self.data_engine.get_candle_change_pct(latest_candle)
-                        print("PRICE DATA:")
-                        print(f"Open: {candle_data['open']:.2f} | High: {candle_data['high']:.2f} | Low: {candle_data['low']:.2f} | Close: {candle_data['close']:.2f}")
-                        print(f"Volume: {candle_data['volume']:.3f} | Change: {price_change:.2f}%")
+                        console_log("PRICE DATA:")
+                        console_log(f"Open: {candle_data['open']:.2f} | High: {candle_data['high']:.2f} | Low: {candle_data['low']:.2f} | Close: {candle_data['close']:.2f}")
+                        console_log(f"Volume: {candle_data['volume']:.3f} | Change: {price_change:.2f}%")
                         
                         # 3. Data Collection Progress
                         candles = self.data_engine.get_candles(symbol, "1m")
@@ -273,12 +275,12 @@ class TradingAlgorithm:
                         required_indicator_candles = max(self.strategy.params.get('slow_ma_period', 0), 
                                                      self.strategy.params.get('fast_ma_period', 0)) + 1
                         
-                        print("\nDATA STATUS:")
-                        print(f"Candles Collected: {current_candles}/{max_candles} | "
+                        console_log("\nDATA STATUS:")
+                        console_log(f"Candles Collected: {current_candles}/{max_candles} | "
                               f"Required for Indicators: {required_indicator_candles}")
                         
                         # 4. Signal Information
-                        print("\nSIGNAL:")
+                        console_log("\nSIGNAL:")
                         signal_changed = (symbol not in last_signal_info or 
                                          last_signal_info[symbol]['action'] != signal.action or
                                          last_signal_info[symbol]['side'] != signal.side)
@@ -289,19 +291,21 @@ class TradingAlgorithm:
                                 'side': signal.side,
                                 'reason': signal.metadata.get('reason', 'N/A')
                             }
+                            # Log signal changes for detailed tracking
+                            logger.debug(f"Signal change for {symbol}: {signal.action.upper()} {signal.side.upper()}, reason: {signal.metadata.get('reason', 'N/A')}")
                             
-                        print(f"Action: {signal.action.upper()} | Side: {signal.side.upper() if signal.side != 'none' else 'NONE'}")
-                        print(f"Reason: {signal.metadata.get('reason', 'N/A')}")
-                        print(f"Confidence: {signal.signal_confidence:.2f}")
+                        console_log(f"Action: {signal.action.upper()} | Side: {signal.side.upper() if signal.side != 'none' else 'NONE'}")
+                        console_log(f"Reason: {signal.metadata.get('reason', 'N/A')}")
+                        console_log(f"Confidence: {signal.signal_confidence:.2f}")
                         
                         # 5. Indicator values if available
                         if 'fast_ma' in signal.metadata and 'slow_ma' in signal.metadata:
-                            print("\nINDICATORS:")
-                            print(f"Fast MA ({signal.metadata.get('fast_ma_period', 'N/A')}): {signal.metadata['fast_ma']:.2f}")
-                            print(f"Slow MA ({signal.metadata.get('slow_ma_period', 'N/A')}): {signal.metadata['slow_ma']:.2f}")
+                            console_log("\nINDICATORS:")
+                            console_log(f"Fast MA ({signal.metadata.get('fast_ma_period', 'N/A')}): {signal.metadata['fast_ma']:.2f}")
+                            console_log(f"Slow MA ({signal.metadata.get('slow_ma_period', 'N/A')}): {signal.metadata['slow_ma']:.2f}")
                         
                         # 6. Position Information
-                        print("\nPOSITION:")
+                        console_log("\nPOSITION:")
                         if position_size != 0:
                             position_type = "LONG" if position_size > 0 else "SHORT"
                             print(f"Status: OPEN ({position_type}) | Size: {abs(position_size)}")
@@ -358,6 +362,7 @@ class TradingAlgorithm:
                                         print(f"Reward/Risk Ratio: {reward_risk_ratio:.2f}")
                             except Exception as e:
                                 print(f"Could not retrieve open orders: {e}")
+                                logger.error(f"Failed to retrieve open orders for {symbol}: {e}")
                             
                             # Update daily PnL for risk tracking
                             if positions_info[symbol]['unrealized_pnl'] != 'N/A':
@@ -416,17 +421,21 @@ class TradingAlgorithm:
                             
                 except Exception as e:
                     print(f"\n❌ [TradingAlgorithm] Error processing signal: {e}")
+                    logger.error(f"Error processing signal for {symbol}: {e}", exc_info=True)
                     traceback.print_exc()
                     continue
                     
         except KeyboardInterrupt:
             print("\n[TradingAlgorithm] Shutdown requested by user")
+            logger.info("Shutdown requested by user")
             await self.stop()
         except asyncio.CancelledError:
             print("\n[TradingAlgorithm] Task cancelled")
+            logger.info("Task cancelled")
             await self.stop()
         except Exception as e:
             print(f"\n❌ [TradingAlgorithm] Unexpected error in trading loop: {e}")
+            logger.critical(f"Unexpected error in trading loop: {e}", exc_info=True)
             traceback.print_exc()
             await self.stop()
             raise  # Re-raise the exception after cleanup
@@ -448,11 +457,13 @@ class TradingAlgorithm:
         print("SHUTTING DOWN")
         print("-" * 80)
         self.running = False
+        logger.info("Starting shutdown procedure")
         
         try:
             # Cancel data task if it exists
             if self.data_task and not self.data_task.done():
                 print("[TradingAlgorithm] Cancelling data collection task...")
+                logger.debug("Cancelling data collection task")
                 self.data_task.cancel()
                 try:
                     await self.data_task
@@ -490,30 +501,36 @@ class TradingAlgorithm:
                                 print(f"  Take Profit: ${float(tp_order.get('stopPrice', 0)):.2f}")
                         except Exception as order_error:
                             # Silently handle order lookup errors to avoid disrupting shutdown
-                            pass
-                            # Silently handle order lookup errors to avoid disrupting shutdown
+                            logger.debug(f"Could not retrieve orders for {display_symbol} during shutdown: {order_error}")
                             pass
             except Exception as e:
                 print(f"[TradingAlgorithm] Error displaying positions: {e}")
+                logger.error(f"Error displaying positions during shutdown: {e}")
             
             # Cleanup execution engine
             if self.execution_engine:
                 print("\n[TradingAlgorithm] Cleaning up execution engine...")
+                logger.debug("Cleaning up execution engine")
                 await self.execution_engine.cleanup()
             
             # Close Binance client connection
             print("\n[TradingAlgorithm] Closing exchange connection...")
+            logger.debug("Closing exchange connection")
             await self.binance_client.close()
             
         except Exception as e:
             print(f"❌ [TradingAlgorithm] Error during cleanup: {e}")
+            logger.error(f"Error during cleanup: {e}", exc_info=True)
             traceback.print_exc()
         finally:
             print("-" * 80)
             print("SHUTDOWN COMPLETE - Positions and SL/TP orders preserved")
             print("-" * 80)
+            logger.info("Shutdown procedure completed")
 
 if __name__ == "__main__":
+    logger.info("Starting Crypto Trading Algorithm")
+    
     # Example usage with MA Crossover strategy
     from algorithm.strategies.ma_crossover import MACrossoverStrategy
     
@@ -526,6 +543,8 @@ if __name__ == "__main__":
         'leverage': 7  # Setting leverage to 20x
     })
     
+    logger.info(f"Created {strategy.strategy_id} strategy with parameters: {strategy.params}")
+    
     # Create and run the trading algorithm with the strategy
     algorithm = TradingAlgorithm(
         strategy=strategy, 
@@ -533,4 +552,10 @@ if __name__ == "__main__":
         total_capital=None  # Fetch actual capital from testnet
     )
     
-    asyncio.run(algorithm.start())
+    try:
+        asyncio.run(algorithm.start())
+    except KeyboardInterrupt:
+        logger.info("Algorithm stopped by user")
+    except Exception as e:
+        logger.critical(f"Algorithm failed with error: {e}", exc_info=True)
+        raise

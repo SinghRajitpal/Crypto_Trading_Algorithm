@@ -26,6 +26,10 @@ from typing import Dict, List, Tuple, Any
 
 import pandas as pd
 import json  # Needed for writing summary.json when --save is enabled
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 from data.historical_data import HistoricalDataFetcher
 from data.data_engine import DataEngine
@@ -81,6 +85,8 @@ class BacktestingEngine:
 
     async def load_data(self):
         """Fetch or read cached data for all symbol/timeframes."""
+        console_log(f"📥 Loading historical data for {len(self.symbols)} symbol/timeframe pairs...", "INFO")
+        
         tasks = []
         for sym, tf in self.symbols:
             tasks.append(self.fetcher.download_ohlcv(sym, tf, self.start, self.end))
@@ -98,6 +104,8 @@ class BacktestingEngine:
 
         for sym, series in zip(sym_set, funding_results):
             self._funding_data[sym] = series
+            
+        console_log(f"✅ Historical data loaded successfully", "INFO")
 
     async def _price_lookup(self, symbol: str) -> float:
         """Return latest close price for *symbol* (any available timeframe)."""
@@ -257,7 +265,7 @@ if __name__ == "__main__":
     if not args.symbols.strip() or args.symbols.strip().upper() == "ALL":
         import config
         symbols = [(sym.upper(), args.tf) for sym, _ in config.symbols]
-        print(f"[Backtesting] Running ALL configured symbols: {', '.join([s for s, _ in symbols])}")
+        logger.info(f"Running ALL configured symbols: {', '.join([s for s, _ in symbols])}")
     else:
         symbols = [(sym.strip().upper(), args.tf) for sym in args.symbols.split(",") if sym.strip()]
 
@@ -298,7 +306,11 @@ if __name__ == "__main__":
         # Future strategies can be added here
         raise ValueError(f"Unknown strategy: {args.strategy}")
 
-    print(f"[Backtesting] Strategy: {strategy.strategy_id}")
+    logger.info(f"Strategy: {strategy.strategy_id}")
+    
+    # Console log: Backtest initialization
+    console_log(f"🚀 Starting backtest for {len(symbols)} symbols using {strategy.strategy_id} strategy", "INFO")
+    console_log(f"📅 Period: {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}", "INFO")
 
     engine = BacktestingEngine(
         symbols=symbols,
@@ -311,7 +323,9 @@ if __name__ == "__main__":
     # ------------------------------------------------------------------
     # Run the back-test --------------------------------------------------
     # ------------------------------------------------------------------
+    console_log("📊 Loading historical data...", "INFO")
     result = asyncio.run(engine.run())
+    console_log("✅ Backtest execution completed", "INFO")
 
     # ------------------------------------------------------------------
     # Prepare optional output directory if --save passed -----------------
@@ -332,13 +346,14 @@ if __name__ == "__main__":
         for d in [indiv_dir, port_dir]:
             os.makedirs(d, exist_ok=True)
 
-        print(f"[Backtesting] Saving report to {save_dir}")
+        logger.info(f"Saving report to {save_dir}")
 
     # Visualization / stats with quantstats-lumi only -------------------------
     try:
         from backtest.visualizer import QuantStatsVisualizer
         
-        print("\nPORTFOLIO STATISTICS (QuantStats-Lumi):")
+        console_log("📈 Calculating portfolio metrics...", "INFO")
+        logger.info("\nPORTFOLIO STATISTICS (QuantStats-Lumi):")
         
         # Extract just symbol names and timeframe
         symbol_names = [sym for sym, _ in symbols]
@@ -357,6 +372,7 @@ if __name__ == "__main__":
             benchmark_symbol=symbol_names[0] if symbol_names else None  # Use first symbol as benchmark
         )
         
+        console_log("📊 Analyzing individual assets...", "INFO")
         # Generate individual asset analysis
         asset_results = {}
         for symbol in symbol_names:
@@ -374,25 +390,27 @@ if __name__ == "__main__":
                     asset_results[symbol] = (asset_returns, asset_metrics)
                 
             except Exception as e:
-                print(f"[QuantStats-Lumi] Could not analyze asset {symbol}: {e}")
+                logger.warning(f"Could not analyze asset {symbol}: {e}")
         
+        console_log("📋 Generating performance summary...", "INFO")
         # Print comprehensive metrics summary using QuantStats-Lumi
         visualizer.print_summary(portfolio_metrics, {k: v[1] for k, v in asset_results.items()})
         
         # Additional trade information
         final_equity_display = portfolio_metrics.get("Final Equity", result["final_cash"])
-        print(f"\n📊 TRADE SUMMARY")
-        print(f"Trades executed: {result['trade_count']}")
-        print(f"Period: {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}")
+        logger.info(f"\n📊 TRADE SUMMARY")
+        logger.info(f"Trades executed: {result['trade_count']}")
+        logger.info(f"Period: {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}")
         
         if result['trade_count'] > 0:
-            print(f"\n📋 RECENT TRADES:")
+            logger.info(f"\n📋 RECENT TRADES:")
             recent_trades = result['trades'].tail(3)
             for _, trade in recent_trades.iterrows():
-                print(f"  {trade['timestamp']} | {trade['symbol']} | {trade['type']} | Size: {trade.get('size', 'N/A')} | PnL: {trade.get('pnl', 'N/A')}")
+                logger.info(f"  {trade['timestamp']} | {trade['symbol']} | {trade['type']} | Size: {trade.get('size', 'N/A')} | PnL: {trade.get('pnl', 'N/A')}")
         
         # Save results with comprehensive QuantStats-Lumi tear sheets
         if args.save and save_dir is not None:
+            console_log(f"💾 Generating and saving performance reports...", "INFO")
             visualizer.save_results(
                 portfolio_returns=portfolio_returns,
                 portfolio_metrics=portfolio_metrics,
@@ -403,34 +421,43 @@ if __name__ == "__main__":
                 end_date=end_dt,
                 benchmark_symbol=symbol_names[0] if symbol_names else None
             )
+            console_log(f"📁 Reports saved to: {save_dir}", "INFO")
         
         
         # Use final equity from quantstats-lumi metrics
         final_equity_display = portfolio_metrics.get("Final Equity", result["final_cash"])
         
     except ImportError as e:
-        print(f"[QuantStats-Lumi] Required packages not installed: {e}")
-        print("Please install: pip install quantstats-lumi")
+        logger.error(f"Required packages not installed: {e}")
+        logger.info("Please install: pip install quantstats-lumi")
         final_equity_display = result["final_cash"]
-        print(f"\nBack-test complete (Basic Mode)")
-        print(f"Trades executed: {result['trade_count']}")
-        print(f"Final equity: {final_equity_display:.2f} USDT")
+        logger.info(f"\nBack-test complete (Basic Mode)")
+        logger.info(f"Trades executed: {result['trade_count']}")
+        logger.info(f"Final equity: {final_equity_display:.2f} USDT")
     except Exception as e:
-        print(f"[QuantStats-Lumi] Could not generate visualizations: {e}")
+        logger.error(f"Could not generate visualizations: {e}")
         final_equity_display = result["final_cash"]
-        print(f"\nBack-test complete (Basic Mode)")
-        print(f"Trades executed: {result['trade_count']}")
-        print(f"Final equity: {final_equity_display:.2f} USDT")
+        logger.info(f"\nBack-test complete (Basic Mode)")
+        logger.info(f"Trades executed: {result['trade_count']}")
+        logger.info(f"Final equity: {final_equity_display:.2f} USDT")
 
     # Success message for QuantStats-Lumi mode
     if 'portfolio_metrics' in locals() and portfolio_metrics:
-        print(f"\n🎉 Back-test complete with QuantStats-Lumi analytics!")
+        console_log(f"🎉 Backtest completed successfully with advanced analytics!", "INFO")
+        final_equity_display = portfolio_metrics.get("Final Equity", result["final_cash"])
+        console_log(f"💰 Final Portfolio Value: ${final_equity_display:.2f} USDT", "INFO")
+        console_log(f"📊 Total Trades Executed: {result['trade_count']}", "INFO")
+        logger.info(f"\n🎉 Back-test complete with QuantStats-Lumi analytics!")
+    else:
+        console_log(f"🎉 Backtest completed!", "INFO")
+        console_log(f"💰 Final Portfolio Value: ${result['final_cash']:.2f} USDT", "INFO")
+        console_log(f"📊 Total Trades Executed: {result['trade_count']}", "INFO")
     
     if args.save and save_dir is not None:
-        print(f"📁 Results saved to {save_dir}")
+        logger.info(f"📁 Results saved to {save_dir}")
 
     # Display recent trades if available
     if result['trade_count'] > 0 and not ('portfolio_metrics' in locals() and portfolio_metrics):
-        print(f"\nLast trades:\n{result['trades'].tail()}")
+        logger.info(f"\nLast trades:\n{result['trades'].tail()}")
 
     # Finished – comprehensive analysis shown above.

@@ -1,4 +1,12 @@
 # Binance API configuration
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
+
+# Log configuration loading
+console_log("Loading trading algorithm configuration")
+
 binance_futures = {
     "api_key": "your_api_key",
     "api_secret": "your_api_secret",
@@ -62,4 +70,34 @@ MAX_ALLOCATION_THRESHOLD = 13000  # Maximum expected allocation for validation
 # Default Test Symbols and Data
 TEST_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
 TEST_VOLATILITIES = [0.015, 0.025, 0.020, 0.018, 0.030]
+
+# Configuration validation and logging
+def validate_config():
+    """Validate critical configuration parameters and log warnings if needed."""
+    
+    # Check API keys
+    testnet_key = binance_futures_testnet.get('testnet_api_key')
+    if not testnet_key or testnet_key == 'your_testnet_api_key':
+        logger.warning("Testnet API key not configured - using default placeholder")
+    else:
+        logger.info("Testnet API credentials configured")
+    
+    # Validate risk parameters
+    if RISK_PER_TRADE_PCT > 0.02:  # More than 2%
+        logger.warning(f"High risk per trade configured: {RISK_PER_TRADE_PCT*100:.1f}%")
+    
+    if MAX_LEVERAGE > 20:
+        logger.warning(f"High maximum leverage configured: {MAX_LEVERAGE}x")
+    
+    # Validate symbol configuration
+    logger.info(f"Configured {len(symbols)} trading symbols: {[s[0] for s in symbols]}")
+    
+    # Log key parameters
+    logger.info(f"Target volatility: {TARGET_VOLATILITY*100:.1f}%")
+    logger.info(f"Max allocation: {MAX_ALLOCATION_PCT*100:.1f}%")
+    logger.info(f"Risk per trade: {RISK_PER_TRADE_PCT*100:.1f}%")
+    logger.info(f"Rebalance interval: {REBALANCE_HOURS} hours")
+
+# Run validation when module is imported
+validate_config()
 

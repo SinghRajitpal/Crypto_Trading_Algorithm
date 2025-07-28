@@ -4,6 +4,10 @@ import time
 import numpy as np
 from datetime import datetime, timedelta
 import config
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 @dataclass
 class AllocationWeights:
@@ -54,7 +58,7 @@ class ProductionPortfolioManager:
         # Track reserved allocations for position management
         self.reserved_allocations: Dict[str, float] = {}
         
-        print(f"[ProductionPortfolio] Initialized with ${total_capital:.2f}, target_vol={self.target_volatility:.1%}")
+        logger.info(f"ProductionPortfolioManager initialized with ${total_capital:.2f}, target_vol={self.target_volatility:.1%}")
     
     def update_volatility_data(self, symbol: str, atr_value: float, current_price: Optional[float] = None) -> None:
         """Update volatility data (EMA of 1-min ATR(30)) for a symbol.
@@ -71,11 +75,11 @@ class ProductionPortfolioManager:
         # This ensures volatility data is in percentage form for comparison with target_volatility
         if current_price and current_price > 0:
             normalized_atr = atr_value / current_price
-            print(f"[ProductionPortfolio] {symbol}: Raw ATR {atr_value:.6f} → Normalized {normalized_atr:.6f} ({normalized_atr*100:.3f}%)")
+            logger.debug(f"{symbol}: Raw ATR {atr_value:.6f} → Normalized {normalized_atr:.6f} ({normalized_atr*100:.3f}%)")
         else:
             # Fallback: assume ATR is already normalized if no price provided
             normalized_atr = atr_value if atr_value < 1.0 else atr_value / 100.0
-            print(f"[ProductionPortfolio] {symbol}: Using ATR {normalized_atr:.6f} (assuming normalized)")
+            logger.debug(f"{symbol}: Using ATR {normalized_atr:.6f} (assuming normalized)")
         
         # Keep rolling window of 60 bars for EMA calculation
         if len(self.volatility_data[symbol]) >= self.lookback_bars:
@@ -116,7 +120,7 @@ class ProductionPortfolioManager:
             True if initialization was successful.
         """
         try:
-            print("[ProductionPortfolio] Initializing with real market data...")
+            logger.info("Initializing portfolio with real market data...")
             
             # Get real-time volatilities from data engine
             volatilities = data_engine.initialize_portfolio_volatilities(symbols)
@@ -128,7 +132,7 @@ class ProductionPortfolioManager:
             for symbol, volatility in volatilities.items():
                 for _ in range(25):  # Build sufficient history
                     self.update_volatility_data(symbol, volatility)
-                print(f"[ProductionPortfolio] {symbol}: Initialized with volatility {volatility:.4f}")
+                logger.debug(f"{symbol}: Initialized with volatility {volatility:.4f}")
             
             # Add default correlation data
             correlation_pairs = [
@@ -151,11 +155,11 @@ class ProductionPortfolioManager:
                     for _ in range(25):
                         self.update_correlation_data(sym1, sym2, corr)
             
-            print(f"[ProductionPortfolio] ✅ Market data initialization complete for {len(symbols)} symbols")
+            logger.info(f"Market data initialization complete for {len(symbols)} symbols")
             return True
             
         except Exception as e:
-            print(f"[ProductionPortfolio] ❌ Error initializing market data: {e}")
+            logger.error(f"Error initializing market data: {e}")
             return False
     
     def get_volatility_ema(self, symbol: str) -> float:
@@ -247,11 +251,11 @@ class ProductionPortfolioManager:
         
         normalized_weights = {s: w / total_weight for s, w in raw_weights.items()}
         
-        print(f"[ProductionPortfolio] Computed weights for {len(symbols)} symbols")
+        logger.debug(f"Computed weights for {len(symbols)} symbols")
         for symbol in symbols:
             vol = self.get_volatility_ema(symbol)
             corr = self.get_average_correlation(symbol, symbols)
-            print(f"[ProductionPortfolio]   {symbol}: weight={normalized_weights[symbol]:.4f}, vol={vol:.4f}, corr={corr:.3f}")
+            logger.debug(f"  {symbol}: weight={normalized_weights[symbol]:.4f}, vol={vol:.4f}, corr={corr:.3f}")
         
         return normalized_weights
     
@@ -283,7 +287,7 @@ class ProductionPortfolioManager:
         
         is_high_vol = sigma_hat > percentile_threshold
         
-        print(f"[ProductionPortfolio] Volatility regime check: σ_hat={sigma_hat:.4f}, {self.regime_percentile}th percentile={percentile_threshold:.4f}, high_vol={is_high_vol}")
+        logger.debug(f"Volatility regime check: σ_hat={sigma_hat:.4f}, {self.regime_percentile}th percentile={percentile_threshold:.4f}, high_vol={is_high_vol}")
         
         return is_high_vol
     
@@ -315,8 +319,8 @@ class ProductionPortfolioManager:
         # Final scaling multiplier
         multiplier = vol_scaling * regime_factor
         
-        print(f"[ProductionPortfolio] Scaling multiplier: {multiplier:.3f} (vol_scaling={vol_scaling:.3f}, regime_factor={regime_factor:.3f})")
-        print(f"[ProductionPortfolio]   σ_hat={sigma_hat:.4f}, target_vol={self.target_volatility:.4f}")
+        logger.debug(f"Scaling multiplier: {multiplier:.3f} (vol_scaling={vol_scaling:.3f}, regime_factor={regime_factor:.3f})")
+        logger.debug(f"  σ_hat={sigma_hat:.4f}, target_vol={self.target_volatility:.4f}")
         
         return multiplier
     
@@ -384,18 +388,18 @@ class ProductionPortfolioManager:
         # Log rebalancing details
         allocation_pct = (total_check / self.total_capital) * 100
         
-        print(f"[ProductionPortfolio] Daily rebalance completed:")
-        print(f"[ProductionPortfolio]   Total capital: ${self.total_capital:.2f}")
-        print(f"[ProductionPortfolio]   Scaling multiplier: {scaling_multiplier:.3f}")
-        print(f"[ProductionPortfolio]   Max base allocation: {self.max_allocation_pct:.1%} (${base_allocation:.2f})")
-        print(f"[ProductionPortfolio]   Scaled allocation target: ${total_scaled_allocation:.2f}")
-        print(f"[ProductionPortfolio]   Actual allocated: ${total_check:.2f} ({allocation_pct:.1f}%)")
-        print(f"[ProductionPortfolio]   High vol regime: {self.is_high_volatility_regime()}")
-        print(f"[ProductionPortfolio]   Asset allocations:")
+        logger.info("Daily rebalance completed:")
+        logger.info(f"  Total capital: ${self.total_capital:.2f}")
+        logger.info(f"  Scaling multiplier: {scaling_multiplier:.3f}")
+        logger.info(f"  Max base allocation: {self.max_allocation_pct:.1%} (${base_allocation:.2f})")
+        logger.info(f"  Scaled allocation target: ${total_scaled_allocation:.2f}")
+        logger.info(f"  Actual allocated: ${total_check:.2f} ({allocation_pct:.1f}%)")
+        logger.info(f"  High vol regime: {self.is_high_volatility_regime()}")
+        logger.info("  Asset allocations:")
         
         for symbol, alloc in new_allocations.items():
             asset_pct = (alloc.allocated_capital / self.total_capital) * 100
-            print(f"[ProductionPortfolio]     {symbol}: ${alloc.allocated_capital:.2f} ({asset_pct:.1f}% of total) vol={alloc.volatility:.4f}")
+            logger.info(f"    {symbol}: ${alloc.allocated_capital:.2f} ({asset_pct:.1f}% of total) vol={alloc.volatility:.4f}")
         
         return new_allocations
     
@@ -445,9 +449,9 @@ class ProductionPortfolioManager:
         try:
             import config
             symbols = [symbol for symbol, _ in config.symbols]
-            print(f"[ProductionPortfolio] Loaded {len(symbols)} symbols from config")
+            logger.info(f"Loaded {len(symbols)} symbols from config")
         except ImportError:
-            print("[ProductionPortfolio] Warning: Could not load config.symbols")
+            logger.warning("Warning: Could not load config.symbols")
     
     def reserve_allocation(self, symbol: str, amount: float) -> bool:
         """Reserve allocation for a position.

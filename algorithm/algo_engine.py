@@ -6,6 +6,10 @@ from .strategies.base_strategy import BaseStrategy
 from .trade_signal import TradeSignal
 from data.data_engine import DataEngine
 import time
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 class AlgoEngine:
     """Algorithm Engine that processes signals for multiple symbols and timeframes.
@@ -42,7 +46,7 @@ class AlgoEngine:
         self._last_signal_states = {}  # {sym_tf_key: {timestamp, signal_type, data_hash}}
         self._min_signal_interval = 60  # Minimum seconds between signals for same symbol
         
-        print("[AlgoEngine] Initialized")
+        logger.info("AlgoEngine initialized")
         
     def _get_data_hash(self, candles) -> str:
         """Generates a hash of the latest candle data to detect changes.
@@ -126,7 +130,7 @@ class AlgoEngine:
             # Get latest candles
             candles = self.data_engine.get_candles(symbol, timeframe)
         except Exception as e:
-            print(f"[AlgoEngine] Error fetching candles for {symbol}_{timeframe}: {e}")
+            logger.error(f"Error fetching candles for {symbol}_{timeframe}: {e}")
             return None
         
         if not candles or len(candles) == 0:
@@ -159,12 +163,12 @@ class AlgoEngine:
                 if not signal.timestamp:
                     signal.timestamp = current_time * 1000  # Convert to milliseconds for consistency
                 
-                print(f"[AlgoEngine] Generated {signal.action}/{signal.side} signal for {symbol} with confidence {signal.signal_confidence:.2f}")
+                logger.info(f"Generated {signal.action}/{signal.side} signal for {symbol} with confidence {signal.signal_confidence:.2f}")
                 
             return signal
             
         except Exception as e:
-            print(f"[AlgoEngine] Error processing signals for {symbol}/{timeframe}: {e}")
+            logger.error(f"Error processing signals for {symbol}/{timeframe}: {e}")
             return None
     
     async def run(self, strategy: BaseStrategy):
@@ -182,7 +186,7 @@ class AlgoEngine:
         import config
         if not hasattr(self, 'running') or not self.running:
             self.running = True
-            print(f"[AlgoEngine] Starting with strategy: {strategy.strategy_id}")
+            logger.info(f"Starting with strategy: {strategy.strategy_id}")
         
         while self.running:
             try:
@@ -196,10 +200,10 @@ class AlgoEngine:
                 await asyncio.sleep(1)  # Check for new signals every second
                 
             except Exception as e:
-                print(f"[AlgoEngine] Error in main processing loop: {e}")
+                logger.error(f"Error in main processing loop: {e}")
                 await asyncio.sleep(5)  # Sleep longer on error
     
     async def stop(self):
         """Stop the algorithm engine."""
         self.running = False
-        print("[AlgoEngine] Stopped")
+        logger.info("AlgoEngine stopped")

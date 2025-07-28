@@ -2,6 +2,10 @@ import ccxt.pro as ccxt
 import time
 import config
 import asyncio
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 class BinanceClient:
     """
@@ -60,10 +64,10 @@ class BinanceClient:
             # Set position mode to one-way (easier to manage)
             # This avoids the "position side does not match" error
             await self.exchange.fapiPrivatePostPositionSideDual({'dualSidePosition': 'false'})
-            print("[BinanceClient] ✅ Position mode set to One-Way")
+            logger.info("Position mode set to One-Way")
         except Exception as e:
             # This might fail if already set, which is fine
-            print(f"[BinanceClient] Position mode setting: {e}")
+            logger.warning(f"Position mode setting: {e}")
     
     # ===== Account & Position Info =====
     
@@ -96,16 +100,21 @@ class BinanceClient:
             if open_positions:
                 if original_symbol:
                     pos = open_positions[0]
+                    # Keep print for immediate feedback
                     print(f"\n[{original_symbol}] 📈 Active Position:")
                     print(f"Size: {pos['contracts']} contracts")
                     print(f"Entry Price: {pos.get('entryPrice', 'N/A')}")
                     print(f"Unrealized PnL: {pos.get('unrealizedPnl', 'N/A')}")
+                    # Add detailed logging
+                    logger.info(f"Active position for {original_symbol}: size={pos['contracts']}, entry={pos.get('entryPrice', 'N/A')}, pnl={pos.get('unrealizedPnl', 'N/A')}")
                 else:
                     print(f"\n📈 Found {len(open_positions)} active position(s)")
+                    logger.info(f"Found {len(open_positions)} active position(s)")
                 
             return open_positions
         except Exception as e:
             print(f"\n❌ Error fetching positions: {e}")
+            logger.error(f"Error fetching positions: {e}", exc_info=True)
             return []
     
     async def get_all_positions(self):
@@ -222,7 +231,7 @@ class BinanceClient:
             check_interval: How often to check orders in seconds.
         """
         try:
-            print(f"[Binance] Starting order monitoring for {symbol}")
+            logger.info(f"Starting order monitoring for {symbol}")
             
             while True:
                 try:
@@ -238,23 +247,23 @@ class BinanceClient:
                     
                     # If no active position, cancel any remaining orders
                     if not active_position:
-                        print(f"[Binance] No active position for {symbol}, canceling remaining orders")
+                        logger.info(f"No active position for {symbol}, canceling remaining orders")
                         try:
                             cancelled_orders = await self.cancel_all_orders(symbol)
                             if cancelled_orders:
-                                print(f"[Binance] ✅ Cancelled {len(cancelled_orders)} remaining orders for {symbol}")
+                                logger.success(f"Cancelled {len(cancelled_orders)} remaining orders for {symbol}")
                             break  # Exit monitoring for this symbol
                         except Exception as e:
-                            print(f"[Binance] ⚠️ Error cancelling orders: {e}")
+                            logger.warning(f"Error cancelling orders: {e}")
                     
                     # Check open orders
                     open_orders = await self.exchange.fetch_open_orders(symbol)
                     
                     if not open_orders:
                         if active_position:
-                            print(f"[Binance] No open orders for {symbol} but position exists")
+                            logger.debug(f"No open orders for {symbol} but position exists")
                         else:
-                            print(f"[Binance] No orders to monitor for {symbol}")
+                            logger.debug(f"No orders to monitor for {symbol}")
                             break
                     
                     # Log current order status
@@ -262,18 +271,18 @@ class BinanceClient:
                     take_profit_orders = [o for o in open_orders if 'take_profit' in o['type'].lower()]
                     
                     if stop_loss_orders or take_profit_orders:
-                        print(f"[Binance] Monitoring {len(stop_loss_orders)} SL and {len(take_profit_orders)} TP orders for {symbol}")
+                        logger.debug(f"Monitoring {len(stop_loss_orders)} SL and {len(take_profit_orders)} TP orders for {symbol}")
                     
                     await asyncio.sleep(check_interval)
                     
                 except Exception as e:
-                    print(f"[Binance] ⚠️ Error in order monitoring loop: {e}")
+                    logger.warning(f"Error in order monitoring loop: {e}")
                     await asyncio.sleep(check_interval)
                     
         except asyncio.CancelledError:
-            print(f"[Binance] Order monitoring cancelled for {symbol}")
+            logger.info(f"Order monitoring cancelled for {symbol}")
         except Exception as e:
-            print(f"[Binance] ❌ Order monitoring error for {symbol}: {e}")
+            logger.error(f"Order monitoring error for {symbol}: {e}", exc_info=True)
 
     async def close_position(self, symbol, side=None):
         """Close an open position for a symbol"""
@@ -292,15 +301,15 @@ class BinanceClient:
         positions = await self.get_open_positions(original_symbol)
         
         if not positions:
-            print(f"[Binance] No positions found for {original_symbol}")
+            logger.warning(f"No positions found for {original_symbol}")
             return {"status": "no_position", "symbol": original_symbol}
         
         # First, cancel any open orders for this symbol
         try:
-            print(f"[Binance] Canceling any open orders for {original_symbol}")
+            logger.info(f"Canceling any open orders for {original_symbol}")
             await self.exchange.cancel_all_orders(symbol)
         except Exception as e:
-            print(f"[Binance] ⚠️ Warning: Failed to cancel open orders: {e}")
+            logger.warning(f"Failed to cancel open orders: {e}")
             # Continue anyway to close the position
         
         orders = []
@@ -310,9 +319,9 @@ class BinanceClient:
             # Try to get position mode - use the correct CCXT method
             position_mode = await self.exchange.fapiPrivateGetPositionSideDual()
             is_hedge_mode = position_mode.get('dualSidePosition', False)
-            print(f"[Binance] Hedge mode is {'enabled' if is_hedge_mode else 'disabled'}")
+            logger.debug(f"Hedge mode is {'enabled' if is_hedge_mode else 'disabled'}")
         except Exception as e:
-            print(f"[Binance] Error checking hedge mode: {e}")
+            logger.debug(f"Error checking hedge mode: {e}")
             is_hedge_mode = False  # Assume one-way mode by default for testnet
         
         for position in positions:
@@ -338,12 +347,12 @@ class BinanceClient:
                     hedge_position_side = position['positionSide']
                 else:
                     hedge_position_side = 'LONG' if position_side == 'long' else 'SHORT'
-                print(f"[Binance] Position side: {hedge_position_side}")
+                logger.debug(f"Position side: {hedge_position_side}")
             
             if amount > 0:
                 try:
-                    print(f"[Binance] Closing {position_side.upper()} position for {original_symbol}")
-                    print(f"[Binance] Position size: {amount:.6f} contracts")
+                    logger.info(f"Closing {position_side.upper()} position for {original_symbol}")
+                    logger.debug(f"Position size: {amount:.6f} contracts")
                     
                     # Use reduce only for safety
                     params = {
@@ -362,16 +371,16 @@ class BinanceClient:
                     )
                     
                     orders.append(order)
-                    print(f"[Binance] ✅ Successfully closed position with order: {order.get('id', 'Unknown')}")
+                    logger.success(f"Successfully closed position with order: {order.get('id', 'Unknown')}")
                 
                 except Exception as e:
                     error_str = str(e)
-                    print(f"[Binance] ❌ Error closing position: {error_str}")
+                    logger.error(f"Error closing position: {error_str}")
                     
                     # Try alternative methods if first attempt fails
                     if "close position" in error_str.lower() or "reduce" in error_str.lower():
                         try:
-                            print("[Binance] Trying alternative closing method...")
+                            logger.info("Trying alternative closing method...")
                             
                             # Try using CLOSE_POSITION which doesn't need amount
                             close_params = {
@@ -390,15 +399,15 @@ class BinanceClient:
                             )
                             
                             orders.append(order)
-                            print(f"[Binance] ✅ Successfully closed position with alternative method")
+                            logger.success("Successfully closed position with alternative method")
                         
                         except Exception as alt_e:
                             alt_error = str(alt_e)
-                            print(f"[Binance] ❌ Alternative closing method also failed: {alt_error}")
+                            logger.error(f"Alternative closing method also failed: {alt_error}")
                             
                             # Last resort: try a third method
                             try:
-                                print("[Binance] Trying third closing method (exact amount)...")
+                                logger.info("Trying third closing method (exact amount)...")
                                 
                                 # Try getting more precise position size
                                 exact_amount = float(position.get('contracts', amount))
@@ -410,9 +419,10 @@ class BinanceClient:
                                 )
                                 
                                 orders.append(order)
-                                print(f"[Binance] ✅ Successfully closed position with third method")
+                                logger.success("Successfully closed position with third method")
                                 
                             except Exception as third_e:
+                                logger.critical(f"All closing methods failed: {str(third_e)}")
                                 return {"status": "error", "symbol": original_symbol, 
                                        "error": f"All closing methods failed: {str(third_e)}"}
                     else:
@@ -478,35 +488,38 @@ class BinanceClient:
             if take_profit is not None:
                 print(f"[Binance] Take Profit: {take_profit:.2f}")
             
+            # Log detailed information
+            logger.info(f"Opening {side.upper()} position for {original_symbol}: size={amount:.6f}, leverage={leverage}x, sl={stop_loss}, tp={take_profit}")
+            
             # Check if we're in hedge mode
             try:
                 position_mode = await self.exchange.fapiPrivateGetPositionSideDual()
                 is_hedge_mode = position_mode.get('dualSidePosition', False)
-                print(f"[Binance] Hedge mode is {'enabled' if is_hedge_mode else 'disabled'}")
+                logger.debug(f"Hedge mode is {'enabled' if is_hedge_mode else 'disabled'}")
             except Exception as e:
-                print(f"[Binance] Error checking hedge mode: {e}")
+                logger.debug(f"Error checking hedge mode: {e}")
                 is_hedge_mode = False  # Assume one-way mode by default for testnet
             
             # Determine position side based on side
             position_side = 'LONG' if side == 'buy' else 'SHORT'
-            print(f"[Binance] Position side: {position_side}")
+            logger.debug(f"Position side: {position_side}")
                 
             # Set leverage if provided
             if leverage is not None:
                 try:
                     leverage_result = await self.set_leverage(symbol, leverage)
-                    print(f"[Binance] Leverage set to {leverage}x")
+                    logger.info(f"Leverage set to {leverage}x")
                 except Exception as e:
-                    print(f"[Binance] ⚠️ Warning: Could not set leverage to {leverage}x: {e}")
+                    logger.warning(f"Could not set leverage to {leverage}x: {e}")
                     # Continue with default leverage
                 
             # Set margin type if provided
             if margin_type is not None:
                 try:
                     margin_result = await self.set_margin_type(symbol, margin_type)
-                    print(f"[Binance] Margin type set to {margin_type}")
+                    logger.info(f"Margin type set to {margin_type}")
                 except Exception as e:
-                    print(f"[Binance] ⚠️ Warning: Could not set margin type to {margin_type}: {e}")
+                    logger.warning(f"Could not set margin type to {margin_type}: {e}")
                     # Continue with default margin type
                 
             # Determine order type based on price
@@ -519,18 +532,18 @@ class BinanceClient:
             if is_hedge_mode:
                 params['positionSide'] = position_side
             
-            print(f"[Binance] Sending {order_type} {side} order to exchange...")
+            logger.info(f"Sending {order_type} {side} order to exchange...")
             
             # Calculate estimated notional value
             estimated_notional = amount * (price if price is not None else 
                                           (await self.exchange.fetch_ticker(symbol))['last'])
-            print(f"[Binance] Estimated order notional value: ${estimated_notional:.2f}")
+            logger.debug(f"Estimated order notional value: ${estimated_notional:.2f}")
             
             # Check minimum notional requirement
             if estimated_notional < 100:
                 error_msg = (f"Order notional value (${estimated_notional:.2f}) is below the minimum "
                              f"requirement of $100.00. Consider increasing position size or leverage.")
-                print(f"[Binance] ❌ Error: {error_msg}")
+                logger.error(error_msg)
                 return {
                     "status": "error",
                     "symbol": original_symbol,
@@ -548,9 +561,14 @@ class BinanceClient:
                     params=params
                 )
                 
+                # Keep critical success message as print for immediate feedback
                 print(f"[Binance] ✅ Main order successful!")
                 print(f"[Binance] Order ID: {main_order.get('id', 'Unknown')}")
                 print(f"[Binance] Order price: {main_order.get('price', 'Market price')}")
+                
+                # Add detailed logging
+                logger.success(f"Main order successful for {original_symbol}: ID={main_order.get('id', 'Unknown')}, price={main_order.get('price', 'Market price')}")
+                
             except Exception as e:
                 error_str = str(e)
                 # Handle common Binance errors with more helpful messages
@@ -566,7 +584,7 @@ class BinanceClient:
                 else:
                     error_msg = f"Error opening position: {error_str}"
                 
-                print(f"[Binance] ❌ {error_msg}")
+                logger.error(error_msg)
                 return {
                     "status": "error",
                     "symbol": original_symbol,
@@ -733,7 +751,7 @@ class BinanceClient:
             }
         except Exception as e:
             error_message = f"Error opening position: {str(e)}"
-            print(f"[Binance] ❌ {error_message}")
+            logger.error(error_message, exc_info=True)
             
             return {
                 "status": "error",
@@ -817,12 +835,12 @@ class BinanceClient:
             
             # If we can't determine, default to symbol/USDT
             if not formatted_symbol:
-                print(f"⚠️ Couldn't parse symbol format for {symbol}, using {symbol}/USDT")
+                logger.warning(f"Couldn't parse symbol format for {symbol}, using {symbol}/USDT")
                 formatted_symbol = f"{symbol}/USDT"
         
-        # Print symbol format conversion if enabled
+        # Print symbol format conversion if enabled (for debugging)
         if print_format:
-            print(f"Symbol format: {original_symbol} -> {formatted_symbol}")
+            logger.debug(f"Symbol format: {original_symbol} -> {formatted_symbol}")
             
         return formatted_symbol
     
@@ -842,5 +860,6 @@ class BinanceClient:
         """Close the exchange connection"""
         try:
             await self.exchange.close()
+            logger.info("Exchange connection closed")
         except Exception as e:
-            print(f"Error closing connection: {e}")
+            logger.error(f"Error closing connection: {e}")

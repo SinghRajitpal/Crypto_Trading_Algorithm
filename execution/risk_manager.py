@@ -4,6 +4,10 @@ import numpy as np
 from datetime import datetime, timedelta
 import config
 from dataclasses import dataclass
+from utils.logging_config import get_logger, console_log
+
+# Get logger for this module
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -49,7 +53,7 @@ class ProductionRiskManager:
         self.daily_pnl = 0.0
         self.max_drawdown_hit = False
         
-        print(f"[ProductionRisk] Initialized with {config.RISK_PER_TRADE_PCT*100}% risk, {config.KELLY_FRACTION} Kelly fraction")
+        logger.info(f"ProductionRiskManager initialized with {config.RISK_PER_TRADE_PCT*100}% risk, {config.KELLY_FRACTION} Kelly fraction")
     
     @property
     def risk_per_trade(self) -> float:
@@ -148,7 +152,7 @@ class ProductionRiskManager:
         max_position_size = allocated_capital * 0.95  # Maximum 95% of allocated capital
         if position_size_usdt > max_position_size:
             position_size_usdt = max_position_size
-            print(f"[ProductionRisk] Position capped at 95% of allocated capital: ${max_position_size:.2f}")
+            logger.warning(f"Position capped at 95% of allocated capital: ${max_position_size:.2f}")
         
         # Ensure position size is positive
         position_size_usdt = max(position_size_usdt, 0)
@@ -176,9 +180,9 @@ class ProductionRiskManager:
             if scaled_position_usdt <= allocated_capital:
                 position_size_usdt = scaled_position_usdt
                 position_size_contracts *= scale_factor
-                print(f"[ProductionRisk] Position scaled up {scale_factor:.2f}x to meet ${min_notional} minimum")
+                logger.info(f"Position scaled up {scale_factor:.2f}x to meet ${min_notional} minimum")
             else:
-                print(f"[ProductionRisk] Cannot scale to minimum notional - would exceed allocated capital")
+                logger.warning("Cannot scale to minimum notional - would exceed allocated capital")
         
         # Check minimum amount precision (BTCUSDT: 0.001)
         min_amount = 0.001  # Minimum contract size for BTCUSDT
@@ -191,7 +195,7 @@ class ProductionRiskManager:
                 position_size_usdt = allocated_capital * 0.95
                 position_size_contracts = position_size_usdt / entry_price
             
-            print(f"[ProductionRisk] Position size adjusted to minimum precision: {position_size_contracts:.6f} contracts")
+            logger.info(f"Position size adjusted to minimum precision: {position_size_contracts:.6f} contracts")
         
         # Calculate margin required with safety check
         margin_required = position_size_usdt / leverage if leverage > 0 else position_size_usdt
@@ -201,25 +205,25 @@ class ProductionRiskManager:
             margin_required = allocated_capital * 0.95
             position_size_usdt = margin_required * leverage
             position_size_contracts = position_size_usdt / entry_price
-            print(f"[ProductionRisk] Margin capped at allocated capital")
+            logger.warning("Margin capped at allocated capital")
         
         # Calculate stop loss and take profit distances based on ATR
         stop_loss_distance = config.ATR_STOP_MULTIPLIER * atr_adjusted
         take_profit_distance = config.RISK_REWARD_RATIO * stop_loss_distance
         
-        print(f"[ProductionRisk] Position sizing for {symbol}:")
-        print(f"[ProductionRisk]   Allocated capital: ${allocated_capital:.2f}")
-        print(f"[ProductionRisk]   ATR: {atr_value:.6f} (floor-adjusted: {atr_adjusted:.6f})")
-        print(f"[ProductionRisk]   Size: {position_size_contracts:.6f} contracts (${position_size_usdt:.2f})")
-        print(f"[ProductionRisk]   Leverage: {leverage}x, Margin: ${margin_required:.2f}")
-        print(f"[ProductionRisk]   Total costs: ${final_cost_breakdown['total_cost_usd']:.2f} ({final_cost_breakdown['total_cost_pct']:.2%})")
-        print(f"[ProductionRisk]   Cost breakdown:")
-        print(f"[ProductionRisk]     - Trading fees: ${final_cost_breakdown['trading_fee_usd']:.2f}")
-        print(f"[ProductionRisk]     - Spread cost: ${final_cost_breakdown['spread_cost_usd']:.2f}")
-        print(f"[ProductionRisk]     - Slippage: ${final_cost_breakdown['slippage_cost_usd']:.2f}")
-        print(f"[ProductionRisk]     - Commission: ${final_cost_breakdown['commission_usd']:.2f}")
-        print(f"[ProductionRisk]     - Funding (8h): ${final_cost_breakdown['funding_cost_usd']:.2f}")
-        print(f"[ProductionRisk]   Position/Allocated: {(position_size_usdt/allocated_capital)*100:.1f}%")
+        logger.debug(f"Position sizing for {symbol}:")
+        logger.debug(f"  Allocated capital: ${allocated_capital:.2f}")
+        logger.debug(f"  ATR: {atr_value:.6f} (floor-adjusted: {atr_adjusted:.6f})")
+        logger.debug(f"  Size: {position_size_contracts:.6f} contracts (${position_size_usdt:.2f})")
+        logger.debug(f"  Leverage: {leverage}x, Margin: ${margin_required:.2f}")
+        logger.debug(f"  Total costs: ${final_cost_breakdown['total_cost_usd']:.2f} ({final_cost_breakdown['total_cost_pct']:.2%})")
+        logger.debug("  Cost breakdown:")
+        logger.debug(f"    - Trading fees: ${final_cost_breakdown['trading_fee_usd']:.2f}")
+        logger.debug(f"    - Spread cost: ${final_cost_breakdown['spread_cost_usd']:.2f}")
+        logger.debug(f"    - Slippage: ${final_cost_breakdown['slippage_cost_usd']:.2f}")
+        logger.debug(f"    - Commission: ${final_cost_breakdown['commission_usd']:.2f}")
+        logger.debug(f"    - Funding (8h): ${final_cost_breakdown['funding_cost_usd']:.2f}")
+        logger.debug(f"  Position/Allocated: {(position_size_usdt/allocated_capital)*100:.1f}%")
         
         return {
             "size_contracts": position_size_contracts,
@@ -298,12 +302,12 @@ class ProductionRiskManager:
         final_leverage_float = base_leverage * dd_factor * sharpe_factor * slope_factor - funding_adjustment
         final_leverage = max(1, min(int(final_leverage_float), config.MAX_LEVERAGE))
         
-        print(f"[ProductionRisk] Dynamic leverage for {symbol}: {final_leverage}x")
-        print(f"[ProductionRisk]   ATR: {atr_value:.6f}, Vol adjustment: {vol_adjustment:.3f}")
-        print(f"[ProductionRisk]   Base: {base_leverage}x, DD factor: {dd_factor:.2f}, "
+        logger.debug(f"Dynamic leverage for {symbol}: {final_leverage}x")
+        logger.debug(f"  ATR: {atr_value:.6f}, Vol adjustment: {vol_adjustment:.3f}")
+        logger.debug(f"  Base: {base_leverage}x, DD factor: {dd_factor:.2f}, "
               f"Sharpe factor: {sharpe_factor:.2f}, Slope factor: {slope_factor:.2f}")
-        print(f"[ProductionRisk]   Funding adjustment: {funding_adjustment:.3f}")
-        print(f"[ProductionRisk]   DD 3d: {dd_3d:.3f}, Sharpe 30d: {sharpe_30d:.3f}, Equity slope: {equity_slope:.3f}")
+        logger.debug(f"  Funding adjustment: {funding_adjustment:.3f}")
+        logger.debug(f"  DD 3d: {dd_3d:.3f}, Sharpe 30d: {sharpe_30d:.3f}, Equity slope: {equity_slope:.3f}")
         
         return final_leverage
     
@@ -365,19 +369,19 @@ class ProductionRiskManager:
                 "allocated_capital": 0
             }
         
-        print(f"[ProductionRisk] Validating {action} {side} trade for {symbol}")
-        print(f"[ProductionRisk]   Entry price: ${entry_price:.2f}")
-        print(f"[ProductionRisk]   Allocated capital: ${allocated_capital:.2f}")
-        print(f"[ProductionRisk]   Raw ATR: {atr_value:.6f}")
-        print(f"[ProductionRisk]   Signal confidence: {signal_confidence:.3f}")
+        logger.info(f"Validating {action} {side} trade for {symbol}")
+        logger.debug(f"  Entry price: ${entry_price:.2f}")
+        logger.debug(f"  Allocated capital: ${allocated_capital:.2f}")
+        logger.debug(f"  Raw ATR: {atr_value:.6f}")
+        logger.debug(f"  Signal confidence: {signal_confidence:.3f}")
         
         # Apply confidence-based adjustment to allocated capital
         # Higher confidence allows larger positions, lower confidence reduces size
         confidence_multiplier = 0.5 + (signal_confidence * 0.75)  # Range: 0.5x to 1.25x
         adjusted_allocated_capital = allocated_capital * confidence_multiplier
         
-        print(f"[ProductionRisk]   Confidence multiplier: {confidence_multiplier:.3f}")
-        print(f"[ProductionRisk]   Adjusted allocated capital: ${adjusted_allocated_capital:.2f}")
+        logger.debug(f"  Confidence multiplier: {confidence_multiplier:.3f}")
+        logger.debug(f"  Adjusted allocated capital: ${adjusted_allocated_capital:.2f}")
         
         # CRITICAL FIX: Normalize raw ATR to percentage volatility
         # ATR comes from algorithm strategies as raw price units, need to convert to percentage
@@ -392,7 +396,7 @@ class ProductionRiskManager:
         # Now cap the normalized ATR for calculation purposes
         normalized_atr = max(0.005, min(raw_normalized_atr, 0.15))  # Bound between 0.5% and 15%
         
-        print(f"[ProductionRisk]   Normalized ATR: {normalized_atr:.6f} ({normalized_atr*100:.2f}%)")
+        logger.debug(f"  Normalized ATR: {normalized_atr:.6f} ({normalized_atr*100:.2f}%)")
         
         # Calculate normalized volatility for cost adjustment
         portfolio_avg_vol = self.get_portfolio_average_volatility()

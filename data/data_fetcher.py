@@ -8,7 +8,11 @@ import os
 # Add parent directory to path to find config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+from utils.logging_config import get_logger, console_log
 from data.processor import DataProcessor
+
+# Get logger for this module
+logger = get_logger(__name__)
 from binance_exchange import BinanceClient
 
 
@@ -57,11 +61,11 @@ class DataFetcher:
         last_printed = None
         candle_count = 0
         
-        print(f"Starting data collection for {symbol} ({timeframe})")
+        logger.info(f"Starting data collection for {symbol} ({timeframe})")
         
         try:
             # First, fetch historical data to populate initial candles
-            print(f"[{symbol}] Fetching historical data...")
+            logger.info(f"[{symbol}] Fetching historical data...")
             historical_candles = await self.binance.exchange.fetch_ohlcv(symbol, timeframe, limit=self.data_processor.max_candles + 1)  # Fetch extra to account for filtering
             
             # Filter out incomplete current candle to prevent look-ahead bias
@@ -85,7 +89,7 @@ class DataFetcher:
             if len(complete_candles) > self.data_processor.max_candles:
                 complete_candles = complete_candles[-self.data_processor.max_candles:]
             
-            print(f"[{symbol}] Filtered {len(historical_candles)} raw candles to {len(complete_candles)} complete candles")
+            logger.debug(f"[{symbol}] Filtered {len(historical_candles)} raw candles to {len(complete_candles)} complete candles")
             
             # Process historical candles (only complete ones)
             for candle in complete_candles:
@@ -93,14 +97,14 @@ class DataFetcher:
                 candle_count += 1
             
             current_candles = len(self.data_processor.get_candles(symbol, timeframe))
-            print(f"[{symbol}] Loaded {current_candles} historical candles")
+            logger.info(f"[{symbol}] Loaded {current_candles} historical candles")
             
         except Exception as e:
-            print(f"[{symbol}] Warning: Could not fetch historical data: {e}")
-            print(f"[{symbol}] Will start with live data only")
+            logger.warning(f"[{symbol}] Could not fetch historical data: {e}")
+            logger.info(f"[{symbol}] Will start with live data only")
         
         # Now watch for live data
-        print(f"[{symbol}] Starting live data stream...")
+        logger.info(f"[{symbol}] Starting live data stream...")
         
         while True:
             try:
@@ -122,7 +126,7 @@ class DataFetcher:
                     if candle_count <= 10 or candle_count % 10 == 0:
                         total_candles = self.data_processor.max_candles
                         current_candles = len(self.data_processor.get_candles(symbol, timeframe))
-                        print(f"[{symbol}] Collected {current_candles}/{total_candles} candles")
+                        logger.debug(f"[{symbol}] Collected {current_candles}/{total_candles} candles")
                     
                     # Update the tracked candles for this specific symbol-timeframe pair
                     await self.data_processor.update_tracked_candles(symbol, timeframe, latest)
@@ -130,7 +134,7 @@ class DataFetcher:
                     last_printed = latest[0]
                     
             except Exception as e:
-                print(f"Error collecting data for {symbol}/{timeframe}: {e}")
+                logger.error(f"Error collecting data for {symbol}/{timeframe}: {e}")
                 await asyncio.sleep(1)
 
     def get_candles(self, symbol, timeframe):
