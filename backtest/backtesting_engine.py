@@ -108,7 +108,13 @@ class BacktestingEngine:
             self._raw_data[(sym, tf)] = df
 
         for sym, series in zip(sym_set, funding_results):
+            console_log(f"🔍 Processing funding data for {sym}: type={type(series)}, len={len(series) if hasattr(series, '__len__') else 'N/A'}", "DEBUG")
+            
             self._funding_data[sym] = series
+            if isinstance(series, pd.Series) and not series.empty:
+                console_log(f"✅ Loaded {len(series)} funding records for {sym} (from {series.index.min()} to {series.index.max()})", "INFO")
+            else:
+                console_log(f"⚠️ Empty or invalid funding data for {sym}: {type(series)} - {series}", "WARNING")
             
         console_log(f"✅ Historical data loaded successfully", "INFO")
 
@@ -203,12 +209,27 @@ class BacktestingEngine:
 
             # Check funding timestamps (every 8h at 00:00,08:00,16:00 UTC)
             if ts.hour % 8 == 0 and ts.minute == 0:
-                for sym in self._symbol_tfs.keys():
+                console_log(f"🔍 Checking funding at {ts} (UTC)", "DEBUG")
+                
+                # Iterate through all symbols that have funding data
+                for sym in self._funding_data.keys():
                     series = self._funding_data.get(sym)
-                    if series is None or ts not in series.index:
+                    if series is None:
+                        console_log(f"⚠️ No funding data for {sym}", "DEBUG")
                         continue
+                    
+                    # Check if this exact timestamp exists in funding data
+                    if ts not in series.index:
+                        console_log(f"⚠️ Timestamp {ts} not found in funding data for {sym}", "DEBUG")
+                        continue
+                    
                     rate = series.loc[ts]
-                    await self.broker.apply_funding(sym, rate)
+                    console_log(f"💰 Applying funding for {sym}: rate={rate:.6f}", "DEBUG")
+                    
+                    # Apply funding and log the result
+                    payment = await self.broker.apply_funding(sym, rate)
+                    if payment != 0:
+                        console_log(f"✅ Funding applied: {sym} paid ${payment:.4f}", "INFO")
 
         # ------------------------------------------------------------------
         # End-of-test cleanup – close any remaining open positions *and*
@@ -245,6 +266,77 @@ class BacktestingEngine:
             "total_return_pct": float((final_equity / self.initial_capital - 1) * 100),
             "max_drawdown_pct": 0.0,  # Placeholder - would need trade history to calculate properly
         }
+
+    @staticmethod
+    def _print_cost_analysis(trades_df: pd.DataFrame):
+        """Print detailed cost breakdown analysis."""
+        if trades_df.empty:
+            return
+            
+        console_log("\n" + "="*80, "INFO")
+        console_log("TRADING COST ANALYSIS", "INFO")
+        console_log("="*80, "INFO")
+        
+        # Separate trade types
+        open_trades = trades_df[trades_df['type'] == 'open']
+        close_trades = trades_df[trades_df['type'] == 'close']
+        funding_trades = trades_df[trades_df['type'] == 'funding']
+        
+        # Calculate total costs
+        total_trading_fees = (open_trades['fee'].sum() + close_trades['fee'].sum()) if 'fee' in trades_df.columns else 0
+        total_funding_costs = abs(funding_trades['payment'].sum()) if 'payment' in funding_trades.columns and not funding_trades.empty else 0
+        total_notional_volume = (open_trades['notional'].sum() + close_trades['notional'].sum()) if 'notional' in trades_df.columns else 0
+        
+        # Cost as percentage of volume
+        trading_fee_pct = (total_trading_fees / total_notional_volume * 100) if total_notional_volume > 0 else 0
+        funding_cost_pct = (total_funding_costs / total_notional_volume * 100) if total_notional_volume > 0 else 0
+        total_cost_pct = trading_fee_pct + funding_cost_pct
+        
+        console_log(f"Total Trading Volume (USDT)       ${total_notional_volume:>12,.2f}", "INFO")
+        console_log(f"Total Trading Fees (USDT)         ${total_trading_fees:>12,.2f}", "INFO")
+        console_log(f"Total Funding Costs (USDT)        ${total_funding_costs:>12,.2f}", "INFO")
+        console_log(f"Total Transaction Costs (USDT)    ${total_trading_fees + total_funding_costs:>12,.2f}", "INFO")
+        
+        console_log("\n" + "-"*80, "INFO")
+        console_log("COST BREAKDOWN BY PERCENTAGE", "INFO")
+        console_log("-"*80, "INFO")
+        
+        console_log(f"Trading Fees (% of volume)         {trading_fee_pct:>12.3f}%", "INFO")
+        console_log(f"Funding Costs (% of volume)        {funding_cost_pct:>12.3f}%", "INFO")
+        console_log(f"Total Costs (% of volume)          {total_cost_pct:>12.3f}%", "INFO")
+        console_log(f"", "INFO")
+        console_log(f"Note: Trading fees include spreads and slippage costs", "INFO")
+        
+        # Trade-level analysis
+        if not open_trades.empty:
+            avg_trade_size = open_trades['notional'].mean()
+            avg_trade_fee = open_trades['fee'].mean()
+            
+            console_log("\n" + "-"*80, "INFO")
+            console_log("PER-TRADE COST ANALYSIS", "INFO")
+            console_log("-"*80, "INFO")
+            
+            console_log(f"Number of Trades                   {len(open_trades):>12,}", "INFO")
+            console_log(f"Average Trade Size (USDT)          ${avg_trade_size:>12,.2f}", "INFO")
+            console_log(f"Average Trading Fee per Trade      ${avg_trade_fee:>12,.2f}", "INFO")
+            console_log(f"Fee as % of Avg Trade Size         {(avg_trade_fee/avg_trade_size*100):>12.3f}%", "INFO")
+        
+        # Funding analysis
+        if not funding_trades.empty:
+            console_log("\n" + "-"*80, "INFO")
+            console_log("FUNDING COST ANALYSIS", "INFO")
+            console_log("-"*80, "INFO")
+            
+            funding_count = len(funding_trades)
+            avg_funding_payment = abs(funding_trades['payment'].mean())
+            total_funding_hours = funding_count * 8  # 8 hours per funding period
+            
+            console_log(f"Number of Funding Periods          {funding_count:>12,}", "INFO")
+            console_log(f"Total Hours with Open Positions    {total_funding_hours:>12,}", "INFO")
+            console_log(f"Average Funding Rate               {funding_trades['rate'].mean()*100:>12.3f}%", "INFO")
+            console_log(f"Average Funding Payment (USDT)     ${avg_funding_payment:>12,.2f}", "INFO")
+        
+        console_log("="*80, "INFO")
 
 # ---------------------------------------------------------------------------
 # CLI driver – allows `python backtest/backtesting_engine.py` quick test
@@ -403,6 +495,10 @@ if __name__ == "__main__":
                 logger.warning(f"Could not analyze asset {symbol}: {e}")
         
         console_log("📋 Generating performance summary...", "INFO")
+        
+        # Calculate and display cost analysis
+        BacktestingEngine._print_cost_analysis(result["trades"])
+        
         # Print comprehensive metrics summary using QuantStats-Lumi
         visualizer.print_summary(portfolio_metrics, {k: v[1] for k, v in asset_results.items()})
         

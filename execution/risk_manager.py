@@ -126,26 +126,25 @@ class ProductionRiskManager:
         # ATR comes from algorithm strategies as raw price units, need to convert to percentage
         raw_normalized_atr = atr_value / entry_price if entry_price > 0 else 0.02
         
-        # Now cap the normalized ATR for calculation purposes
-        normalized_atr = max(0.005, min(raw_normalized_atr, 0.15))  # Bound between 0.5% and 15%
+        # Apply document's ATR floor: max(ATR, 0.001) = 0.1% minimum
+        # Remove artificial ceiling - crypto can have >15% volatility
+        atr_adjusted = max(raw_normalized_atr, config.MIN_ATR_FLOOR)  # Use config value (0.001 = 0.1%)
         
-        # Apply ATR floor from document
-        atr_adjusted = max(normalized_atr, config.MIN_ATR_FLOOR)
-        
-        # STEP 1: Calculate base position size using Kelly formula
-        # Size = (0.8% × Allocated × 0.7) / max(ATR, 0.001)
+        # STEP 3: Calculate position size using document formula
+        # Size = (0.8% × Allocated × 0.7) / max(ATR, 0.001) - dynamic_cost
+        # Note: Document subtracts cost from SIZE, not from base calculation
         numerator = config.RISK_PER_TRADE_PCT * allocated_capital * config.KELLY_FRACTION
         base_position_size_usdt = numerator / atr_adjusted
         
-        # STEP 2: Initial position size in contracts (for cost calculation)
+        # Convert to contracts for cost calculation
         initial_position_contracts = base_position_size_usdt / entry_price if entry_price > 0 else 0
         
-        # STEP 3: Calculate comprehensive trading costs
+        # Calculate dynamic costs based on position size
         cost_breakdown = self.calculate_dynamic_cost_adjustment(
             volatility_norm, entry_price, initial_position_contracts
         )
         
-        # STEP 4: Subtract total costs from position size
+        # Apply document formula: subtract dynamic cost from position size
         position_size_usdt = base_position_size_usdt - cost_breakdown["total_cost_usd"]
         
         # CRITICAL SAFETY: Ensure position size never exceeds allocated capital

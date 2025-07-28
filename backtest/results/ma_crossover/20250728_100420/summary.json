@@ -1,0 +1,72 @@
+{
+  "metrics": {
+    "Symbol": "Portfolio",
+    "Total Return (%)": 0.5,
+    "CAGR (%)": 35.3,
+    "Expected Return (%)": 0.071,
+    "Volatility (%)": 0.5,
+    "Final Equity": 10049.79,
+    "Sharpe Ratio": 2.758,
+    "Max Drawdown (%)": 0.87,
+    "Ulcer Index": 0.006,
+    "Sortino Ratio": 6.21,
+    "Calmar Ratio": 40.504,
+    "Recovery Factor": 0.58,
+    "VaR (95%) (%)": 0.0,
+    "CVaR (95%) (%)": 0.0,
+    "Win Rate (%)": 42.86,
+    "Profit Factor": 1.465,
+    "Gain to Pain Ratio": 0.465,
+    "Tail Ratio": 2.066,
+    "Kelly Criterion": 0.136,
+    "Best Day (%)": 0.94,
+    "Worst Day (%)": -0.45,
+    "Skewness": 1.012,
+    "Kurtosis": -0.024,
+    "Alpha (%)": -0.25,
+    "Beta": 0.425,
+    "Information Ratio": -0.268,
+    "R-Squared": 0.981,
+    "Correlation": 0.991
+  },
+  "per_asset_stats": {
+    "BTCUSDT": {
+      "Symbol": "BTCUSDT",
+      "Total Return (%)": 0.56,
+      "CAGR (%)": 40.44,
+      "Expected Return (%)": 0.08,
+      "Volatility (%)": 0.23,
+      "Final Equity": 10055.94,
+      "Sharpe Ratio": 6.749,
+      "Max Drawdown (%)": 0.03,
+      "Ulcer Index": 0.0002,
+      "Sortino Ratio": 242.423,
+      "Calmar Ratio": 1381.243,
+      "Recovery Factor": 19.11,
+      "VaR (95%) (%)": 0.0,
+      "CVaR (95%) (%)": 0.0,
+      "Win Rate (%)": 14.29,
+      "Profit Factor": 17.735,
+      "Gain to Pain Ratio": 16.735,
+      "Tail Ratio": 37.034,
+      "Kelly Criterion": 0.157,
+      "Best Day (%)": 0.59,
+      "Worst Day (%)": -0.01,
+      "Skewness": 2.644,
+      "Kurtosis": 6.993
+    }
+  },
+  "timespan": {
+    "start": "2025-07-21T00:00:00+00:00",
+    "end": "2025-07-28T00:00:00+00:00",
+    "days": 7
+  },
+  "benchmark": "BTCUSDT",
+  "reports_generated": {
+    "portfolio_html_report": "portfolio_performance/portfolio_performance_report.html",
+    "asset_html_reports": [],
+    "portfolio_stats": "portfolio_performance/portfolio_stats.csv",
+    "asset_stats": "individual_asset_performance/per_asset_stats.csv",
+    "plots_directory": null
+  }
+}
