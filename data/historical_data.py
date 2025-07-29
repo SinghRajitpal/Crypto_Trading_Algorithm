@@ -263,6 +263,8 @@ class HistoricalDataFetcher:
             if existing.index.inferred_type != "datetime64" and existing.index.dtype.kind != "M":
                 existing.index = pd.to_datetime(existing.index, utc=True, errors="coerce", format="ISO8601")
             existing = existing[existing.index.notnull()]
+            # Clean NaN values from existing data
+            existing = existing.dropna()
 
         since_ms = _to_ms(start)
         end_ms = _to_ms(end)
@@ -346,10 +348,15 @@ class HistoricalDataFetcher:
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         df.set_index("timestamp", inplace=True)
         new_series: pd.Series = df["rate"].astype(float)
+        
+        # Clean NaN values and invalid rates to prevent issues during backtesting
+        new_series = new_series.dropna()
 
         if existing is not None:
             combined = pd.concat([existing, new_series])
             combined = combined[~combined.index.duplicated(keep="last")]
+            # Clean combined data as well
+            combined = combined.dropna()
         else:
             combined = new_series
 

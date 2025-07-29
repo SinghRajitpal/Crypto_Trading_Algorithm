@@ -110,7 +110,7 @@ def configure_logger():
         compression="zip"
     )
 
-def get_logger(name: str) -> "logger":
+def get_logger(name: str):
     """Get a logger instance with the specified name.
     
     Args:

@@ -123,10 +123,19 @@ class BacktestingEngine:
         # Try preferred timeframes in order they were registered
         for tf in self._symbol_tfs.get(symbol, []):
             price = self.data_engine.get_latest_price(symbol, tf)
-            if price is not None:
+            if price is not None and price > 0:
                 return price
-        # If none available yet, return 0 to indicate unavailable
-        return 0.0
+        
+        # Fallback: try to get price from any available timeframe data
+        for (sym, tf), df in self._raw_data.items():
+            if sym == symbol and not df.empty:
+                # Get the most recent available price from the data
+                latest_price = df['close'].iloc[-1] if 'close' in df.columns else None
+                if latest_price is not None and latest_price > 0:
+                    return float(latest_price)
+        
+        # If none available yet, return None to indicate unavailable
+        return None
 
     async def run(self):
         """Execute the backtest and return trade log & simple metrics."""
@@ -211,6 +220,9 @@ class BacktestingEngine:
             if ts.hour % 8 == 0 and ts.minute == 0:
                 console_log(f"🔍 Checking funding at {ts} (UTC)", "DEBUG")
                 
+                funding_applied_count = 0
+                total_funding_payment = 0.0
+                
                 # Iterate through all symbols that have funding data
                 for sym in self._funding_data.keys():
                     series = self._funding_data.get(sym)
@@ -229,7 +241,12 @@ class BacktestingEngine:
                     # Apply funding and log the result
                     payment = await self.broker.apply_funding(sym, rate)
                     if payment != 0:
-                        console_log(f"✅ Funding applied: {sym} paid ${payment:.4f}", "INFO")
+                        funding_applied_count += 1
+                        total_funding_payment += abs(payment)
+                
+                # Log summary only if there were significant costs (> $0.10)
+                if funding_applied_count > 0 and total_funding_payment > 0.10:
+                    console_log(f"💰 Funding: {funding_applied_count} positions, cost: ${total_funding_payment:.2f}", "DEBUG")
 
         # ------------------------------------------------------------------
         # End-of-test cleanup – close any remaining open positions *and*

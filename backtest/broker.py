@@ -241,15 +241,27 @@ class SimBroker:
             return 0.0  # no position
 
         price = await self._price(symbol)
-        if price is None:
+        if price is None or price <= 0:
+            return 0.0  # price unavailable or invalid
+
+        # Validate rate to prevent NaN propagation
+        if rate is None or not isinstance(rate, (int, float)) or rate != rate:  # rate != rate checks for NaN
             return 0.0
 
         contracts = pos["contracts"]
         notional = abs(contracts) * price
         
+        # Additional safety check for notional
+        if notional <= 0 or notional != notional:  # Check for NaN
+            return 0.0
+        
         # Apply funding multiplier for more conservative/realistic costs
         effective_rate = rate * FUNDING_MULTIPLIER
         payment = notional * effective_rate * (1 if contracts > 0 else -1)
+
+        # Final safety check for payment
+        if payment != payment:  # Check for NaN
+            return 0.0
 
         self._cash -= payment  # if payment positive and long we pay (cash decrease)
 
