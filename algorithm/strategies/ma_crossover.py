@@ -43,8 +43,6 @@ class MACrossoverStrategy(BaseStrategy):
             params: Strategy parameters:
                 - fast_ma_period: Period for fast moving average (default: 2)
                 - slow_ma_period: Period for slow moving average (default: 4)
-                - leverage: Trading leverage (default: 1.0)
-                - position_threshold: Minimum position size to consider as open (default: 0.0001)
             strategy_id: Unique identifier for this strategy instance
             
         Raises:
@@ -52,32 +50,21 @@ class MACrossoverStrategy(BaseStrategy):
                 - fast_ma_period must be a positive integer
                 - slow_ma_period must be a positive integer
                 - fast_ma_period must be less than slow_ma_period
-                - leverage must be a positive number
-                - position_threshold must be a positive number
         """
-        default_params = {
-            'fast_ma_period': 2,
-            'slow_ma_period': 4,
-            'leverage': 1.0,
-            'position_threshold': self.DEFAULT_POSITION_THRESHOLD
-        }
         
-        if params:
-            default_params.update(params)
+        if self.params:
             
-        # Validate parameters
-        if not isinstance(default_params['fast_ma_period'], int) or default_params['fast_ma_period'] <= 0:
-            raise ValueError("fast_ma_period must be a positive integer")
-        if not isinstance(default_params['slow_ma_period'], int) or default_params['slow_ma_period'] <= 0:
-            raise ValueError("slow_ma_period must be a positive integer")
-        if default_params['fast_ma_period'] >= default_params['slow_ma_period']:
-            raise ValueError("fast_ma_period must be less than slow_ma_period")
-        if not isinstance(default_params['leverage'], (int, float)) or default_params['leverage'] <= 0:
-            raise ValueError("leverage must be a positive number")
-        if not isinstance(default_params['position_threshold'], (int, float)) or default_params['position_threshold'] <= 0:
-            raise ValueError("position_threshold must be a positive number")
             
-        super().__init__(default_params, strategy_id)
+            # Validate parameters
+            if not isinstance(self.params['fast_ma_period'], int) or self.params['fast_ma_period'] <= 0:
+                raise ValueError("fast_ma_period must be a positive integer")
+            if not isinstance(self.params['slow_ma_period'], int) or self.params['slow_ma_period'] <= 0:
+                raise ValueError("slow_ma_period must be a positive integer")
+            if self.params['fast_ma_period'] >= self.params['slow_ma_period']:
+                raise ValueError("fast_ma_period must be less than slow_ma_period")
+            
+
+        super().__init__(self.params, strategy_id)
         
     def get_required_indicators(self) -> List[str]:
         """Gets the list of indicators required by this strategy.
@@ -95,8 +82,8 @@ class MACrossoverStrategy(BaseStrategy):
         """
         return [
             f'sma_{self.params["fast_ma_period"]}',
-            f'sma_{self.params["slow_ma_period"]}',
-            'atr_14'  # Required for production risk management
+            f'sma_{self.params["slow_ma_period"]}'
+            # 'atr_14'  # Required for production risk management
         ]
     
     async def _generate_signals(self, data: Dict[str, np.ndarray], indicator_data: Dict[str, np.ndarray], symbol: str) -> TradeSignal:
@@ -186,14 +173,12 @@ class MACrossoverStrategy(BaseStrategy):
             prev_slow_ma = slow_ma[-2]
             current_price = data['close'][-1]
             
-            # Get current position from Binance
-            current_position = await self.get_position(symbol)
             
-            # Get ATR value for production risk management
-            atr_key = 'atr_14'
-            atr_value = indicator_data.get(atr_key, None)
-            if atr_value is not None:
-                atr_value = atr_value[-1]  # Get latest ATR value
+            # # Get ATR value for production risk management
+            # atr_key = 'atr_14'
+            # atr_value = indicator_data.get(atr_key, None)
+            # if atr_value is not None:
+            #     atr_value = atr_value[-1]  # Get latest ATR value
             
             # Create base metadata
             metadata = {
@@ -201,88 +186,43 @@ class MACrossoverStrategy(BaseStrategy):
                 "fast_ma": current_fast_ma,
                 "slow_ma": current_slow_ma,
                 "current_price": current_price,
-                "current_position": current_position,
                 "fast_ma_period": self.params['fast_ma_period'],
-                "slow_ma_period": self.params['slow_ma_period'],
-                "position_threshold": self.position_threshold,
-                "atr_value": atr_value  # Required for production risk management
+                "slow_ma_period": self.params['slow_ma_period']
+                # "atr_value": atr_value  # Required for production risk management
             }
             
             # Bullish crossover
             if prev_fast_ma <= prev_slow_ma and current_fast_ma > current_slow_ma:
                 # For hedge mode: if we have no long position, enter long
-                if current_position <= self.position_threshold:
-                    metadata["reason"] = "Bullish crossover - entering long position"
-                    return TradeSignal(
-                        action="open",
-                        side="buy",
-                        symbol=symbol,
-                        strategy_id=self.strategy_id,
-                        metadata=metadata,
-                        signal_confidence=0.8
-                    )
-                else:
-                    # Already in a long position, maintain it
-                    metadata["reason"] = "Bullish crossover - maintaining existing long position"
-                    return TradeSignal(
-                        action="hold",
-                        side="none",
-                        symbol=symbol,
-                        strategy_id=self.strategy_id,
-                        metadata=metadata,
-                        signal_confidence=0.7
-                    )
+            
+                metadata["reason"] = "Bullish crossover - entering long position"
+                return TradeSignal(
+                    action="open",
+                    side="buy",
+                    symbol=symbol,
+                    strategy_id=self.strategy_id,
+                    metadata=metadata,
+                    signal_confidence=0.8
+                )
+                
             
             # Bearish crossover
             elif prev_fast_ma >= prev_slow_ma and current_fast_ma < current_slow_ma:
                 # For hedge mode: if we have no short position, enter short
-                if current_position >= -self.position_threshold:
-                    metadata["reason"] = "Bearish crossover - entering short position"
-                    return TradeSignal(
-                        action="open",
-                        side="sell",
-                        symbol=symbol,
-                        strategy_id=self.strategy_id,
-                        metadata=metadata,
-                        signal_confidence=0.8
-                    )
-                else:
-                    # Already in a short position, maintain it
-                    metadata["reason"] = "Bearish crossover - maintaining existing short position"
-                    return TradeSignal(
-                        action="hold",
-                        side="none",
-                        symbol=symbol,
-                        strategy_id=self.strategy_id,
-                        metadata=metadata,
-                        signal_confidence=0.7
-                    )
             
-            # No crossover signal - maintain existing position
-            if current_position > self.position_threshold:
-                # Long position, maintain it
-                metadata["reason"] = "Maintaining long position - no crossover signal"
+                metadata["reason"] = "Bearish crossover - entering short position"
                 return TradeSignal(
-                    action="hold",
-                    side="none",
+                    action="open",
+                    side="sell",
                     symbol=symbol,
                     strategy_id=self.strategy_id,
                     metadata=metadata,
-                    signal_confidence=0.7
+                    signal_confidence=0.8
                 )
-            elif current_position < -self.position_threshold:
-                # Short position, maintain it
-                metadata["reason"] = "Maintaining short position - no crossover signal"
-                return TradeSignal(
-                    action="hold",
-                    side="none",
-                    symbol=symbol,
-                    strategy_id=self.strategy_id,
-                    metadata=metadata,
-                    signal_confidence=0.7
-                )
+                
             
-            # No position and no new signals - explicit HOLD
+            
+            # No new signals - explicit HOLD
             metadata["reason"] = "Market conditions stable - no position"
             return TradeSignal(
                 action="hold",
@@ -297,7 +237,7 @@ class MACrossoverStrategy(BaseStrategy):
             return TradeSignal(
                 action="exit",
                 side="sell" if await self.get_position(symbol) > 0 else "buy",
-                symbol=symbol,
+                symbol=symbol, 
                 strategy_id=self.strategy_id,
                 metadata={"reason": f"Error: {str(e)}"},
                 signal_confidence=0.0

@@ -157,7 +157,7 @@ class DataFetcher:
             timeframe: Candle timeframe (e.g., "1m", "5m", "1h").
             
         Returns:
-            Latest candle for the specified symbol and timeframe or None if unavailable.
+            Latest candle data for the specified symbol and timeframe.
         """
         return self.data_processor.get_latest_candle(symbol, timeframe)
 

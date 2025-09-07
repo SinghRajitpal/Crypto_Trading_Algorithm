@@ -1,5 +1,7 @@
 import asyncio
 from data.data_fetcher import DataFetcher
+from data.indicators import Indicators
+import numpy as np
 import sys
 import os
 from typing import Dict, List, Optional, Tuple, Any
@@ -34,8 +36,6 @@ class DataEngine:
             binance_client: Binance client instance.
             max_candles: Maximum number of candles to store.
         """
-        # Import here to avoid circular imports
-        from data.data_fetcher import DataFetcher
         
         # Store binance client reference
         self.binance_client = binance_client
@@ -169,10 +169,7 @@ class DataEngine:
                 logger.warning(f"Insufficient candles for {symbol} ATR calculation: {len(candles) if candles else 0} available, need {period + 5}")
                 return None
             
-            # Import indicators for ATR calculation
-            from data.indicators import Indicators
-            import numpy as np
-            
+            # Initialize indicators module
             indicators = Indicators()
             
             # Convert candles to OHLCV format for ATR calculation
@@ -291,7 +288,7 @@ if __name__ == "__main__":
     
     # Create a standalone instance
     client = BinanceClient(testnet=True)
-    data_engine = DataEngine(binance_client=client, max_candles=30)
+    data_engine = DataEngine(binance_client=client, max_candles=100)
     
     # Run this to collect some data first
     logger.info("Starting data collection. Press Ctrl+C to stop...")

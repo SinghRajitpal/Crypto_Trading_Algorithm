@@ -2,6 +2,7 @@
 
 import asyncio
 from typing import Dict, Optional
+import config
 from .strategies.base_strategy import BaseStrategy
 from .trade_signal import TradeSignal
 from data.data_engine import DataEngine
@@ -183,7 +184,6 @@ class AlgoEngine:
         Yields:
             Generated trade signals as they are calculated.
         """
-        import config
         if not hasattr(self, 'running') or not self.running:
             self.running = True
             logger.info(f"Starting with strategy: {strategy.strategy_id}")

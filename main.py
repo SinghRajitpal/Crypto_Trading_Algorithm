@@ -5,7 +5,7 @@ from execution.execution_engine import ProductionExecutionEngine
 from algorithm.strategies.base_strategy import BaseStrategy
 from binance_exchange import BinanceClient
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import traceback
 import numpy as np
 from utils.logging_config import get_logger, console_log
@@ -99,7 +99,6 @@ class TradingAlgorithm:
             
             # Initialize components with enough candles for indicator calculation
             max_candles = max(100, 5 * self.strategy.params.get('slow_ma_period', 20))
-            max_candles += 5
             
             logger.debug(f"Initializing with {max_candles} candles per symbol")
             
@@ -145,7 +144,6 @@ class TradingAlgorithm:
                 logger.success("Portfolio data initialization successful")
                 
                 # Force rebalance on startup by setting old timestamp
-                from datetime import datetime, timedelta
                 self.execution_engine.portfolio_manager.last_rebalance_time = datetime.now() - timedelta(hours=25)
                 
                 # Trigger initial rebalance with real data
