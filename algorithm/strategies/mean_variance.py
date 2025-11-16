@@ -5,10 +5,7 @@ import config
 from utils.logging_config import get_logger
 
 from algorithm.forecast.forecast_result import ForecastResult
-from algorithm.forecast.linear_regression import (
-    LinearRegressionForecaster,
-    RegressionOutput,
-)
+from algorithm.forecast.linear_regression import LinearRegressionForecaster
 
 logger = get_logger(__name__)
 
