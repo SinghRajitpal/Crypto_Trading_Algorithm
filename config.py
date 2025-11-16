@@ -17,14 +17,18 @@ binance_futures_testnet = {
     "testnet_api_secret": "ba10816594558c8cd93d04e823608f408016aa15c4d632a2214ca950a50b1967",
 }
 
-# Symbol-timeframe pairs to monitor
-symbols = [
-    ("BTCUSDT", "1m"),
-    ("ETHUSDT", "1m"),
-    ("XRPUSDT", "1m"),
-    ("BNBUSDT", "1m"),
-    ("SOLUSDT", "1m")
+# Symbol universe and timeframe settings
+PRIMARY_TIMEFRAME = "5m"
+DEFAULT_UNIVERSE = [
+    "BTCUSDT",
+    "ETHUSDT",
+    "XRPUSDT",
+    "BNBUSDT",
+    "SOLUSDT"
 ]
+
+# Symbol-timeframe pairs to monitor
+symbols = [(symbol, PRIMARY_TIMEFRAME) for symbol in DEFAULT_UNIVERSE]
 
 # =============================================================================
 # TRADING ALGORITHM PARAMETERS
@@ -37,6 +41,24 @@ ALPHA_CORRELATION = 0.3  # Correlation adjustment parameter for weight calculati
 LOOKBACK_BARS = 60  # EMA lookback period for volatility and correlation
 REGIME_PERCENTILE = 75  # 75th percentile threshold for high volatility regime
 REBALANCE_HOURS = 24  # Hours between portfolio rebalancing
+
+# Universe Selection Parameters
+UNIVERSE_MAX_RANK = 50  # Maximum rank to include from market-cap list
+UNIVERSE_MIN_DOLLAR_VOLUME = 20_000_000  # Minimum 30-day median daily dollar volume
+UNIVERSE_LOOKBACK_DAYS = 30  # Lookback for median volume calculation
+
+# Bar Validation Parameters
+BAR_RETURN_ABS_THRESHOLD = 0.25  # Reject bars if simple return exceeds 25%
+MIN_BAR_VOLUME = 1.0  # Minimum raw volume units for a bar to be considered valid
+
+# Regression / Forecast Parameters
+REGRESSION_WINDOW = 120  # Bars used for rolling regression
+REGRESSION_FEATURE_MODE = "log_price"  # Predictor type for linear model
+
+# Risk Model Data Parameters
+RISK_WINDOW = 180  # Bars used for covariance estimation
+EWMA_LAMBDA = 0.94  # Decay for EWMA volatility calculations
+COVARIANCE_SHRINKAGE = 0.6  # Alpha for sample-vs-target shrinkage
 
 # Risk Management Parameters
 RISK_PER_TRADE_PCT = 0.008  # 0.8% risk per trade
@@ -100,4 +122,3 @@ def validate_config():
 
 # Run validation when module is imported
 validate_config()
-

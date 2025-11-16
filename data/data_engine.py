@@ -1,11 +1,12 @@
 import asyncio
 from data.data_fetcher import DataFetcher
-from data.indicators import Indicators
+from data.return_manager import ReturnManager
+from data.universe_selector import UniverseSelector, BarValidator
 import numpy as np
 import sys
 import os
 from typing import Dict, List, Optional, Tuple, Any
-import time
+import config
 
 # Add parent directory to path for standalone execution
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -39,12 +40,38 @@ class DataEngine:
         
         # Store binance client reference
         self.binance_client = binance_client
+        self.primary_timeframe = config.PRIMARY_TIMEFRAME
+        self.default_symbols = [symbol for symbol, _ in config.symbols]
+
+        # Ensure we always keep enough candles for regression/risk windows
+        required_candles = max(max_candles, config.RISK_WINDOW + 20)
         
         # Setup data fetcher with the client
-        self.data_fetcher = DataFetcher(binance_client=binance_client, max_candles=max_candles)
+        self.data_fetcher = DataFetcher(
+            binance_client=binance_client,
+            max_candles=required_candles,
+            symbol_timeframes=config.symbols,
+        )
         self.running = False
+
+        # Rolling data helpers
+        self.bar_validator = BarValidator(
+            max_abs_return=config.BAR_RETURN_ABS_THRESHOLD,
+            min_volume=config.MIN_BAR_VOLUME,
+        )
+        self.return_manager = ReturnManager(
+            regression_window=config.REGRESSION_WINDOW,
+            risk_window=config.RISK_WINDOW,
+            feature_mode=config.REGRESSION_FEATURE_MODE,
+        )
+        self.universe_selector = UniverseSelector(
+            max_rank=config.UNIVERSE_MAX_RANK,
+            min_dollar_volume=config.UNIVERSE_MIN_DOLLAR_VOLUME,
+            lookback_days=config.UNIVERSE_LOOKBACK_DAYS,
+            default_universe=self.default_symbols,
+        )
         
-        logger.info(f"DataEngine initialized with max_candles={max_candles}")
+        logger.info(f"DataEngine initialized with max_candles={required_candles}")
         
     async def run(self):
         """Run the data engine to continuously collect market data.
@@ -98,7 +125,9 @@ class DataEngine:
             return candles[-1]
         return None
     
-    def get_latest_price(self, symbol: str, timeframe: str = "1m") -> Optional[float]:
+    def get_latest_price(
+        self, symbol: str, timeframe: Optional[str] = None
+    ) -> Optional[float]:
         """Get the latest price for a specific symbol.
         
         Args:
@@ -108,10 +137,74 @@ class DataEngine:
         Returns:
             The latest close price or None if no data available.
         """
+        timeframe = timeframe or self.primary_timeframe
         latest_candle = self.get_latest_candle(symbol, timeframe)
         if latest_candle and len(latest_candle) >= 5:
             return latest_candle[4]  # Close price
         return None
+
+    def process_latest_bar(
+        self, symbol: str, timeframe: Optional[str] = None
+    ) -> Optional[Dict[str, float]]:
+        """Validate and ingest the latest bar for the requested symbol."""
+        timeframe = timeframe or self.primary_timeframe
+        candle = self.get_latest_candle(symbol, timeframe)
+        if not candle:
+            return None
+
+        bar = self.extract_ohlcv(candle)
+        prev_close = self.return_manager.get_last_close(symbol)
+
+        if not self.bar_validator.is_valid(symbol, bar, prev_close):
+            return None
+
+        self.return_manager.update(symbol, bar)
+        self.universe_selector.record_bar_metrics(
+            symbol, bar["timestamp"], bar["close"], bar["volume"]
+        )
+        self.universe_selector.refresh_if_needed(bar["timestamp"])
+        return bar
+
+    def process_all_latest_bars(self, timeframe: Optional[str] = None) -> None:
+        """Convenience helper to ingest the most recent bar for every configured symbol."""
+        timeframe = timeframe or self.primary_timeframe
+        for symbol, tf in self.data_fetcher.symbol_timeframes:
+            if tf != timeframe:
+                continue
+            self.process_latest_bar(symbol, timeframe)
+
+    def update_market_cap_snapshot(self, market_caps: Dict[str, float]) -> None:
+        """Forward market-cap snapshots to the universe selector."""
+        self.universe_selector.update_market_cap_snapshot(market_caps)
+
+    def get_active_universe(self) -> List[str]:
+        """Return the currently tradable universe."""
+        return self.universe_selector.get_active_universe()
+
+    def get_return_matrix(
+        self, symbols: Optional[List[str]] = None, window: Optional[int] = None
+    ) -> Tuple[np.ndarray, List[str]]:
+        """Return an aligned return matrix and the symbols that met the data requirement."""
+        target_symbols = symbols or self.get_active_universe()
+        return self.return_manager.get_return_matrix(
+            target_symbols, window or config.RISK_WINDOW
+        )
+
+    def get_feature_series(
+        self, symbol: str, length: Optional[int] = None
+    ) -> List[float]:
+        """Return the feature vector used by the regression forecaster."""
+        return self.return_manager.get_feature_series(
+            symbol, length or config.REGRESSION_WINDOW
+        )
+
+    def get_price_series(self, symbol: str, length: Optional[int] = None) -> List[float]:
+        """Return the rolling close prices for diagnostics."""
+        return self.return_manager.get_price_series(symbol, length)
+
+    def get_latest_return(self, symbol: str) -> Optional[float]:
+        """Expose the latest validated simple return for the symbol."""
+        return self.return_manager.get_latest_return(symbol)
     
     @staticmethod
     def extract_ohlcv(candle: List[float]) -> Dict[str, float]:
@@ -150,88 +243,22 @@ class DataEngine:
             
         return (candle[4] - candle[1]) / candle[1] * 100  # (close - open) / open * 100
     
-    def calculate_atr_volatility(self, symbol: str, period: int = 14) -> Optional[float]:
-        """Calculate ATR-based volatility for a symbol using real market data.
-        
-        This method calculates the Average True Range (ATR) and converts it to 
-        percentage volatility for portfolio allocation purposes.
-        
-        Args:
-            symbol: Trading pair symbol.
-            period: ATR calculation period (default: 14).
-            
-        Returns:
-            ATR as percentage of current price, or None if insufficient data.
-        """
-        try:
-            candles = self.get_candles(symbol, "1m")
-            if not candles or len(candles) < period + 5:
-                logger.warning(f"Insufficient candles for {symbol} ATR calculation: {len(candles) if candles else 0} available, need {period + 5}")
-                return None
-            
-            # Initialize indicators module
-            indicators = Indicators()
-            
-            # Convert candles to OHLCV format for ATR calculation
-            ohlcv_data = []
-            for candle in candles[-(period + 10):]:  # Use extra candles for stable calculation
-                if len(candle) >= 6:
-                    try:
-                        ohlcv_data.append([
-                            candle[0],          # timestamp
-                            float(candle[1]),   # open
-                            float(candle[2]),   # high  
-                            float(candle[3]),   # low
-                            float(candle[4]),   # close
-                            float(candle[5])    # volume
-                        ])
-                    except (ValueError, IndexError) as e:
-                        logger.debug(f"Error processing candle data for {symbol}: {e}")
-                        continue
-            
-            if len(ohlcv_data) < period:
-                logger.warning(f"Insufficient valid OHLCV data for {symbol}: {len(ohlcv_data)}")
-                return None
-            
-            # Extract price arrays for ATR calculation
-            high_prices = np.array([row[2] for row in ohlcv_data])
-            low_prices = np.array([row[3] for row in ohlcv_data])
-            close_prices = np.array([row[4] for row in ohlcv_data])
-            
-            # Calculate ATR using the indicators module
-            atr_values = indicators.atr(high_prices, low_prices, close_prices, period)
-            if atr_values is None or len(atr_values) == 0:
-                logger.warning(f"ATR calculation returned no values for {symbol}")
-                return None
-            
-            # Get latest ATR value and current price
-            latest_atr = atr_values[-1]
-            current_price = float(candles[-1][4])  # Latest close price
-            
-            # Convert ATR to percentage volatility
-            if current_price > 0 and latest_atr > 0:
-                atr_percentage = latest_atr / current_price
-                
-                # Apply realistic bounds for crypto markets
-                atr_percentage = max(0.005, min(atr_percentage, 0.15))  # 0.5% to 15%
-                
-                logger.debug(f"{symbol} ATR calculation: ATR={latest_atr:.2f}, Price={current_price:.2f}, Vol={atr_percentage:.4f}")
-                return atr_percentage
-            else:
-                logger.warning(f"Invalid price data for {symbol}: ATR={latest_atr}, Price={current_price}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error calculating ATR volatility for {symbol}: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+    def _bootstrap_return_history(self, symbol: str, timeframe: Optional[str] = None) -> None:
+        """Populate return history for a symbol using stored candles."""
+        timeframe = timeframe or self.primary_timeframe
+        candles = self.get_candles(symbol, timeframe)
+        if not candles:
+            return
+
+        history_window = max(config.RISK_WINDOW, config.REGRESSION_WINDOW) + 10
+        subset = candles[-(history_window + 1):]
+        self.return_manager.load_from_candles(symbol, subset)
     
     def initialize_portfolio_volatilities(self, symbols: List[str]) -> Dict[str, float]:
-        """Initialize volatility data for portfolio allocation using real market data.
+        """Initialize volatility data for portfolio allocation using return history.
         
-        This method fetches historical candles and calculates ATR-based volatility
-        for accurate portfolio allocation weights.
+        This method converts existing return history (or bootstrapped history) 
+        into simple standard deviations for each asset.
         
         Args:
             symbols: List of symbols to calculate volatilities for.
@@ -249,33 +276,28 @@ class DataEngine:
             'BNBUSDT': 0.018,   # 1.8% - lower volatility
             'SOLUSDT': 0.030    # 3.0% - higher volatility
         }
-        
-        logger.info("Calculating real-time volatilities for portfolio initialization...")
+        logger.info("Calculating return-based volatilities for portfolio initialization...")
         
         for symbol in symbols:
             try:
-                # Get sufficient historical candles for ATR calculation
-                candles = self.get_candles(symbol, "1m")
+                returns = self.return_manager.get_return_series(symbol, config.RISK_WINDOW)
+                if len(returns) < 2:
+                    self._bootstrap_return_history(symbol)
+                    returns = self.return_manager.get_return_series(symbol, config.RISK_WINDOW)
                 
-                if candles and len(candles) >= 20:  # Need minimum candles for ATR(14)
-                    # Calculate ATR-based volatility using real market data
-                    atr_volatility = self.calculate_atr_volatility(symbol, period=14)
-                    
-                    if atr_volatility is not None and atr_volatility > 0:
-                        # Apply realistic bounds for crypto volatility
-                        atr_volatility = max(0.005, min(atr_volatility, 0.10))  # 0.5% to 10%
-                        volatilities[symbol] = atr_volatility
-                        logger.info(f"{symbol}: Real ATR volatility = {atr_volatility:.4f} ({atr_volatility*100:.2f}%)")
-                        continue
+                if returns and len(returns) >= 2:
+                    vol = float(np.std(np.array(returns), ddof=1))
+                    vol = max(0.001, min(vol, 0.25))  # Bound to reasonable limits
+                    volatilities[symbol] = vol
+                    logger.info(f"{symbol}: Return volatility = {vol:.4f} ({vol*100:.2f}%)")
+                    continue
                 
-                # Fallback to default if real calculation fails
                 default_vol = default_volatilities.get(symbol, 0.02)
                 volatilities[symbol] = default_vol
                 logger.warning(f"{symbol}: Using default volatility = {default_vol:.4f} ({default_vol*100:.2f}%) [insufficient data]")
                 
             except Exception as e:
                 logger.error(f"Error calculating volatility for {symbol}: {e}")
-                # Use default volatility as fallback
                 default_vol = default_volatilities.get(symbol, 0.02)
                 volatilities[symbol] = default_vol
                 logger.warning(f"{symbol}: Using default volatility = {default_vol:.4f} ({default_vol*100:.2f}%) [error fallback]")
@@ -301,4 +323,3 @@ if __name__ == "__main__":
         # Make sure we close the connection
         logger.info("Closing connection...")
         asyncio.run(client.close())
-

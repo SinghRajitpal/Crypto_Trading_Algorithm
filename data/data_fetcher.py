@@ -29,7 +29,7 @@ class DataFetcher:
         should_close_client: Whether to close the client when done.
     """
     
-    def __init__(self, binance_client=None, max_candles=1000, testnet=True):
+    def __init__(self, binance_client=None, max_candles=1000, testnet=True, symbol_timeframes=None):
         """Initializes the Data Fetcher.
         
         Args:
@@ -40,7 +40,7 @@ class DataFetcher:
         """
         # Use provided client or create a new one
         self.binance = binance_client if binance_client else BinanceClient(testnet=testnet)
-        self.symbol_timeframes = config.symbols
+        self.symbol_timeframes = symbol_timeframes or config.symbols
         self.data_processor = DataProcessor(max_candles=max_candles)
         # Track if we need to close the client (only if we created it)
         self.should_close_client = binance_client is None
