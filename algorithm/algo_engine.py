@@ -5,7 +5,6 @@ from typing import Dict, Optional
 import config
 from .strategies.base_strategy import BaseStrategy
 from .trade_signal import TradeSignal
-from data.data_engine import DataEngine
 import time
 from utils.logging_config import get_logger, console_log
 
@@ -28,7 +27,7 @@ class AlgoEngine:
         _min_signal_interval: Minimum seconds between signals for same symbol.
     """
     
-    def __init__(self, data_engine: DataEngine):
+    def __init__(self, data_engine):
         """Initializes the Algorithm Engine.
         
         Args:
@@ -64,13 +63,12 @@ class AlgoEngine:
         # Hash the relevant parts of the latest candle
         return f"{latest[0]}_{latest[4]}"  # timestamp_close
         
-    def _should_process_signal(self, key: str, current_time: int, data_hash: str) -> bool:
+    def _should_process_signal(self, key: str, data_hash: str) -> bool:
         """Determines if we should process a new signal.
         
         Signal processing is based on:
-        1. Time since last signal
-        2. Whether the data has changed
-        
+        1. Whether the data has changed
+
         Args:
             key: Symbol-timeframe key.
             current_time: Current unix timestamp.
@@ -83,16 +81,14 @@ class AlgoEngine:
             return True
             
         last_state = self._last_signal_states[key]
-        time_diff = current_time - last_state['timestamp']
         
-        # Always process if data has changed
+        # Process if data has changed
         if data_hash != last_state['data_hash']:
             return True
-            
-        # Otherwise, only process if enough time has passed
-        return time_diff >= self._min_signal_interval
-        
-    def _update_signal_state(self, key: str, current_time: int, data_hash: str, signal_type: str):
+        else:
+            return False
+
+    def _update_signal_state(self, key: str, data_hash: str, signal_type: str):
         """Updates the stored state for a symbol after processing a signal.
         
         Args:
@@ -102,7 +98,6 @@ class AlgoEngine:
             signal_type: Type of signal that was processed.
         """
         self._last_signal_states[key] = {
-            'timestamp': current_time,
             'data_hash': data_hash,
             'signal_type': signal_type
         }
@@ -138,14 +133,13 @@ class AlgoEngine:
             return None
             
         try:
-            current_time = int(time.time())
             data_hash = self._get_data_hash(candles)
             
             # Use combined key to track per symbol-timeframe pair
             key = f"{symbol}_{timeframe}"
 
             # Check if we should process a new signal
-            if not self._should_process_signal(key, current_time, data_hash):
+            if not self._should_process_signal(key, data_hash):
                 return None
                 
             # Calculate signals
@@ -155,14 +149,10 @@ class AlgoEngine:
                 # Update signal state
                 self._update_signal_state(
                     key=key,
-                    current_time=current_time,
                     data_hash=data_hash,
                     signal_type=f"{signal.action}/{signal.side}"
                 )
                 
-                # Set timestamp if not already set
-                if not signal.timestamp:
-                    signal.timestamp = current_time * 1000  # Convert to milliseconds for consistency
                 
                 logger.info(f"Generated {signal.action}/{signal.side} signal for {symbol} with confidence {signal.signal_confidence:.2f}")
                 
@@ -201,7 +191,6 @@ class AlgoEngine:
                 
             except Exception as e:
                 logger.error(f"Error in main processing loop: {e}")
-                await asyncio.sleep(5)  # Sleep longer on error
     
     async def stop(self):
         """Stop the algorithm engine."""

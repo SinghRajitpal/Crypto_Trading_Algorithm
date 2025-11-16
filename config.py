@@ -41,7 +41,7 @@ REBALANCE_HOURS = 24  # Hours between portfolio rebalancing
 # Risk Management Parameters
 RISK_PER_TRADE_PCT = 0.008  # 0.8% risk per trade
 KELLY_FRACTION = 0.7  # Fractional Kelly criterion (70%)
-MAX_LEVERAGE = 20  # Maximum leverage cap
+MAX_LEVERAGE = 35  # Maximum leverage cap
 MIN_ATR_FLOOR = 0.001  # Minimum ATR floor to prevent excessive sizing
 
 # Cost Parameters - Comprehensive Trading Costs

@@ -82,8 +82,8 @@ class MACrossoverStrategy(BaseStrategy):
         """
         return [
             f'sma_{self.params["fast_ma_period"]}',
-            f'sma_{self.params["slow_ma_period"]}'
-            # 'atr_14'  # Required for production risk management
+            f'sma_{self.params["slow_ma_period"]}',
+            'atr_14'  # Required for production risk management
         ]
     
     async def _generate_signals(self, data: Dict[str, np.ndarray], indicator_data: Dict[str, np.ndarray], symbol: str) -> TradeSignal:
@@ -174,11 +174,11 @@ class MACrossoverStrategy(BaseStrategy):
             current_price = data['close'][-1]
             
             
-            # # Get ATR value for production risk management
-            # atr_key = 'atr_14'
-            # atr_value = indicator_data.get(atr_key, None)
-            # if atr_value is not None:
-            #     atr_value = atr_value[-1]  # Get latest ATR value
+            # Get ATR value for production risk management
+            atr_key = 'atr_14'
+            atr_value = indicator_data.get(atr_key, None)
+            if atr_value is not None:
+                atr_value = atr_value[-1]  # Get latest ATR value
             
             # Create base metadata
             metadata = {
@@ -187,8 +187,8 @@ class MACrossoverStrategy(BaseStrategy):
                 "slow_ma": current_slow_ma,
                 "current_price": current_price,
                 "fast_ma_period": self.params['fast_ma_period'],
-                "slow_ma_period": self.params['slow_ma_period']
-                # "atr_value": atr_value  # Required for production risk management
+                "slow_ma_period": self.params['slow_ma_period'],
+                "atr_value": atr_value  # Required for production risk management
             }
             
             # Bullish crossover

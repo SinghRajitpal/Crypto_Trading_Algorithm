@@ -85,7 +85,7 @@ class TradingAlgorithm:
         self.running = True
         
         try:
-            # === STEP 1: Fetch actual capital from exchange ===
+            # Fetch actual capital from exchange 
             if self.total_capital is None:
                 logger.info("Fetching actual capital from exchange...")
                 account_metrics = await self.binance_client.get_account_metrics()
@@ -94,7 +94,7 @@ class TradingAlgorithm:
             else:
                 logger.info(f"Using provided capital: ${self.total_capital:.2f} USDT")
             
-            # === STEP 2: Initialize components with actual capital ===
+            # Initialize components with actual capital
             logger.info("Initializing components with actual capital...")
             
             # Initialize components with enough candles for indicator calculation
@@ -115,11 +115,11 @@ class TradingAlgorithm:
             )
             
             # Set the algo engine on the strategy
-            self.strategy.set_algo_engine(self.algo_engine)
+            # self.strategy.set_algo_engine(self.algo_engine)
             
             logger.success(f"Components initialized with {self.strategy.strategy_id} strategy")
-            
-            # === STEP 3: Setup execution engine and initialize portfolio ===
+
+            # Setup execution engine and initialize portfolio
             await self.execution_engine.setup()
             
             logger.info("Initializing portfolio allocations...")
@@ -164,9 +164,8 @@ class TradingAlgorithm:
                         logger.success(f"Manual rebalance successful: ${total:.2f} allocated")
             else:
                 logger.error("Portfolio initialization failed - using defaults")
-            
-            # Wait briefly for any remaining data to stabilize
-            await asyncio.sleep(2)
+
+            # Display strategy information
             console_log("\n" + "=" * 80)
             console_log(f"{'CRYPTO TRADING BOT':^80}")
             console_log(f"{'Strategy: ' + self.strategy.strategy_id:^80}")
@@ -214,8 +213,8 @@ class TradingAlgorithm:
                         # Extract OHLCV values using the utility method
                         candle_data = self.data_engine.extract_ohlcv(latest_candle)
                         current_price = candle_data["close"]
-                        
-                        # === CRITICAL FIX: Update market data for allocation system ===
+
+                        # Update market data for allocation system
                         # Get ATR value for volatility tracking
                         atr_value = signal.metadata.get('atr_value')
                         if atr_value:

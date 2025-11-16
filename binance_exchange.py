@@ -63,8 +63,8 @@ class BinanceClient:
         try:
             # Set position mode to one-way (easier to manage)
             # This avoids the "position side does not match" error
-            await self.exchange.fapiPrivatePostPositionSideDual({'dualSidePosition': 'false'})
-            logger.info("Position mode set to One-Way")
+            await self.exchange.fapiPrivatePostPositionSideDual({'dualSidePosition': 'true'})
+            logger.info("Position mode set to Two-Way")
         except Exception as e:
             # This might fail if already set, which is fine
             logger.warning(f"Position mode setting: {e}")

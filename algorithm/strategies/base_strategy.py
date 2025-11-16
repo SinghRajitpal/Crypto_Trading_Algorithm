@@ -8,9 +8,6 @@ from ..trade_signal import TradeSignal
 # Get logger for this module
 logger = get_logger(__name__)
 
-if TYPE_CHECKING:
-    from ..algo_engine import AlgoEngine
-
 class BaseStrategy(ABC):
     """Base class for all trading strategies.
     
@@ -59,29 +56,29 @@ class BaseStrategy(ABC):
             
         self.params = params
         self.strategy_id = strategy_id
-        self.algo_engine: Optional['AlgoEngine'] = None  # Will be set by algo_engine
-        self.position_threshold = float(params.get('position_threshold', self.DEFAULT_POSITION_THRESHOLD))
-        self.stop_loss_pct = float(params.get('stop_loss_pct', 0.02))
-        self.take_profit_pct = float(params.get('take_profit_pct', 0.04))
-        self.max_positions = int(params.get('max_positions', 1))
         
-    def set_algo_engine(self, algo_engine: 'AlgoEngine') -> None:
-        """Sets the algo engine instance for this strategy.
+        # self.position_threshold = float(params.get('position_threshold', self.DEFAULT_POSITION_THRESHOLD))
+        # self.stop_loss_pct = float(params.get('stop_loss_pct', 0.02))
+        # self.take_profit_pct = float(params.get('take_profit_pct', 0.04))
+        # self.max_positions = int(params.get('max_positions', 1))
         
-        This method is called by the algo engine when the strategy is registered.
-        It provides the strategy with access to the Binance client and other
-        trading functionality.
+    # def set_algo_engine(self, algo_engine: 'AlgoEngine') -> None:
+    #     """Sets the algo engine instance for this strategy.
         
-        Args:
-            algo_engine: The algo engine instance.
+    #     This method is called by the algo engine when the strategy is registered.
+    #     It provides the strategy with access to the Binance client and other
+    #     trading functionality.
+        
+    #     Args:
+    #         algo_engine: The algo engine instance.
             
-        Raises:
-            ValueError: If algo_engine is not an instance of AlgoEngine.
-        """
-        # Instead of using isinstance, we'll check the class name
-        if not hasattr(algo_engine, '__class__') or algo_engine.__class__.__name__ != 'AlgoEngine':
-            raise ValueError("algo_engine must be an instance of AlgoEngine")
-        self.algo_engine = algo_engine
+    #     Raises:
+    #         ValueError: If algo_engine is not an instance of AlgoEngine.
+    #     """
+    #     # Instead of using isinstance, we'll check the class name
+    #     if not hasattr(algo_engine, '__class__') or algo_engine.__class__.__name__ != 'AlgoEngine':
+    #         raise ValueError("algo_engine must be an instance of AlgoEngine")
+    #     self.algo_engine = algo_engine
         
     @abstractmethod
     def get_required_indicators(self) -> List[str]:
@@ -200,81 +197,81 @@ class BaseStrategy(ABC):
                 logger.warning(f"[{self.strategy_id}] NaN values detected in indicator(s): {nan_indicators}")
             
             # Print the latest values of each indicator for debugging
-            logger.debug(f"[{self.strategy_id}] Latest indicator values:")
-            for ind in required_indicators:
-                if ind in indicator_data:
-                    if isinstance(indicator_data[ind], dict):
-                        logger.debug(f"  - {ind}: " + ", ".join([f"{k}={v[-1]:.4f}" for k, v in indicator_data[ind].items() if not np.isnan(v[-1])]))
-                    else:
-                        if not np.isnan(indicator_data[ind][-1]):
-                            logger.debug(f"  - {ind}: {indicator_data[ind][-1]:.4f}")
+            # logger.debug(f"[{self.strategy_id}] Latest indicator values:")
+            # for ind in required_indicators:
+            #     if ind in indicator_data:
+            #         if isinstance(indicator_data[ind], dict):
+            #             logger.debug(f"  - {ind}: " + ", ".join([f"{k}={v[-1]:.4f}" for k, v in indicator_data[ind].items() if not np.isnan(v[-1])]))
+            #         else:
+            #             if not np.isnan(indicator_data[ind][-1]):
+            #                 logger.debug(f"  - {ind}: {indicator_data[ind][-1]:.4f}")
             
-            return indicator_data
+            # return indicator_data
         except Exception as e:
             logger.error(f"[{self.strategy_id}] Failed to calculate indicators: {e}")
             return {}
     
-    async def get_position(self, symbol: str) -> float:
-        """Gets the current position for a specific symbol from Binance.
+    # async def get_position(self, symbol: str) -> float:
+    #     """Gets the current position for a specific symbol from Binance.
         
-        This method retrieves the current position size for a trading pair from
-        the Binance exchange. It handles errors and returns 0 if the position
-        cannot be retrieved.
+    #     This method retrieves the current position size for a trading pair from
+    #     the Binance exchange. It handles errors and returns 0 if the position
+    #     cannot be retrieved.
         
-        Args:
-            symbol: Trading pair symbol (e.g., "BTCUSDT").
+    #     Args:
+    #         symbol: Trading pair symbol (e.g., "BTCUSDT").
             
-        Returns:
-            Current position size:
-                - Positive: Long position
-                - Negative: Short position
-                - Zero: No position
+    #     Returns:
+    #         Current position size:
+    #             - Positive: Long position
+    #             - Negative: Short position
+    #             - Zero: No position
                 
-        Raises:
-            RuntimeError: If algo_engine is not set.
-            Exception: Other exceptions are caught, logged, and 0.0 is returned.
-        """
-        if not self.algo_engine:
-            logger.error(f"algo_engine not set for {self.strategy_id}. Call set_algo_engine first.")
-            return 0.0
+    #     Raises:
+    #         RuntimeError: If algo_engine is not set.
+    #         Exception: Other exceptions are caught, logged, and 0.0 is returned.
+    #     """
+    #     if not self.algo_engine:
+    #         logger.error(f"algo_engine not set for {self.strategy_id}. Call set_algo_engine first.")
+    #         return 0.0
             
-        if not hasattr(self.algo_engine, 'binance_client') or self.algo_engine.binance_client is None:
-            logger.error(f"binance_client not available in algo_engine for {self.strategy_id}")
-            return 0.0
+    #     if not hasattr(self.algo_engine, 'binance_client') or self.algo_engine.binance_client is None:
+    #         logger.error(f"binance_client not available in algo_engine for {self.strategy_id}")
+    #         return 0.0
             
-        try:
-            # Get position from Binance using get_open_positions
-            positions = await self.algo_engine.binance_client.get_open_positions(symbol)
-            if not positions:
-                return 0.0
-            return float(positions[0].get('contracts', 0))
-        except Exception as e:
-            logger.error(f"Failed to get position for {symbol}: {e}")
-            return 0.0
+    #     try:
+    #         # Get position from Binance using get_open_positions
+    #         positions = await self.algo_engine.binance_client.get_open_positions(symbol)
+    #         if not positions:
+    #             return 0.0
+    #         return float(positions[0].get('contracts', 0))
+    #     except Exception as e:
+    #         logger.error(f"Failed to get position for {symbol}: {e}")
+    #         return 0.0
     
-    async def can_open_position(self, symbol: str) -> bool:
-        """Checks if a new position can be opened for a specific symbol.
+    # async def can_open_position(self, symbol: str) -> bool:
+    #     """Checks if a new position can be opened for a specific symbol.
         
-        This method determines if a new position can be opened by checking if
-        the current position is below the threshold. It's used to prevent
-        opening multiple positions for the same symbol.
+    #     This method determines if a new position can be opened by checking if
+    #     the current position is below the threshold. It's used to prevent
+    #     opening multiple positions for the same symbol.
         
-        Args:
-            symbol: Trading pair symbol.
+    #     Args:
+    #         symbol: Trading pair symbol.
             
-        Returns:
-            True if a new position can be opened, False otherwise.
+    #     Returns:
+    #         True if a new position can be opened, False otherwise.
             
-        Raises:
-            Exception: Any exceptions are caught, logged, and False is returned.
-        """
-        try:
-            # Get current position from Binance
-            position = await self.get_position(symbol)
-            return abs(position) < self.position_threshold
-        except Exception as e:
-            logger.error(f"Failed to check if position can be opened for {symbol}: {e}")
-            return False
+    #     Raises:
+    #         Exception: Any exceptions are caught, logged, and False is returned.
+    #     """
+    #     try:
+    #         # Get current position from Binance
+    #         position = await self.get_position(symbol)
+    #         return abs(position) < self.position_threshold
+    #     except Exception as e:
+    #         logger.error(f"Failed to check if position can be opened for {symbol}: {e}")
+    #         return False
     
     async def calculate_signals(self, data: Deque, symbol: str) -> TradeSignal:
         """Calculates trading signals based on candle data.
