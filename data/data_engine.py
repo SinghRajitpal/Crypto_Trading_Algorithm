@@ -2,11 +2,13 @@ import asyncio
 from data.data_fetcher import DataFetcher
 from data.return_manager import ReturnManager
 from data.universe_selector import UniverseSelector, BarValidator
+from data.universe_data import UniverseDataFetcher
 import numpy as np
 import sys
 import os
 from typing import Dict, List, Optional, Tuple, Any
 import config
+import time
 
 # Add parent directory to path for standalone execution
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -70,6 +72,7 @@ class DataEngine:
             lookback_days=config.UNIVERSE_LOOKBACK_DAYS,
             default_universe=self.default_symbols,
         )
+        self.universe_data_fetcher = UniverseDataFetcher(config.UNIVERSE_MAX_RANK)
         
         logger.info(f"DataEngine initialized with max_candles={required_candles}")
         
@@ -176,6 +179,22 @@ class DataEngine:
     def update_market_cap_snapshot(self, market_caps: Dict[str, float]) -> None:
         """Forward market-cap snapshots to the universe selector."""
         self.universe_selector.update_market_cap_snapshot(market_caps)
+        self.universe_selector.refresh_if_needed(int(time.time() * 1000))
+
+    async def refresh_universe_snapshot(self) -> bool:
+        """Fetch and apply a new market-cap snapshot."""
+        try:
+            snapshot = await self.universe_data_fetcher.fetch_market_caps()
+            if not snapshot:
+                logger.warning("Universe snapshot fetch returned empty")
+                return False
+            self.universe_selector.update_market_cap_snapshot(snapshot)
+            self.universe_selector.refresh_if_needed(int(time.time() * 1000))
+            logger.info("Universe refreshed with %d assets", len(snapshot))
+            return True
+        except Exception as exc:
+            logger.warning(f"Universe snapshot refresh failed: {exc}")
+            return False
 
     def get_active_universe(self) -> List[str]:
         """Return the currently tradable universe."""

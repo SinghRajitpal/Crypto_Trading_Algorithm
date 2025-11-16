@@ -29,6 +29,7 @@ class TradingAlgorithm:
             binance_client=self.binance_client
         )
         self.data_task: Optional[asyncio.Task] = None
+        self.universe_task: Optional[asyncio.Task] = None
         self.running = False
         self._nav_cache = 0.0
         self._last_nav_refresh = 0.0
@@ -62,6 +63,7 @@ class TradingAlgorithm:
             await self.stop()
 
     async def _bootstrap(self) -> None:
+        await self.binance_client.setup_account_config()
         logger.info("Fetching initial account metrics")
         metrics = await self._refresh_account_metrics(force=True)
         nav = metrics.get("total_wallet_balance", 0.0)
@@ -69,6 +71,8 @@ class TradingAlgorithm:
 
         logger.info("Starting data collection tasks")
         self.data_task = asyncio.create_task(self.data_engine.run())
+        await self.data_engine.refresh_universe_snapshot()
+        self.universe_task = asyncio.create_task(self._universe_refresh_loop())
         await asyncio.sleep(5)  # allow initial history to load
 
     async def _process_forecast(self, forecast) -> None:
@@ -153,6 +157,23 @@ class TradingAlgorithm:
                 pass
 
         await self.binance_client.close()
+        if self.universe_task:
+            self.universe_task.cancel()
+            try:
+                await self.universe_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _universe_refresh_loop(self) -> None:
+        interval = max(1, int(config.UNIVERSE_REFRESH_HOURS * 3600))
+        while self.running:
+            try:
+                updated = await self.data_engine.refresh_universe_snapshot()
+                if updated:
+                    logger.info("Universe snapshot refreshed by scheduler")
+            except Exception as exc:
+                logger.warning(f"Universe refresh loop error: {exc}")
+            await asyncio.sleep(interval)
 
 
 async def main():

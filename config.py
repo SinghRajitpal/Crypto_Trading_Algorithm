@@ -1,3 +1,5 @@
+# Mean-variance trading configuration for 5-minute Binance USD-M futures.
+
 # Binance API configuration
 from utils.logging_config import get_logger, console_log
 
@@ -38,6 +40,7 @@ symbols = [(symbol, PRIMARY_TIMEFRAME) for symbol in DEFAULT_UNIVERSE]
 UNIVERSE_MAX_RANK = 50  # Maximum rank to include from market-cap list
 UNIVERSE_MIN_DOLLAR_VOLUME = 20_000_000  # Minimum 30-day median daily dollar volume
 UNIVERSE_LOOKBACK_DAYS = 30  # Lookback for median volume calculation
+UNIVERSE_REFRESH_HOURS = 24  # Interval for refreshing universe ranks/market caps
 
 # Bar Validation Parameters
 BAR_RETURN_ABS_THRESHOLD = 0.25  # Reject bars if simple return exceeds 25%

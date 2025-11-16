@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 import numpy as np
 
@@ -60,6 +60,7 @@ class ProductionExecutionEngine:
             target_weights=target_weights,
             nav=nav,
             prices=prices,
+            precision_provider=self._get_symbol_filters,
         )
 
         if not orders:
@@ -101,3 +102,10 @@ class ProductionExecutionEngine:
             "orders": execution,
             "target_weights": target_weights,
         }
+
+    def _get_symbol_filters(self, symbol: str) -> Optional[Dict[str, float]]:
+        try:
+            return self.binance_client.get_symbol_filters(symbol)
+        except Exception as exc:
+            logger.warning("Symbol filter lookup failed for %s: %s", symbol, exc)
+            return None

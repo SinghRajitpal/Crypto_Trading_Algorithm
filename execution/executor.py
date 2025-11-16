@@ -16,6 +16,11 @@ class OrderExecutor:
     async def execute_orders(self, orders) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
         for instruction in orders:
+            if instruction.quantity <= 0:
+                logger.warning(
+                    "Skipping zero-quantity order | symbol=%s", instruction.symbol
+                )
+                continue
             try:
                 response = await self.binance_client.create_order(
                     symbol=instruction.symbol,
