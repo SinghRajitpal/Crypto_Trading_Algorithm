@@ -6,6 +6,13 @@ generating trading signals, and processing market data for decision making.
 
 # Algorithm package initializer
 from .algo_engine import AlgoEngine
-from .trade_signal import TradeSignal
+from .strategies.mean_variance import MeanVarianceForecastStrategy
+from .forecast.linear_regression import LinearRegressionForecaster
+from .forecast.forecast_result import ForecastResult
 
-__all__ = ['AlgoEngine', 'TradeSignal'] 
+__all__ = [
+    'AlgoEngine',
+    'MeanVarianceForecastStrategy',
+    'LinearRegressionForecaster',
+    'ForecastResult',
+] 

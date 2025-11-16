@@ -197,6 +197,14 @@ class DataEngine:
         return self.return_manager.get_feature_series(
             symbol, length or config.REGRESSION_WINDOW
         )
+    
+    def get_return_series(
+        self, symbol: str, length: Optional[int] = None
+    ) -> List[float]:
+        """Return the rolling simple returns for the symbol."""
+        return self.return_manager.get_return_series(
+            symbol, length or config.RISK_WINDOW
+        )
 
     def get_price_series(self, symbol: str, length: Optional[int] = None) -> List[float]:
         """Return the rolling close prices for diagnostics."""
