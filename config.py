@@ -60,6 +60,15 @@ RISK_WINDOW = 180  # Bars used for covariance estimation
 EWMA_LAMBDA = 0.94  # Decay for EWMA volatility calculations
 COVARIANCE_SHRINKAGE = 0.6  # Alpha for sample-vs-target shrinkage
 
+# Mean-Variance Optimizer Parameters
+RISK_AVERSION = 3.0  # Higher = more risk averse
+WEIGHT_MIN = -0.3  # Minimum per-asset weight (allows mild shorts)
+WEIGHT_MAX = 0.3  # Maximum per-asset weight
+MAX_NET_EXPOSURE = 0.25  # Absolute net exposure cap
+MAX_GROSS_EXPOSURE = 1.2  # Sum |w| cap
+CONTRACT_MULTIPLIER = 1.0  # Futures contract multiplier
+MIN_ORDER_NOTIONAL = 10.0  # Skip orders smaller than $10
+
 # Risk Management Parameters
 RISK_PER_TRADE_PCT = 0.008  # 0.8% risk per trade
 KELLY_FRACTION = 0.7  # Fractional Kelly criterion (70%)
