@@ -54,7 +54,11 @@ class RiskModel:
             self.shrinkage * sample_cov + (1 - self.shrinkage) * target
         )
 
-        logger.debug("RiskModel updated for %d symbols", len(symbols))
+        logger.info(
+            "RiskModel refreshed | symbols=%d | window=%d",
+            len(symbols),
+            returns_matrix.shape[0],
+        )
 
     def get_covariance(self, symbols: List[str]) -> Optional[np.ndarray]:
         """Return the covariance matrix aligned to the requested symbol order."""
@@ -64,8 +68,8 @@ class RiskModel:
         index_map = {symbol: idx for idx, symbol in enumerate(self._symbols)}
         try:
             rows = [index_map[symbol] for symbol in symbols]
-        except KeyError:
-            logger.warning("RiskModel missing symbols for covariance request: %s", symbols)
+        except KeyError as exc:
+            logger.warning("RiskModel missing symbol for covariance request: %s", exc)
             return None
 
         cov = self._covariance[np.ix_(rows, rows)]

@@ -33,12 +33,6 @@ class OrderExecutor:
                         "response": response,
                     }
                 )
-                logger.info(
-                    "Executed %s %.6f %s",
-                    instruction.side.upper(),
-                    instruction.quantity,
-                    instruction.symbol,
-                )
             except Exception as exc:
                 logger.error("Order execution failed for %s: %s", instruction.symbol, exc)
                 results.append(

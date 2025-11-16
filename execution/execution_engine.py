@@ -63,13 +63,38 @@ class ProductionExecutionEngine:
         )
 
         if not orders:
-            return {"status": "skipped", "reason": "portfolio already aligned", "target_weights": target_weights}
+            logger.debug(
+                "No rebalancing needed | timestamp=%s | assets=%d",
+                forecast.timestamp,
+                len(forecast.universe),
+            )
+            return {
+                "status": "skipped",
+                "reason": "portfolio already aligned",
+                "target_weights": target_weights,
+            }
+
+        total_notional = sum(order.notional for order in orders)
+        logger.info(
+            "Executing rebalance | orders=%d | total_notional=%.2f",
+            len(orders),
+            total_notional,
+        )
 
         execution = await self.order_executor.execute_orders(orders)
         success = all(item["status"] == "success" for item in execution)
 
         if success:
             self.current_weights = target_weights
+        else:
+            failed = [item for item in execution if item["status"] != "success"]
+            for item in failed:
+                logger.error(
+                    "Order failure | symbol=%s | side=%s | reason=%s",
+                    item.get("symbol"),
+                    item.get("side"),
+                    item.get("reason"),
+                )
 
         return {
             "status": "completed" if success else "partial",
