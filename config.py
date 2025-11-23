@@ -10,13 +10,13 @@ logger = get_logger(__name__)
 console_log("Loading trading algorithm configuration")
 
 binance_futures = {
-    "api_key": "your_api_key",
-    "api_secret": "your_api_secret",
+    "api_key": "key",
+    "api_secret": "secret",
 }
 
 binance_futures_testnet = {
-    "testnet_api_key": "74384890789851e3ce8a1b021079111d950dcc96da8ca279d129a1e987820fec",
-    "testnet_api_secret": "ba10816594558c8cd93d04e823608f408016aa15c4d632a2214ca950a50b1967",
+    "testnet_api_key": "SMhgP5bwMLcMGkpEPI6Rh8pDBy4drNOjIVclhPEi8cNdbNATh1B48UHlv1timYMg",
+    "testnet_api_secret": "ykdDkx7b16Isz3IV0Y5YU6BttVaIdEXM7ToVNIcNFeBcteVnkvppzdfTKluRszYd",
 }
 
 # Symbol universe and timeframe settings

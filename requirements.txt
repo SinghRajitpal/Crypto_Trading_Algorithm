@@ -1,0 +1,9 @@
+# Core
+python-binance>=1.0.17
+numpy>=1.24.0
+pandas>=1.5.0
+matplotlib>=3.7.0
+requests>=2.31.0
+
+# Optional/test
+pytest>=7.4.0

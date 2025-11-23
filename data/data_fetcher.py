@@ -1,189 +1,102 @@
 import asyncio
 import time
-from datetime import datetime
-from collections import deque
 import sys
 import os
 
-# Add parent directory to path to find config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
-from utils.logging_config import get_logger, console_log
+from utils.logging_config import get_logger
 from data.processor import DataProcessor
-
-# Get logger for this module
-logger = get_logger(__name__)
 from binance_exchange import BinanceClient
+
+logger = get_logger(__name__)
 
 
 class DataFetcher:
-    """Data Fetcher for retrieving real-time market data from exchanges.
-    
-    This class handles the communication with exchanges to fetch candle data
-    and provides it to the processor for storage and retrieval.
-    
-    Attributes:
-        binance: Binance client instance for API communication.
-        symbol_timeframes: List of symbol-timeframe pairs to monitor.
-        data_processor: Processor for storing and managing candle data.
-        should_close_client: Whether to close the client when done.
-    """
-    
+    """Data Fetcher using python-binance websockets for futures klines."""
+
     def __init__(self, binance_client=None, max_candles=1000, testnet=True, symbol_timeframes=None):
-        """Initializes the Data Fetcher.
-        
-        Args:
-            binance_client: Optional Binance client instance. If not provided,
-                a new one will be created.
-            max_candles: Maximum number of candles to store in memory.
-            testnet: Whether to use testnet (default: True).
-        """
-        # Use provided client or create a new one
         self.binance = binance_client if binance_client else BinanceClient(testnet=testnet)
         self.symbol_timeframes = symbol_timeframes or config.symbols
         self.data_processor = DataProcessor(max_candles=max_candles)
-        # Track if we need to close the client (only if we created it)
         self.should_close_client = binance_client is None
- 
+
     async def watch_ohlcv(self, symbol, timeframe):
-        """Watches for OHLCV (candle) data for a specific symbol-timeframe pair.
-        
-        This method first loads historical data, then continuously monitors for new candles
-        from the exchange and updates the data processor when new candles are received.
-        
-        Args:
-            symbol: Trading pair symbol.
-            timeframe: Candle timeframe (e.g., "1m", "5m", "1h").
-            
-        Raises:
-            Exception: Any exceptions are caught, logged, and the method continues.
-        """
         last_printed = None
         candle_count = 0
-        
+
         logger.info(f"Starting data collection for {symbol} ({timeframe})")
-        
+
         try:
-            # First, fetch historical data to populate initial candles
-            logger.info(f"[{symbol}] Fetching historical data...")
-            historical_candles = await self.binance.exchange.fetch_ohlcv(symbol, timeframe, limit=self.data_processor.max_candles + 1)  # Fetch extra to account for filtering
-            
-            # Filter out incomplete current candle to prevent look-ahead bias
-            import time
-            from datetime import datetime
-            
-            current_time = time.time() * 1000  # Current time in milliseconds
-            timeframe_ms = self.binance.exchange.parse_timeframe(timeframe) * 1000  # Timeframe in milliseconds
-            
-            # Calculate the start of the current candle period
-            current_candle_start = (current_time // timeframe_ms) * timeframe_ms
-            
-            # Filter out candles that are from the current incomplete period
-            complete_candles = []
-            for candle in historical_candles:
-                candle_timestamp = candle[0]
-                if candle_timestamp < current_candle_start:  # Only include completed candles
-                    complete_candles.append(candle)
-            
-            # Limit to max_candles after filtering
-            if len(complete_candles) > self.data_processor.max_candles:
-                complete_candles = complete_candles[-self.data_processor.max_candles:]
-            
-            logger.debug(f"[{symbol}] Filtered {len(historical_candles)} raw candles to {len(complete_candles)} complete candles")
-            
-            # Process historical candles (only complete ones)
-            for candle in complete_candles:
-                await self.data_processor.update_tracked_candles(symbol, timeframe, candle)
-                candle_count += 1
-            
-            current_candles = len(self.data_processor.get_candles(symbol, timeframe))
-            logger.info(f"[{symbol}] Loaded {current_candles} historical candles")
-            
+            await self._load_history(symbol, timeframe)
         except Exception as e:
             logger.warning(f"[{symbol}] Could not fetch historical data: {e}")
             logger.info(f"[{symbol}] Will start with live data only")
-        
-        # Now watch for live data
-        logger.info(f"[{symbol}] Starting live data stream...")
-        
+
+        logger.info(f"[{symbol}] Starting REST polling for live data...")
+        timeframe_ms = self.binance.interval_to_milliseconds(timeframe)
+        sym_fmt = self.binance._format_symbol(symbol)
         while True:
             try:
-                # Use BinanceClient for market data
-                candles = await self.binance.exchange.watch_ohlcv(symbol, timeframe)
-                now = time.time() * 1000
-                latest = candles[-1]
-                
-                # Check if we have new data or if this is initial collection
+                klines = await self.binance.client.futures_klines(symbol=sym_fmt, interval=timeframe, limit=2)
+                if not klines:
+                    await asyncio.sleep(1)
+                    continue
+                k = klines[-1]
+                # Only accept closed candles: futures kline has close_time at index 6
+                close_time = int(k[6])
+                now = int(time.time() * 1000)
+                # Skip if candle still forming
+                if now < close_time:
+                    await asyncio.sleep(1)
+                    continue
+                latest = [int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])]
                 current_candle_count = len(self.data_processor.get_candles(symbol, timeframe))
                 is_new_candle = latest[0] != last_printed
                 is_initial_collection = current_candle_count < self.data_processor.max_candles
-                
-                # Process candle if it's new OR if we're still doing initial collection
-                if is_new_candle and (is_initial_collection or now - latest[0] > self.binance.exchange.parse_timeframe(timeframe) * 1000):
+                if is_new_candle and (is_initial_collection or now - latest[0] > timeframe_ms):
                     candle_count += 1
-                    
-                    # Only print summary on initial candles or every 10 candles
                     if candle_count <= 10 or candle_count % 10 == 0:
                         total_candles = self.data_processor.max_candles
                         current_candles = len(self.data_processor.get_candles(symbol, timeframe))
                         logger.debug(f"[{symbol}] Collected {current_candles}/{total_candles} candles")
-                    
-                    # Update the tracked candles for this specific symbol-timeframe pair
                     await self.data_processor.update_tracked_candles(symbol, timeframe, latest)
-                    
                     last_printed = latest[0]
-                    
+                # Sleep until next poll (conservative)
+                await asyncio.sleep(timeframe_ms / 1000 * 0.8)
             except Exception as e:
                 logger.error(f"Error collecting data for {symbol}/{timeframe}: {e}")
                 await asyncio.sleep(1)
 
+    async def _load_history(self, symbol, timeframe):
+        logger.info(f"[{symbol}] Fetching historical data (python-binance)...")
+        sym_fmt = self.binance._format_symbol(symbol)
+        klines = await self.binance.client.futures_klines(symbol=sym_fmt, interval=timeframe, limit=self.data_processor.max_candles + 1)
+        complete_candles = []
+        current_time = time.time() * 1000
+        timeframe_ms = self.binance.interval_to_milliseconds(timeframe)
+        current_candle_start = (current_time // timeframe_ms) * timeframe_ms
+        for k in klines:
+            open_time = int(k[0])
+            if open_time < current_candle_start:
+                complete_candles.append([k[0], float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])])
+        if len(complete_candles) > self.data_processor.max_candles:
+            complete_candles = complete_candles[-self.data_processor.max_candles:]
+        for candle in complete_candles:
+            await self.data_processor.update_tracked_candles(symbol, timeframe, candle)
+
     def get_candles(self, symbol, timeframe):
-        """Gets all candles for a specific symbol-timeframe pair.
-        
-        Args:
-            symbol: Trading pair symbol.
-            timeframe: Candle timeframe (e.g., "1m", "5m", "1h").
-            
-        Returns:
-            List of candles for the specified symbol and timeframe.
-        """
         return self.data_processor.get_candles(symbol, timeframe)
-    
+
     def get_latest_candle(self, symbol, timeframe):
-        """Gets the latest candle for a specific symbol-timeframe pair.
-        
-        Args:
-            symbol: Trading pair symbol.
-            timeframe: Candle timeframe (e.g., "1m", "5m", "1h").
-            
-        Returns:
-            Latest candle data for the specified symbol and timeframe.
-        """
         return self.data_processor.get_latest_candle(symbol, timeframe)
 
     async def run(self):
-        """Runs the data fetcher to collect data for all configured symbol-timeframe pairs.
-        
-        This method starts separate monitoring tasks for each symbol-timeframe pair
-        and manages their execution.
-        
-        Raises:
-            Exception: Exceptions from individual tasks are caught and the client is closed if needed.
-        """
         tasks = []
-    
-        # Create a task for each symbol-timeframe pair
         for symbol, timeframe in self.symbol_timeframes:
             tasks.append(self.watch_ohlcv(symbol, timeframe))
-        
         try:
             await asyncio.gather(*tasks)
         finally:
-            # Only close the client if we created it ourselves
             if self.should_close_client:
                 await self.binance.close()
-
-
-
-
-        
