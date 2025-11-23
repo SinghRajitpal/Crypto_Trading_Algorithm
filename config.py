@@ -37,7 +37,7 @@ symbols = [(symbol, PRIMARY_TIMEFRAME) for symbol in DEFAULT_UNIVERSE]
 # =============================================================================
 
 # Universe Selection Parameters
-UNIVERSE_MAX_RANK = 50  # Maximum rank to include from market-cap list
+UNIVERSE_MAX_RANK = 20  # Maximum rank to include from market-cap list
 UNIVERSE_MIN_DOLLAR_VOLUME = 20_000_000  # Minimum 30-day median daily dollar volume
 UNIVERSE_LOOKBACK_DAYS = 30  # Lookback for median volume calculation
 UNIVERSE_REFRESH_HOURS = 24  # Interval for refreshing universe ranks/market caps
@@ -49,6 +49,12 @@ MIN_BAR_VOLUME = 1.0  # Minimum raw volume units for a bar to be considered vali
 # Regression / Forecast Parameters
 REGRESSION_WINDOW = 120  # Bars used for rolling regression
 REGRESSION_FEATURE_MODE = "log_price"  # Predictor type for linear model
+LOG_RETURN_LAGS = [1, 3, 6, 12]  # Lags of log returns used as features
+VOLUME_LAGS = [1, 3, 6, 12]  # Lags of volume used as features
+REGRESSION_MAX_BARS = 2000  # Max history used for regression features/targets
+REGRESSION_MIN_TRAIN = 300  # Minimum training observations required
+REGRESSION_VAL_WINDOW = 200  # Default validation window size for CV
+RIDGE_T_THRESHOLD = 1.2  # Default |t| threshold for ridge feature pruning
 
 # Risk Model Data Parameters
 RISK_WINDOW = 180  # Bars used for covariance estimation

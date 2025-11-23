@@ -22,8 +22,22 @@ class BarValidator:
         bar: Dict[str, float],
         prev_close: Optional[float],
     ) -> bool:
+        open_ = bar.get("open")
+        high = bar.get("high")
+        low = bar.get("low")
         close = bar.get("close")
         volume = bar.get("volume")
+
+        if None in (open_, high, low, close):
+            logger.debug(f"[BarValidator] Rejecting {symbol}: incomplete OHLC data")
+            return False
+
+        if low > min(open_, close) or high < max(open_, close) or low > high:
+            logger.debug(
+                f"[BarValidator] Rejecting {symbol}: OHLC inconsistency "
+                f"(open={open_}, high={high}, low={low}, close={close})"
+            )
+            return False
 
         if close is None or close <= 0:
             logger.debug(f"[BarValidator] Rejecting {symbol}: invalid close {close}")

@@ -216,6 +216,14 @@ class DataEngine:
         return self.return_manager.get_feature_series(
             symbol, length or config.REGRESSION_WINDOW
         )
+
+    def get_feature_matrix(
+        self, symbol: str, length: Optional[int] = None
+    ):
+        """Return standardized-ready feature matrix (X, y, ts, columns) for ridge/OLS."""
+        return self.return_manager.get_feature_matrix(
+            symbol, length or config.REGRESSION_MAX_BARS
+        )
     
     def get_return_series(
         self, symbol: str, length: Optional[int] = None
