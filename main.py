@@ -7,7 +7,9 @@ from data.data_engine import DataEngine
 from algorithm.algo_engine import AlgoEngine
 from algorithm.strategies.mean_variance import MeanVarianceForecastStrategy
 from execution.execution_engine import ProductionExecutionEngine
+from execution.alerts import check_thresholds
 from utils.logging_config import get_logger, console_log
+from utils.monitoring_store import MonitoringStore
 import config
 import numpy as np
 
@@ -33,6 +35,7 @@ class TradingAlgorithm:
         self.running = False
         self._nav_cache = 0.0
         self._last_nav_refresh = 0.0
+        self.monitor_store = MonitoringStore(config.MONITOR_LOG_PATH)
 
     async def start(self) -> None:
         if self.running:
@@ -91,6 +94,14 @@ class TradingAlgorithm:
             logger.warning("Skipping forecast | reason=no_expected_returns")
             return
 
+        # Forecast diagnostics monitoring
+        fm = forecast.diagnostics.get("forecast_monitor", {}) if forecast.diagnostics else {}
+        if fm:
+            avg_msep = float(
+                np.nanmean([val.get("rolling_msep", float("nan")) for val in fm.values()])
+            ) if hasattr(np, "nanmean") else 0.0
+            logger.info("Forecast monitor | avg_rolling_msep=%.6f", avg_msep)
+
         median_mu = float(np.median(list(expected_returns.values())))
         logger.info(
             "Forecast summary | timestamp=%s | assets=%d | median_mu=%.6f",
@@ -101,6 +112,17 @@ class TradingAlgorithm:
 
         self.execution_engine.refresh_risk_model(symbols, returns_matrix)
 
+        # Data quality monitoring
+        dq = self.data_engine.data_quality_report(symbols)
+        for sym, stats in dq.items():
+            if stats["missing_bars"] > 0 or stats["outliers"] > 0:
+                logger.warning(
+                    "Data quality | symbol=%s | missing_bars=%d | outliers=%d",
+                    sym,
+                    stats["missing_bars"],
+                    stats["outliers"],
+                )
+
         nav_metrics = await self._refresh_account_metrics()
         nav = nav_metrics.get("total_wallet_balance", self._nav_cache)
         self.execution_engine.update_total_capital(nav)
@@ -110,10 +132,76 @@ class TradingAlgorithm:
             forecast=forecast,
             nav=nav,
             prices=prices,
+            returns_matrix=returns_matrix,
         )
 
         status = result.get("status")
         if status == "completed":
+            risk_diag = result.get("risk_diag", {})
+            risk_cov_loss = result.get("risk_cov_loss", {})
+            if risk_diag:
+                logger.info(
+                    "Risk diagnostics | mahalanobis=%.3f | malv_mean=%s | vol_mse=%s | vol_qlike=%s | symbols=%s | cov_turnover_fro=%s",
+                    risk_diag.get("last_mahalanobis_d2", float("nan")),
+                    risk_diag.get("malv_mean", float("nan")),
+                    risk_diag.get("vol_mse_avg", float("nan")),
+                    risk_diag.get("vol_qlike_avg", float("nan")),
+                    risk_diag.get("symbols"),
+                    risk_diag.get("cov_turnover_fro", float("nan")),
+                )
+            if risk_cov_loss:
+                logger.info(
+                    "Covariance loss | mse=%s | qlike=%s",
+                    risk_cov_loss.get("cov_port_mse"),
+                    risk_cov_loss.get("cov_port_qlike"),
+                )
+                if risk_cov_loss.get("cov_port_mse") and risk_cov_loss.get("cov_port_mse") > config.MONITOR_COV_MSE_WARN:
+                    logger.warning("Covariance MSE above threshold: %.4f", risk_cov_loss.get("cov_port_mse"))
+            logger.info(
+                "Execution summary | turnover=%.4f | impact_est=%.2f | impact_concave=%.2f | kelly_f=%.3f | drawdown=%.3f",
+                result.get("turnover", 0.0),
+                result.get("impact_cost_est", 0.0),
+                result.get("impact_cost_concave", 0.0),
+                result.get("kelly_f", 0.0),
+                result.get("kelly_drawdown", 0.0),
+            )
+            if "realized_slippage_bp" in result:
+                logger.info(
+                    "Slippage vs impact | realized_bp=%.3f | impact_vs_slippage=%.3f",
+                    result.get("realized_slippage_bp"),
+                    result.get("impact_vs_slippage", float("nan")),
+                )
+            if result.get("turnover_sigma") is not None:
+                logger.info("Turnover attribution | sigma_component=%.4f", result.get("turnover_sigma"))
+            if result.get("forecast_port_var") is not None and result.get("realized_port_var") is not None:
+                logger.info(
+                    "Portfolio variance | forecast=%.6f | realized=%.6f",
+                    result.get("forecast_port_var"),
+                    result.get("realized_port_var"),
+                )
+            check_thresholds(result)
+            # Persist monitoring record
+            record = {
+                "timestamp": forecast.timestamp,
+                "risk_diag": risk_diag,
+                "risk_cov_loss": risk_cov_loss,
+                "turnover": result.get("turnover"),
+                "turnover_sigma": result.get("turnover_sigma"),
+                "impact_est": result.get("impact_cost_est"),
+                "impact_concave": result.get("impact_cost_concave"),
+                "impact_propagator": result.get("impact_cost_propagator"),
+                "kelly_f": result.get("kelly_f"),
+                "drawdown": result.get("kelly_drawdown"),
+                "slippage_bp": result.get("realized_slippage_bp"),
+                "impact_vs_slippage": result.get("impact_vs_slippage"),
+                "forecast_port_var": result.get("forecast_port_var"),
+                "realized_port_var": result.get("realized_port_var"),
+                "data_quality": self.data_engine.data_quality_report(symbols),
+            }
+            try:
+                self.monitor_store.append(record)
+            except Exception as exc:
+                logger.warning("Failed to persist monitoring record: %s", exc)
             return
         if status == "skipped":
             logger.debug("Forecast skipped | reason=%s", result.get("reason"))

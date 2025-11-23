@@ -16,10 +16,14 @@ class RidgeForecast:
     expected_simple_return: float
     k_best: float
     msep: float
+    gcv: Optional[float]
     rl_vs_ls: Optional[float]
     samples: int
     t_threshold: float
     dropped_features: List[str]
+    hat_mean: float
+    hat_max: float
+    resid_sigma: float
 
 
 class RidgeRegressionForecaster:
@@ -56,6 +60,7 @@ class RidgeRegressionForecaster:
         val_len = config.REGRESSION_VAL_WINDOW
         best_k = None
         best_msep = np.inf
+        best_gcv = np.inf
         gcv_lookup: Dict[float, float] = {}
 
         # Standardize using train stats each split
@@ -81,11 +86,20 @@ class RidgeRegressionForecaster:
                 beta = self._ridge_beta(XtX, Xty, k)
                 preds = X_val_std @ beta
                 msep = float(np.mean((y_val - preds) ** 2))
+                # GCV approximation
+                try:
+                    H = X_train_std @ np.linalg.pinv(XtX + k * np.eye(XtX.shape[0])) @ X_train_std.T
+                    trace_H = float(np.trace(H))
+                    gcv = float(np.sum((y_train - X_train_std @ beta) ** 2) / (len(y_train) - trace_H) ** 2)
+                except Exception:
+                    gcv = msep
                 if msep < best_msep:
                     best_msep = msep
                     best_k = k
+                if gcv < best_gcv:
+                    best_gcv = gcv
                 if best_k is None or k not in gcv_lookup:
-                    gcv_lookup[k] = msep  # fallback if no GCV calc
+                    gcv_lookup[k] = gcv
 
         if best_k is None:
             return None
@@ -125,6 +139,20 @@ class RidgeRegressionForecaster:
         y_hat = float(latest_std @ beta_ridge)
         mu_hat = float(np.exp(y_hat) - 1.0)
 
+        # Hat/residual diagnostics
+        hat_mean = 0.0
+        hat_max = 0.0
+        resid_sigma = 0.0
+        try:
+            H = X_std @ np.linalg.pinv(X_std.T @ X_std + best_k * np.eye(X_std.shape[1])) @ X_std.T
+            hat_vals = np.diag(H)
+            hat_mean = float(np.mean(hat_vals))
+            hat_max = float(np.max(hat_vals))
+            resid = y - X_std @ beta_ridge
+            resid_sigma = float(np.std(resid, ddof=1))
+        except Exception:
+            pass
+
         # RL vs LS as diagnostic
         rl = None
         try:
@@ -140,10 +168,14 @@ class RidgeRegressionForecaster:
             expected_simple_return=mu_hat,
             k_best=best_k,
             msep=best_msep,
+            gcv=best_gcv,
             rl_vs_ls=rl,
             samples=n,
             t_threshold=self.t_threshold,
             dropped_features=dropped,
+            hat_mean=hat_mean,
+            hat_max=hat_max,
+            resid_sigma=resid_sigma,
         )
 
     @staticmethod

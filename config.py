@@ -41,16 +41,23 @@ UNIVERSE_MAX_RANK = 20  # Maximum rank to include from market-cap list
 UNIVERSE_MIN_DOLLAR_VOLUME = 20_000_000  # Minimum 30-day median daily dollar volume
 UNIVERSE_LOOKBACK_DAYS = 30  # Lookback for median volume calculation
 UNIVERSE_REFRESH_HOURS = 24  # Interval for refreshing universe ranks/market caps
+BAR_GRID_TIMEFRAME = "5m"  # Global bar grid timeframe
 
 # Bar Validation Parameters
 BAR_RETURN_ABS_THRESHOLD = 0.25  # Reject bars if simple return exceeds 25%
 MIN_BAR_VOLUME = 1.0  # Minimum raw volume units for a bar to be considered valid
+OUTLIER_SIGMA_THRESHOLD = 8.0  # Sigma cap for raw log-return outlier flagging
 
 # Regression / Forecast Parameters
 REGRESSION_WINDOW = 120  # Bars used for rolling regression
 REGRESSION_FEATURE_MODE = "log_price"  # Predictor type for linear model
 LOG_RETURN_LAGS = [1, 3, 6, 12]  # Lags of log returns used as features
 VOLUME_LAGS = [1, 3, 6, 12]  # Lags of volume used as features
+MOMENTUM_WINDOWS = [3, 6, 12]  # Windowed log-return momentum features
+VOL_WINDOWS = [6, 12, 24]  # Rolling realized variance windows (bars)
+RANGE_WINDOWS = [6, 12]  # Rolling average high-low range windows
+TURNOVER_WINDOWS = [6, 12]  # Rolling average volume windows
+INCLUDE_TIME_OF_DAY = True  # Add time-of-day sin/cos features
 REGRESSION_MAX_BARS = 2000  # Max history used for regression features/targets
 REGRESSION_MIN_TRAIN = 300  # Minimum training observations required
 REGRESSION_VAL_WINDOW = 200  # Default validation window size for CV
@@ -61,6 +68,10 @@ RIDGE_K_GRID = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0, 1e2, 1e3, 1e4]
 RISK_WINDOW = 180  # Bars used for covariance estimation
 EWMA_LAMBDA = 0.94  # Decay for EWMA volatility calculations
 COVARIANCE_SHRINKAGE = 0.6  # Alpha for sample-vs-target shrinkage
+RISK_COV_WINDOW = 250  # Window for sample covariance
+RISK_USE_GARCH = True  # Enable GARCH(1,1) variance candidate
+GARCH_PARAMS = {"omega": 1e-6, "alpha": 0.05, "beta": 0.9}
+RISK_DIAG_WINDOW = 200  # Window length for diagnostics (MALV, portfolio losses)
 
 # Mean-Variance Optimizer Parameters
 RISK_AVERSION = 3.0  # Higher = more risk averse
@@ -70,6 +81,27 @@ MAX_NET_EXPOSURE = 0.25  # Absolute net exposure cap
 MAX_GROSS_EXPOSURE = 1.2  # Sum |w| cap
 CONTRACT_MULTIPLIER = 1.0  # Futures contract multiplier
 MIN_ORDER_NOTIONAL = 10.0  # Skip orders smaller than $10
+CONTRACT_MULTIPLIER_PER_ASSET = {}  # Optional per-asset contract multipliers
+TURNOVER_PENALTY_LAMBDA = 0.1  # Quadratic turnover penalty weight
+
+# Impact / Execution Cost Parameters
+IMPACT_KAPPA_DEFAULT = 0.0  # Temporary impact quadratic cost coefficient
+IMPACT_KAPPA_OVERRIDES = {}  # Optional per-asset kappa overrides
+IMPACT_DELTA = 0.5  # Concavity for power-law impact
+IMPACT_PROPAGATOR_DECAY = 0.5  # Exponential decay for impact propagator
+
+# Kelly Overlay Parameters
+KELLY_FRACTION_BASE = 0.5  # Fractional Kelly base lambda
+DRAWDOWN_THRESHOLDS = [0.10, 0.20]  # Drawdown levels to scale Kelly
+DRAWDOWN_LAMBDAS = [0.5, 0.25]  # Multipliers corresponding to thresholds
+KELLY_MAX_LEVERAGE = 2.0  # Cap on Kelly leverage multiplier
+KELLY_VOL_THRESHOLD = 0.05  # Volatility level to start dampening Kelly further
+
+# Monitoring thresholds
+MONITOR_VOL_MSE_WARN = 0.05  # Warn if avg vol MSE exceeds this
+MONITOR_COV_MSE_WARN = 0.05  # Warn if cov portfolio MSE exceeds this
+MONITOR_LOG_PATH = "logs/monitoring.jsonl"  # File to persist monitoring records
+BENCHMARK_SYMBOL = "BTCUSDT"  # Default benchmark for backtests/monitoring
 
 # Configuration validation and logging
 def validate_config():

@@ -46,7 +46,7 @@ class DataEngine:
         self.default_symbols = [symbol for symbol, _ in config.symbols]
 
         # Ensure we always keep enough candles for regression/risk windows
-        required_candles = max(max_candles, config.RISK_WINDOW + 20)
+        required_candles = max(max_candles, config.RISK_WINDOW + 50)
         
         # Setup data fetcher with the client
         self.data_fetcher = DataFetcher(
@@ -168,6 +168,26 @@ class DataEngine:
         self.universe_selector.refresh_if_needed(bar["timestamp"])
         return bar
 
+    def process_bar_on_grid(
+        self, symbol: str, candle: List[float], timeframe: Optional[str] = None
+    ) -> Optional[Dict[str, float]]:
+        """Process an arbitrary candle ensuring alignment to global bar grid."""
+        timeframe = timeframe or self.primary_timeframe
+        if timeframe != config.BAR_GRID_TIMEFRAME:
+            return None
+        bar = self.extract_ohlcv(candle)
+        prev_close = self.return_manager.get_last_close(symbol)
+
+        if not self.bar_validator.is_valid(symbol, bar, prev_close):
+            return None
+
+        self.return_manager.update(symbol, bar)
+        self.universe_selector.record_bar_metrics(
+            symbol, bar["timestamp"], bar["close"], bar["volume"]
+        )
+        self.universe_selector.refresh_if_needed(bar["timestamp"])
+        return bar
+
     def process_all_latest_bars(self, timeframe: Optional[str] = None) -> None:
         """Convenience helper to ingest the most recent bar for every configured symbol."""
         timeframe = timeframe or self.primary_timeframe
@@ -224,6 +244,21 @@ class DataEngine:
         return self.return_manager.get_feature_matrix(
             symbol, length or config.REGRESSION_MAX_BARS
         )
+
+    def get_missing_bars(self, symbol: str, timeframe: Optional[str] = None):
+        """Expose missing bar timestamps detected by DataProcessor."""
+        timeframe = timeframe or self.primary_timeframe
+        return self.data_fetcher.data_processor.get_missing_bars(symbol, timeframe)
+
+    def data_quality_report(self, symbols: Optional[List[str]] = None) -> Dict[str, Dict[str, int]]:
+        """Return simple data quality metrics per symbol."""
+        report: Dict[str, Dict[str, int]] = {}
+        target_symbols = symbols or self.get_active_universe()
+        for sym in target_symbols:
+            missing = len(self.get_missing_bars(sym, self.primary_timeframe))
+            outliers = len(self.return_manager.flag_outliers(sym))
+            report[sym] = {"missing_bars": missing, "outliers": outliers}
+        return report
     
     def get_return_series(
         self, symbol: str, length: Optional[int] = None

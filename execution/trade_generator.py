@@ -55,6 +55,7 @@ class TradeGenerator:
                 continue
 
             notional_change = delta_weight * nav
+            multiplier = config.CONTRACT_MULTIPLIER_PER_ASSET.get(symbol, self.contract_multiplier)
             precision = precision_provider(symbol) if precision_provider else None
             min_notional = max(
                 self.min_notional,
@@ -63,7 +64,7 @@ class TradeGenerator:
             if abs(notional_change) < min_notional:
                 continue
 
-            raw_quantity = notional_change / (price * self.contract_multiplier)
+            raw_quantity = notional_change / (price * multiplier)
             side = "buy" if raw_quantity > 0 else "sell"
             quantity = abs(raw_quantity)
 
