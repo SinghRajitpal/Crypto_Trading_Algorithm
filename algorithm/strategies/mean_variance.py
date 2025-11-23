@@ -5,7 +5,7 @@ import config
 from utils.logging_config import get_logger
 
 from algorithm.forecast.forecast_result import ForecastResult
-from algorithm.forecast.linear_regression import LinearRegressionForecaster
+from algorithm.forecast.ridge_regression import RidgeRegressionForecaster
 
 logger = get_logger(__name__)
 
@@ -18,13 +18,11 @@ class MeanVarianceForecastStrategy:
     def __init__(
         self,
         data_engine,
-        forecaster: Optional[LinearRegressionForecaster] = None,
+        forecaster: Optional[RidgeRegressionForecaster] = None,
         min_history: Optional[int] = None,
     ):
         self.data_engine = data_engine
-        self.forecaster = forecaster or LinearRegressionForecaster(
-            window=config.REGRESSION_WINDOW
-        )
+        self.forecaster = forecaster or RidgeRegressionForecaster()
         self.min_history = min_history or config.REGRESSION_WINDOW
         self.timeframe = getattr(data_engine, "primary_timeframe", config.PRIMARY_TIMEFRAME)
 
@@ -42,24 +40,26 @@ class MeanVarianceForecastStrategy:
         latest_timestamp = 0
 
         for symbol in universe:
-            features = self.data_engine.get_feature_series(symbol, self.forecaster.window + 5)
-            returns = self.data_engine.get_return_series(symbol, self.forecaster.window + 5)
-
-            if len(returns) < self.min_history or len(features) < self.min_history:
+            X, y, ts, cols = self.data_engine.get_feature_matrix(symbol)
+            if y.size < self.min_history:
                 logger.debug(f"[MeanVarianceForecast] Insufficient history for {symbol}")
                 continue
 
-            regression = self.forecaster.forecast(symbol, features, returns)
-            if not regression:
+            ridge_result = self.forecaster.forecast(symbol, X, y)
+            if not ridge_result:
                 continue
 
-            expected_returns[symbol] = regression.expected_return
+            expected_returns[symbol] = ridge_result.expected_simple_return
             betas[symbol] = {
-                "beta0": regression.beta0,
-                "beta1": regression.beta1,
-                "samples": regression.sample_count,
+                "k_best": ridge_result.k_best,
+                "samples": ridge_result.samples,
+                "dropped_features": len(ridge_result.dropped_features),
             }
-            diagnostics[symbol] = {"r_squared": regression.r_squared}
+            diagnostics[symbol] = {
+                "msep": ridge_result.msep,
+                "rl_vs_ls": ridge_result.rl_vs_ls if ridge_result.rl_vs_ls is not None else float("nan"),
+                "t_threshold": ridge_result.t_threshold,
+            }
 
             candle = self.data_engine.get_latest_candle(symbol, self.timeframe)
             if candle:

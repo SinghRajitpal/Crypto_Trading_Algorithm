@@ -55,6 +55,7 @@ REGRESSION_MAX_BARS = 2000  # Max history used for regression features/targets
 REGRESSION_MIN_TRAIN = 300  # Minimum training observations required
 REGRESSION_VAL_WINDOW = 200  # Default validation window size for CV
 RIDGE_T_THRESHOLD = 1.2  # Default |t| threshold for ridge feature pruning
+RIDGE_K_GRID = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0, 1e2, 1e3, 1e4]
 
 # Risk Model Data Parameters
 RISK_WINDOW = 180  # Bars used for covariance estimation

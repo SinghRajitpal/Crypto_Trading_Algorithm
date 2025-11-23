@@ -1,4 +1,4 @@
 from .forecast_result import ForecastResult
-from .linear_regression import LinearRegressionForecaster, RegressionOutput
+from .ridge_regression import RidgeRegressionForecaster, RidgeForecast
 
-__all__ = ["ForecastResult", "LinearRegressionForecaster", "RegressionOutput"]
+__all__ = ["ForecastResult", "RidgeRegressionForecaster", "RidgeForecast"]
