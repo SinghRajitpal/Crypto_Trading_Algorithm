@@ -31,6 +31,18 @@ class RidgeLayerResult:
                 indent=2,
             )
 
+    @classmethod
+    def from_json(cls, path: str) -> "RidgeLayerResult":
+        with open(path, "r") as f:
+            data = json.load(f)
+        return cls(
+            k_per_asset={k: float(v) for k, v in data.get("k_per_asset", {}).items()},
+            msep_per_asset={k: float(v) for k, v in data.get("msep_per_asset", {}).items()},
+            rl_vs_ls=data.get("rl_vs_ls", {}),
+            t_threshold=float(data.get("t_threshold", config.RIDGE_T_THRESHOLD)),
+            samples_per_asset={k: int(v) for k, v in data.get("samples_per_asset", {}).items()},
+        )
+
 
 class RidgeLayerSelector:
     """Layer A selector: rolling-origin CV to choose k per asset with min training enforcement."""
@@ -58,18 +70,21 @@ class RidgeLayerSelector:
             X, y, ts, cols = data_engine.get_feature_matrix(sym)
             if y.size < self.train_min:
                 continue
-            X = X[-config.REGRESSION_MAX_BARS :]
-            y = y[-config.REGRESSION_MAX_BARS :]
+            if config.REGRESSION_MAX_BARS is not None:
+                X = X[-config.REGRESSION_MAX_BARS :]
+                y = y[-config.REGRESSION_MAX_BARS :]
             n = len(y)
             if n < self.train_min:
                 continue
+            logger.info("[LayerA] %s samples=%d (train_min=%d)", sym, n, self.train_min)
 
             best_k = None
             best_msep = np.inf
             # Rolling-origin splits
-            for start in range(0, n - self.train_min, self.val_len):
-                train_end = min(start + self.train_min, n - self.val_len)
-                if train_end <= start or train_end + self.val_len > n:
+            val_len = min(self.val_len, max(1, n - self.train_min))
+            for start in range(0, n - self.train_min, max(1, val_len // 2)):
+                train_end = min(start + self.train_min, n - val_len)
+                if train_end <= start or train_end + val_len > n:
                     continue
                 X_train = X[start:train_end]
                 y_train = y[start:train_end]
@@ -86,14 +101,17 @@ class RidgeLayerSelector:
                 XtX = X_train_std.T @ X_train_std
                 Xty = X_train_std.T @ y_train
                 for k in self.k_grid:
-                    beta = self._ridge_beta(XtX, Xty, k)
+                    penalty = self._penalty_matrix(XtX.shape[0], k)
+                    beta = self._ridge_beta(XtX, Xty, penalty)
                     preds = X_val_std @ beta
                     msep = float(np.mean((y_val - preds) ** 2))
                     if msep < best_msep:
                         best_msep = msep
                         best_k = k
+                        logger.debug("[LayerA] %s split start=%d train=%d val=%d k=%.4f msep=%.6g", sym, start, len(y_train), len(y_val), k, msep)
 
             if best_k is None:
+                logger.warning("[LayerA] No k selected for %s (n=%d)", sym, n)
                 continue
 
             forecaster = RidgeRegressionForecaster(k_grid=[best_k], t_threshold=self.t_threshold)
@@ -105,6 +123,12 @@ class RidgeLayerSelector:
             msep_per_asset[sym] = best_msep
             rl_vs_ls[sym] = ridge_result.rl_vs_ls
             samples_per_asset[sym] = ridge_result.samples
+
+        if not k_per_asset:
+            raise ValueError(
+                "Layer A selection produced no assets; insufficient training data. "
+                "Increase lookback or lower REGRESSION_MIN_TRAIN."
+            )
 
         return RidgeLayerResult(
             k_per_asset=k_per_asset,
@@ -119,6 +143,12 @@ class RidgeLayerSelector:
         return np.column_stack([np.ones((X.shape[0], 1)), X])
 
     @staticmethod
-    def _ridge_beta(XtX: np.ndarray, Xty: np.ndarray, k: float) -> np.ndarray:
-        p = XtX.shape[0]
-        return np.linalg.pinv(XtX + k * np.eye(p)) @ Xty
+    def _penalty_matrix(size: int, k: float) -> np.ndarray:
+        pen = np.eye(size) * k
+        if size > 0:
+            pen[0, 0] = 0.0  # Do not penalize intercept
+        return pen
+
+    @staticmethod
+    def _ridge_beta(XtX: np.ndarray, Xty: np.ndarray, penalty: np.ndarray) -> np.ndarray:
+        return np.linalg.pinv(XtX + penalty) @ Xty

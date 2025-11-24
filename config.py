@@ -20,7 +20,7 @@ binance_futures_testnet = {
 }
 
 # Symbol universe and timeframe settings
-PRIMARY_TIMEFRAME = "5m"
+PRIMARY_TIMEFRAME = "1h"
 DEFAULT_UNIVERSE = [
     "BTCUSDT",
     "ETHUSDT",
@@ -41,7 +41,7 @@ UNIVERSE_MAX_RANK = 20  # Maximum rank to include from market-cap list
 UNIVERSE_MIN_DOLLAR_VOLUME = 20_000_000  # Minimum 30-day median daily dollar volume
 UNIVERSE_LOOKBACK_DAYS = 30  # Lookback for median volume calculation
 UNIVERSE_REFRESH_HOURS = 24  # Interval for refreshing universe ranks/market caps
-BAR_GRID_TIMEFRAME = "5m"  # Global bar grid timeframe
+BAR_GRID_TIMEFRAME = "1h"  # Global bar grid timeframe
 
 # Bar Validation Parameters
 BAR_RETURN_ABS_THRESHOLD = 0.25  # Reject bars if simple return exceeds 25%
@@ -58,9 +58,11 @@ VOL_WINDOWS = [6, 12, 24]  # Rolling realized variance windows (bars)
 RANGE_WINDOWS = [6, 12]  # Rolling average high-low range windows
 TURNOVER_WINDOWS = [6, 12]  # Rolling average volume windows
 INCLUDE_TIME_OF_DAY = True  # Add time-of-day sin/cos features
-REGRESSION_MAX_BARS = 2000  # Max history used for regression features/targets
-REGRESSION_MIN_TRAIN = 300  # Minimum training observations required
-REGRESSION_VAL_WINDOW = 200  # Default validation window size for CV
+REGRESSION_MAX_BARS = None  # Use all available history per asset (no cap)
+REGRESSION_MIN_TRAIN = 120  # Minimum training observations required (must be <= buffer capacity)
+REGRESSION_VAL_WINDOW = 500  # Validation window size for rolling CV blocks
+# Training lookback horizon; if None, use all available history. Otherwise, use this many days before backtest start.
+RIDGE_TRAIN_LOOKBACK_DAYS = 120
 RIDGE_T_THRESHOLD = 1.2  # Default |t| threshold for ridge feature pruning
 RIDGE_K_GRID = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0, 1e2, 1e3, 1e4]
 
@@ -80,12 +82,12 @@ WEIGHT_MAX = 0.3  # Maximum per-asset weight
 MAX_NET_EXPOSURE = 0.25  # Absolute net exposure cap
 MAX_GROSS_EXPOSURE = 1.2  # Sum |w| cap
 CONTRACT_MULTIPLIER = 1.0  # Futures contract multiplier
-MIN_ORDER_NOTIONAL = 10.0  # Skip orders smaller than $10
+MIN_ORDER_NOTIONAL = 5.0  # Binance USD-M min notional is typically ~$5
 CONTRACT_MULTIPLIER_PER_ASSET = {}  # Optional per-asset contract multipliers
 TURNOVER_PENALTY_LAMBDA = 0.1  # Quadratic turnover penalty weight
 
 # Impact / Execution Cost Parameters
-IMPACT_KAPPA_DEFAULT = 0.0  # Temporary impact quadratic cost coefficient
+IMPACT_KAPPA_DEFAULT = 0.01  # Temporary impact cost coefficient (concave power-law)
 IMPACT_KAPPA_OVERRIDES = {}  # Optional per-asset kappa overrides
 IMPACT_DELTA = 0.5  # Concavity for power-law impact
 IMPACT_PROPAGATOR_DECAY = 0.5  # Exponential decay for impact propagator

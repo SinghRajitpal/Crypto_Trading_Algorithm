@@ -45,10 +45,15 @@ class DataProcessor:
 
     @staticmethod
     def _timeframe_ms(timeframe: str) -> int:
-        """Convert timeframe like '5m' to milliseconds (supports minute granularity)."""
-        if not timeframe.endswith("m"):
-            raise ValueError("Only minute-based timeframes supported for grid alignment")
-        mins = int(timeframe[:-1])
+        """Convert timeframe like '5m' or '1h' to milliseconds."""
+        if timeframe.endswith("m"):
+            mins = int(timeframe[:-1])
+        elif timeframe.endswith("h"):
+            mins = int(timeframe[:-1]) * 60
+        elif timeframe.endswith("d"):
+            mins = int(timeframe[:-1]) * 60 * 24
+        else:
+            raise ValueError("Timeframe must end with m/h/d for grid alignment")
         return mins * 60 * 1000
 
     @staticmethod

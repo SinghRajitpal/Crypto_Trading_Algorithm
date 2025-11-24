@@ -70,6 +70,7 @@ class RiskModel:
         window = min(config.RISK_COV_WINDOW, returns_matrix.shape[0])
         if window > 1:
             sample_cov = np.cov(returns_matrix[-window:].T, ddof=1)
+            sample_cov = np.atleast_2d(sample_cov)
         else:
             sample_cov = np.diag([self._select_variance(s) for s in symbols])
 

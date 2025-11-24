@@ -16,8 +16,10 @@ class OrderInstruction:
     side: str
     quantity: float
     notional: float
+    price: float
     target_weight: float
     current_weight: float
+    slippage_bp: float = 0.0
 
 
 class TradeGenerator:
@@ -86,6 +88,7 @@ class TradeGenerator:
                     side=side,
                     quantity=quantity,
                     notional=final_notional,
+                    price=price,
                     target_weight=target,
                     current_weight=current,
                 )
@@ -97,4 +100,5 @@ class TradeGenerator:
     def _apply_step(quantity: float, step: float) -> float:
         if step <= 0:
             return quantity
-        return math.floor(quantity / step) * step
+        # Small epsilon avoids floating remainders just below an exact multiple
+        return math.floor((quantity + 1e-12) / step) * step

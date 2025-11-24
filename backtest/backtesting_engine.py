@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -69,8 +69,10 @@ class WalkForwardBacktester:
         self.algo_engine = AlgoEngine(self.data_engine)
         self.strategy = MeanVarianceForecastStrategy(self.data_engine)
         self.execution_engine = ExecutionEngine(binance_client=self.broker, total_capital=initial_capital)
-        self.fetcher = HistoricalDataFetcher()
+        self.fetcher = HistoricalDataFetcher(testnet=False)
         self._metrics: Dict[str, Any] = {}
+        # Use latest processed price for simulated fills
+        self.broker.set_price_callback(self._price_lookup)
 
     async def run(self) -> BacktestMetrics:
         ohlcv_data = await self._load_history()
@@ -97,6 +99,9 @@ class WalkForwardBacktester:
             if ts < self.start or ts > self.end:
                 continue
 
+            # Align simulated broker timestamps with bar time
+            self.broker.set_bar_timestamp(ts)
+
             for sym in self.symbols:
                 df = ohlcv_data.get(sym)
                 if df is not None and ts in df.index:
@@ -107,6 +112,20 @@ class WalkForwardBacktester:
                     )
 
             self.data_engine.process_all_latest_bars(config.PRIMARY_TIMEFRAME)
+
+            # Mark-to-market: cache latest closes for all tracked symbols so equity reflects price moves even without trades.
+            tracked_syms = set(self.symbols) | set(self.broker._positions.keys())  # pylint: disable=protected-access
+            price_map = {
+                s: self.data_engine.get_latest_price(s, config.PRIMARY_TIMEFRAME)
+                for s in tracked_syms
+            }
+            self.broker.update_last_prices(price_map)
+            logger.debug(
+                "Bar %s | tracked_syms=%d | positions=%d",
+                ts.isoformat(),
+                len(tracked_syms),
+                len(self.broker._positions),  # pylint: disable=protected-access
+            )
 
             expected_returns: Dict[str, float] = {}
             for sym in self.symbols:
@@ -122,6 +141,12 @@ class WalkForwardBacktester:
                 ridge_res = forecaster.forecast(sym, X, y)
                 if ridge_res:
                     expected_returns[sym] = ridge_res.expected_simple_return
+            logger.debug(
+                "Bar %s | forecasts=%d | universe=%s",
+                ts.isoformat(),
+                len(expected_returns),
+                list(expected_returns.keys()),
+            )
 
             if not expected_returns:
                 continue
@@ -148,6 +173,13 @@ class WalkForwardBacktester:
                 nav=nav,
                 prices=prices,
                 returns_matrix=returns_matrix,
+            )
+            logger.debug(
+                "Bar %s | nav=%.2f | orders=%d | turnover=%.4f",
+                ts.isoformat(),
+                nav,
+                len(result.get("orders", [])),
+                result.get("turnover", 0.0),
             )
 
             nav_new = await self._nav()
@@ -297,13 +329,27 @@ class WalkForwardBacktester:
 
         return metrics
 
+    async def _price_lookup(self, symbol: str) -> Optional[float]:
+        """Async adapter around DataEngine latest price for SimBroker fills."""
+        return self.data_engine.get_latest_price(symbol, config.PRIMARY_TIMEFRAME)
+
     async def _load_history(self) -> Dict[str, Any]:
-        console_log(f"Loading historical data for {len(self.symbols)} assets", "INFO")
-        tasks = [self.fetcher.download_ohlcv(sym, config.PRIMARY_TIMEFRAME, self.start, self.end) for sym in self.symbols]
+        console_log(f"Loading historical data for {len(self.symbols)} assets")
+        lookback_start = _lookback_start(self.start)
+        tasks = [
+            self.fetcher.download_ohlcv(sym, config.PRIMARY_TIMEFRAME, lookback_start, self.end, force=True)
+            for sym in self.symbols
+        ]
         dfs = await asyncio.gather(*tasks)
         return {sym: df for sym, df in zip(self.symbols, dfs)}
 
     async def _nav(self) -> float:
+        # Prefer full equity (cash + margin + unrealized PnL) if supported by broker
+        if hasattr(self.broker, "equity"):
+            try:
+                return float(await self.broker.equity())
+            except Exception:
+                pass
         bal = await self.broker.get_balance()
         return float(bal["total"]["USDT"])
 
@@ -340,3 +386,10 @@ class WalkForwardBacktester:
             if vals:
                 out[k] = float(np.mean(vals))
         return out
+
+
+def _lookback_start(start: datetime) -> datetime:
+    days = getattr(config, "RIDGE_TRAIN_LOOKBACK_DAYS", None)
+    if days is None:
+        return start
+    return start - timedelta(days=days)

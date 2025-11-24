@@ -22,12 +22,33 @@ class OrderExecutor:
                 )
                 continue
             try:
-                response = await self.binance_client.create_order(
-                    symbol=instruction.symbol,
-                    order_type="market",
-                    side=instruction.side,
-                    amount=instruction.quantity,
-                )
+                try:
+                    response = await self.binance_client.create_order(
+                        symbol=instruction.symbol,
+                        order_type="market",
+                        side=instruction.side,
+                        amount=instruction.quantity,
+                        slippage_bp=getattr(instruction, "slippage_bp", 0.0),
+                    )
+                except TypeError:
+                    # Some clients (e.g., SimBroker) expect 'type' instead of 'order_type'
+                    response = await self.binance_client.create_order(
+                        symbol=instruction.symbol,
+                        type="market",
+                        side=instruction.side,
+                        amount=instruction.quantity,
+                        slippage_bp=getattr(instruction, "slippage_bp", 0.0),
+                    )
+                except Exception as exc:
+                    # One more fallback: pass through kwargs with both keys
+                    response = await self.binance_client.create_order(
+                        symbol=instruction.symbol,
+                        order_type="market",
+                        type="market",
+                        side=instruction.side,
+                        amount=instruction.quantity,
+                        slippage_bp=getattr(instruction, "slippage_bp", 0.0),
+                    )
                 results.append(
                     {
                         "status": "success",

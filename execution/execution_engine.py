@@ -4,6 +4,7 @@ from typing import Dict, Any, List, Optional
 
 import numpy as np
 
+import config
 from algorithm.forecast.forecast_result import ForecastResult
 from execution.risk_model import RiskModel
 from execution.optimizer import MeanVarianceOptimizer
@@ -47,6 +48,7 @@ class ProductionExecutionEngine:
         prices: Dict[str, float],
         returns_matrix: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
+        prev_weights = dict(self.current_weights)
         if not forecast.expected_returns:
             return {"status": "skipped", "reason": "empty forecast"}
 
@@ -61,7 +63,7 @@ class ProductionExecutionEngine:
             forecast.expected_returns,
             covariance,
             forecast.universe,
-            prev_weights=self.current_weights,
+            prev_weights=prev_weights,
         )
 
         # Kelly overlay
@@ -90,11 +92,11 @@ class ProductionExecutionEngine:
             vol=realized_vol,
         )
         portfolio_turnover = float(
-            sum(abs(kelly_weights.get(s, 0.0) - self.current_weights.get(s, 0.0)) for s in set(kelly_weights) | set(self.current_weights))
+            sum(abs(kelly_weights.get(s, 0.0) - prev_weights.get(s, 0.0)) for s in set(kelly_weights) | set(prev_weights))
         )
 
         orders = self.trade_generator.generate_orders(
-            current_weights=self.current_weights,
+            current_weights=prev_weights,
             target_weights=kelly_weights,
             nav=nav,
             prices=prices,
@@ -120,11 +122,19 @@ class ProductionExecutionEngine:
             total_notional,
         )
 
+        # Apply impact-aware slippage per order (basis points)
+        for order in orders:
+            notional = abs(order.notional)
+            if notional > 0 and config.IMPACT_DELTA > 0:
+                kappa = config.IMPACT_KAPPA_OVERRIDES.get(order.symbol, config.IMPACT_KAPPA_DEFAULT)
+                impact_bp = kappa * (notional ** (config.IMPACT_DELTA - 1)) * 10000.0
+                order.slippage_bp = max(0.0, float(impact_bp))
+
         execution = await self.order_executor.execute_orders(orders)
         success = all(item["status"] == "success" for item in execution)
 
         if success:
-            self.current_weights = target_weights
+            self.current_weights = kelly_weights
         else:
             failed = [item for item in execution if item["status"] != "success"]
             for item in failed:
@@ -135,10 +145,10 @@ class ProductionExecutionEngine:
                     item.get("reason"),
                 )
 
-        impact_cost_est = self._estimate_impact_cost(target_weights, prices, nav)
+        impact_cost_est = self._estimate_impact_cost(kelly_weights, prev_weights, prices, nav)
         concave_impact_cost = aggregate_impact(
-            target_weights,
-            self.current_weights,
+            kelly_weights,
+            prev_weights,
             prices,
             nav,
             config.IMPACT_KAPPA_OVERRIDES,
@@ -149,7 +159,7 @@ class ProductionExecutionEngine:
         propagator_cost_est = None
         try:
             trade_sizes = {
-                sym: target_weights.get(sym, 0.0) - self.current_weights.get(sym, 0.0)
+                sym: kelly_weights.get(sym, 0.0) - prev_weights.get(sym, 0.0)
                 for sym in forecast.universe
             }
             propagator_cost_est = propagator_cost(
@@ -169,7 +179,7 @@ class ProductionExecutionEngine:
                 forecast.expected_returns,
                 self.risk_model._cov_prev,
                 forecast.universe,
-                prev_weights=self.current_weights,
+                prev_weights=prev_weights,
             )
             turnover_sigma = float(
                 sum(
@@ -204,8 +214,11 @@ class ProductionExecutionEngine:
         realized_slippage = self._compute_realized_slippage(execution, prices, nav)
         if realized_slippage is not None:
             result["realized_slippage_bp"] = realized_slippage
-            if impact_cost_est:
-                result["impact_vs_slippage"] = realized_slippage / (impact_cost_est / nav) * 10000
+            if impact_cost_est and nav > 0:
+                impact_bp = (impact_cost_est / nav) * 10000.0
+                if impact_bp > 1e-8:
+                    # Ratio of realized slippage bp to estimated impact bp
+                    result["impact_vs_slippage"] = realized_slippage / impact_bp
         if returns_matrix is not None:
             result["risk_diag"] = self.risk_model.diagnostics()
             result["risk_cov_loss"] = self.risk_model.covariance_loss_metrics(
@@ -220,18 +233,26 @@ class ProductionExecutionEngine:
             logger.warning("Symbol filter lookup failed for %s: %s", symbol, exc)
             return None
 
-    def _estimate_impact_cost(self, target_weights: Dict[str, float], prices: Dict[str, float], nav: float) -> float:
-        """Estimate temporary impact cost using quadratic model."""
+    def _estimate_impact_cost(
+        self,
+        target_weights: Dict[str, float],
+        prev_weights: Dict[str, float],
+        prices: Dict[str, float],
+        nav: float,
+    ) -> float:
+        """Estimate temporary impact cost using concave power-law impact."""
         cost = 0.0
         for sym, tgt in target_weights.items():
-            prev = self.current_weights.get(sym, 0.0)
+            prev = prev_weights.get(sym, 0.0)
             delta_w = tgt - prev
             price = prices.get(sym)
             if price is None or price <= 0:
                 continue
             kappa = config.IMPACT_KAPPA_OVERRIDES.get(sym, config.IMPACT_KAPPA_DEFAULT)
-            notional = delta_w * nav
-            cost += 0.5 * kappa * (notional ** 2)
+            delta = config.IMPACT_DELTA
+            notional = abs(delta_w * nav)
+            if kappa > 0 and delta > 0:
+                cost += kappa * (notional ** delta)
         return float(cost)
 
     @staticmethod

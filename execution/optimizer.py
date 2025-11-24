@@ -48,13 +48,10 @@ class MeanVarianceOptimizer:
         mu = np.array([expected_returns.get(symbol, 0.0) for symbol in symbols], dtype=float)
         cov = covariance.copy()
 
-        # Regularize covariance for numerical stability
-        cov += np.eye(len(symbols)) * 1e-6
-
         # Turnover/impact penalty: penalize (w - w_prev)^2 with per-asset impact kappa.
-        # Approximate by inflating covariance and nudging mu toward prev weights.
-        cov_eff = cov.copy()
-        mu_eff = mu.copy()
+        # Map to closed-form: argmax mu'w - (γ/2) w'Σw - λ ||w - w_prev||^2_kappa
+        # Solution: w = (γΣ + 2λK)^(-1) (mu + 2λK w_prev), K=diag(kappa_scale)
+        kappa_scale = np.ones(len(symbols), dtype=float)
         if prev_weights and self.turnover_lambda > 0:
             kappas = np.array(
                 [
@@ -64,19 +61,23 @@ class MeanVarianceOptimizer:
                 dtype=float,
             )
             w_prev_vec = np.array([prev_weights.get(symbol, 0.0) for symbol in symbols], dtype=float)
-            diag_penalty = (2 * self.turnover_lambda / self.risk_aversion) * np.diag(1.0 + kappas)
-            cov_eff += diag_penalty
-            mu_eff += (2 * self.turnover_lambda / self.risk_aversion) * w_prev_vec / self.turnover_horizon
+            kappa_scale = 1.0 + kappas
+            mu = mu + (2 * self.turnover_lambda / self.turnover_horizon) * (kappa_scale * w_prev_vec)
+
+        # Regularize covariance for numerical stability
+        cov += np.eye(len(symbols)) * 1e-6
+        K = np.diag(kappa_scale)
+        cov_eff = self.risk_aversion * cov + 2 * self.turnover_lambda * K
 
         try:
-            inv_cov = np.linalg.pinv(cov_eff)
+            inv_term = np.linalg.pinv(cov_eff)
         except np.linalg.LinAlgError as exc:
             logger.error("Optimizer covariance inversion failed: %s", exc)
             return {symbol: 0.0 for symbol in symbols}
 
-        raw_weights = (1.0 / self.risk_aversion) * inv_cov.dot(mu_eff)
+        raw_weights = inv_term.dot(mu)
 
-        # Clip to bounds
+        # Clip to per-asset bounds
         clipped = np.clip(raw_weights, self.weight_min, self.weight_max)
 
         # Enforce gross exposure constraint
@@ -89,6 +90,9 @@ class MeanVarianceOptimizer:
         if abs(net) > self.max_net:
             adjustment = net - np.sign(net) * self.max_net
             clipped -= adjustment / len(clipped)
+
+        # Final clamp to avoid numerical bleed
+        clipped = np.clip(clipped, self.weight_min, self.weight_max)
 
         weights = {symbol: float(weight) for symbol, weight in zip(symbols, clipped)}
         return weights

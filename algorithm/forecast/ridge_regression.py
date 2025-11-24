@@ -57,7 +57,7 @@ class RidgeRegressionForecaster:
 
         # Rolling-origin CV
         train_min = config.REGRESSION_MIN_TRAIN
-        val_len = config.REGRESSION_VAL_WINDOW
+        val_len = min(config.REGRESSION_VAL_WINDOW, max(1, n - train_min))
         best_k = None
         best_msep = np.inf
         best_gcv = np.inf
@@ -83,12 +83,13 @@ class RidgeRegressionForecaster:
             XtX = X_train_std.T @ X_train_std
             Xty = X_train_std.T @ y_train
             for k in self.k_grid:
-                beta = self._ridge_beta(XtX, Xty, k)
+                penalty = self._penalty_matrix(XtX.shape[0], k)
+                beta = self._ridge_beta(XtX, Xty, penalty)
                 preds = X_val_std @ beta
                 msep = float(np.mean((y_val - preds) ** 2))
                 # GCV approximation
                 try:
-                    H = X_train_std @ np.linalg.pinv(XtX + k * np.eye(XtX.shape[0])) @ X_train_std.T
+                    H = X_train_std @ np.linalg.pinv(XtX + penalty) @ X_train_std.T
                     trace_H = float(np.trace(H))
                     gcv = float(np.sum((y_train - X_train_std @ beta) ** 2) / (len(y_train) - trace_H) ** 2)
                 except Exception:
@@ -107,18 +108,19 @@ class RidgeRegressionForecaster:
         # Fit on full standardized data with best_k
         scaler_full = Standardizer().fit(X)
         X_std = self._with_intercept(scaler_full.transform(X))
-        beta_ridge = self._ridge_beta(X_std.T @ X_std, X_std.T @ y, best_k)
+        penalty_full = self._penalty_matrix(X_std.shape[1], best_k)
+        beta_ridge = self._ridge_beta(X_std.T @ X_std, X_std.T @ y, penalty_full)
 
         # Optional ridge-selection (t-stat pruning)
         dropped: List[str] = []
         beta_final = beta_ridge
         if self.t_threshold and self.t_threshold > 0:
-            hat = X_std @ np.linalg.pinv(X_std.T @ X_std + best_k * np.eye(X_std.shape[1])) @ X_std.T
+            hat = X_std @ np.linalg.pinv(X_std.T @ X_std + penalty_full) @ X_std.T
             residuals = y - X_std @ beta_ridge
             sigma2 = float(np.mean(residuals**2))
             XtX = X_std.T @ X_std
-            cov_beta = sigma2 * np.linalg.pinv(XtX + best_k * np.eye(XtX.shape[0])) @ XtX @ np.linalg.pinv(
-                XtX + best_k * np.eye(XtX.shape[0])
+            cov_beta = sigma2 * np.linalg.pinv(XtX + penalty_full) @ XtX @ np.linalg.pinv(
+                XtX + penalty_full
             )
             t_stats = np.abs(beta_ridge) / (np.sqrt(np.diag(cov_beta)) + 1e-12)
             # Skip intercept index 0
@@ -128,7 +130,8 @@ class RidgeRegressionForecaster:
                 mask[weak_idx] = False
                 # Intercept preserved
                 X_pruned = X_std[:, mask]
-                beta_final = self._ridge_beta(X_pruned.T @ X_pruned, X_pruned.T @ y, best_k)
+                penalty_pruned = self._penalty_matrix(X_pruned.shape[1], best_k)
+                beta_final = self._ridge_beta(X_pruned.T @ X_pruned, X_pruned.T @ y, penalty_pruned)
                 # Track dropped features (intercept excluded)
                 dropped = [f"feature_{i-1}" for i in weak_idx]
                 # Reassign for prediction dimension
@@ -136,7 +139,7 @@ class RidgeRegressionForecaster:
                 beta_ridge[mask] = beta_final
 
         latest_std = self._with_intercept(scaler_full.transform(X[-1:].reshape(1, -1)))
-        y_hat = float(latest_std @ beta_ridge)
+        y_hat = float((latest_std @ beta_ridge).item())
         mu_hat = float(np.exp(y_hat) - 1.0)
 
         # Hat/residual diagnostics
@@ -179,9 +182,16 @@ class RidgeRegressionForecaster:
         )
 
     @staticmethod
-    def _ridge_beta(XtX: np.ndarray, Xty: np.ndarray, k: float) -> np.ndarray:
-        p = XtX.shape[0]
-        return np.linalg.pinv(XtX + k * np.eye(p)) @ Xty
+    def _penalty_matrix(size: int, k: float) -> np.ndarray:
+        """Build ridge penalty with unpenalized intercept (index 0)."""
+        pen = np.eye(size) * k
+        if size > 0:
+            pen[0, 0] = 0.0
+        return pen
+
+    @staticmethod
+    def _ridge_beta(XtX: np.ndarray, Xty: np.ndarray, penalty: np.ndarray) -> np.ndarray:
+        return np.linalg.pinv(XtX + penalty) @ Xty
 
     @staticmethod
     def _with_intercept(X: np.ndarray) -> np.ndarray:

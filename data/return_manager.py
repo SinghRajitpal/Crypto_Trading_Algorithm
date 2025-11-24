@@ -220,10 +220,12 @@ class ReturnManager:
         max_lag = max(lags_ret + lags_vol + mom_windows + vol_windows + range_windows + turnover_windows) if (lags_ret or lags_vol or mom_windows or vol_windows or range_windows or turnover_windows) else 0
 
         effective_window = window or config.REGRESSION_MAX_BARS
+        if effective_window is None:
+            effective_window = len(log_returns_ts)
         lr_values = [v for _, v in log_returns_ts][-effective_window:]
         lr_ts = [ts for ts, _ in log_returns_ts][-effective_window:]
         vol_values = [v for _, v in vol_aligned][-effective_window:]
-        price_values = [p for _, p in prices_aligned][- (effective_window + 1) :]
+        price_values = [p for _, p in prices_aligned][-(effective_window + 1) :]
         range_values = []
         for _, o, h, l, c in ohlc_aligned[-(effective_window + 1) :]:
             range_values.append((h - l) / c if c else 0.0)

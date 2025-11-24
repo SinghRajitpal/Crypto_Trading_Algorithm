@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, UTC
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -101,7 +101,7 @@ class UniverseSelector:
         if close <= 0 or volume is None:
             return
 
-        bar_date = datetime.utcfromtimestamp(timestamp_ms / 1000).date()
+        bar_date = datetime.fromtimestamp(timestamp_ms / 1000, UTC).date()
         self.daily_dollar_volume[symbol][bar_date] = (
             self.daily_dollar_volume[symbol].get(bar_date, 0.0) + float(close) * float(volume)
         )
@@ -117,7 +117,7 @@ class UniverseSelector:
 
     def refresh_if_needed(self, timestamp_ms: int) -> bool:
         """Refresh the active universe once per UTC day."""
-        current_date = datetime.utcfromtimestamp(timestamp_ms / 1000).date()
+        current_date = datetime.fromtimestamp(timestamp_ms / 1000, UTC).date()
         if self.last_refresh_date == current_date:
             return False
 
