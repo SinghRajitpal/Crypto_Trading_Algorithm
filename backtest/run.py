@@ -51,10 +51,23 @@ async def main():
     ridge_spec = None
 
     if args.layer in ("A", "both"):
-        data_engine = DataEngine(binance_client=BinanceClient(testnet=True), max_candles=2000)
-        await _seed_data_engine(data_engine, symbols, start, end)
         selector = RidgeLayerSelector()
-        ridge_spec = selector.select(data_engine, symbols)
+        # Keep the seed DataEngine buffer modest; per-TF engines built inside Layer A are sized precisely.
+        if hasattr(selector, "_estimate_buffer") and hasattr(selector, "tf_candidates"):
+            max_buffer = max(
+                selector._estimate_buffer(
+                    tf,
+                    None,
+                    config.W_CANDIDATES_BY_TF.get(
+                        tf, [selector.train_min, max(selector.train_min * 2, selector.val_len)]
+                    ),
+                )
+                for tf in selector.tf_candidates
+            )
+        else:
+            max_buffer = max(config.REGRESSION_MIN_TRAIN + config.REGRESSION_VAL_WINDOW + config.REGRESSION_EMBARGO_BARS + 100, 50_000)
+        data_engine = DataEngine(binance_client=BinanceClient(testnet=True), max_candles=max_buffer)
+        ridge_spec = selector.select(data_engine, symbols, start=start, end=end)
         os.makedirs(os.path.dirname(ridge_spec_path) or ".", exist_ok=True)
         ridge_spec.to_json(ridge_spec_path)
         if args.layer == "A":
@@ -78,9 +91,9 @@ async def _seed_data_engine(data_engine: DataEngine, symbols, start: datetime, e
     """Load historical OHLCV into the data engine so Layer A can fit ridge."""
     fetcher = HistoricalDataFetcher(testnet=False)
     try:
-        lookback_start = _lookback_start(start)
+        lookback_start = _lookback_start(start, config.PRIMARY_TIMEFRAME)
         ohlcv_data = await asyncio.gather(
-            *[fetcher.download_ohlcv(sym, config.PRIMARY_TIMEFRAME, lookback_start, end, force=True) for sym in symbols]
+            *[fetcher.download_ohlcv(sym, config.PRIMARY_TIMEFRAME, lookback_start, end, force=False) for sym in symbols]
         )
     finally:
         # Ensure the aiohttp/binance client is closed to avoid unclosed-session warnings.
@@ -99,9 +112,12 @@ async def _seed_data_engine(data_engine: DataEngine, symbols, start: datetime, e
         data_engine.process_all_latest_bars(config.PRIMARY_TIMEFRAME)
 
 
-def _lookback_start(start: datetime) -> datetime:
-    """Compute training lookback start; if None configured, use original start."""
-    days = getattr(config, "RIDGE_TRAIN_LOOKBACK_DAYS", None)
+def _lookback_start(start: datetime, timeframe: str) -> datetime:
+    """Compute training lookback start; prefer timeframe-specific lookback, fallback to global."""
+    tf_map = getattr(config, "TIMEFRAME_LOOKBACK_DAYS", {})
+    days = tf_map.get(timeframe)
+    if days is None:
+        days = getattr(config, "RIDGE_TRAIN_LOOKBACK_DAYS", None)
     if days is None:
         return start
     return start - timedelta(days=days)

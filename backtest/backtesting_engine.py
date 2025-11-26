@@ -63,9 +63,12 @@ class WalkForwardBacktester:
         self.ridge_spec = ridge_spec
         self.initial_capital = initial_capital
         self.output_dir = output_dir
+        self.timeframe = getattr(ridge_spec, "timeframe", config.PRIMARY_TIMEFRAME) or config.PRIMARY_TIMEFRAME
 
         self.broker = SimBroker(initial_capital)
         self.data_engine = DataEngine(binance_client=self.broker, max_candles=2000)
+        self.data_engine.primary_timeframe = self.timeframe
+        self.data_engine.data_fetcher.symbol_timeframes = [(s, self.timeframe) for s in symbols]
         self.algo_engine = AlgoEngine(self.data_engine)
         self.strategy = MeanVarianceForecastStrategy(self.data_engine)
         self.execution_engine = ExecutionEngine(binance_client=self.broker, total_capital=initial_capital)
@@ -76,6 +79,7 @@ class WalkForwardBacktester:
 
     async def run(self) -> BacktestMetrics:
         ohlcv_data = await self._load_history()
+        await self._warmup(ohlcv_data)
         clock = sorted({ts for df in ohlcv_data.values() for ts in df.index})
 
         equity_curve: List[float] = []
@@ -108,15 +112,15 @@ class WalkForwardBacktester:
                     candle = df.loc[ts]
                     bar = [int(ts.timestamp() * 1000)] + candle.tolist()
                     await self.data_engine.data_fetcher.data_processor.update_tracked_candles(
-                        sym, config.PRIMARY_TIMEFRAME, bar
+                        sym, self.timeframe, bar
                     )
 
-            self.data_engine.process_all_latest_bars(config.PRIMARY_TIMEFRAME)
+            self.data_engine.process_all_latest_bars(self.timeframe)
 
             # Mark-to-market: cache latest closes for all tracked symbols so equity reflects price moves even without trades.
             tracked_syms = set(self.symbols) | set(self.broker._positions.keys())  # pylint: disable=protected-access
             price_map = {
-                s: self.data_engine.get_latest_price(s, config.PRIMARY_TIMEFRAME)
+                s: self.data_engine.get_latest_price(s, self.timeframe)
                 for s in tracked_syms
             }
             self.broker.update_last_prices(price_map)
@@ -129,7 +133,7 @@ class WalkForwardBacktester:
 
             expected_returns: Dict[str, float] = {}
             for sym in self.symbols:
-                if self.data_engine.get_missing_bars(sym, config.PRIMARY_TIMEFRAME):
+                if self.data_engine.get_missing_bars(sym, self.timeframe):
                     continue
                 X, y, ts_list, cols = self.data_engine.get_feature_matrix(sym)
                 if y.size < config.REGRESSION_MIN_TRAIN:
@@ -137,6 +141,11 @@ class WalkForwardBacktester:
                 k = self.ridge_spec.k_per_asset.get(sym)
                 if k is None:
                     continue
+                # Apply per-asset training window if provided
+                w_cap = self.ridge_spec.w_per_asset.get(sym) if hasattr(self.ridge_spec, "w_per_asset") else None
+                if w_cap is not None and y.size > w_cap:
+                    X = X[-w_cap:]
+                    y = y[-w_cap:]
                 forecaster = self.strategy.forecaster.__class__(k_grid=[k], t_threshold=self.ridge_spec.t_threshold)
                 ridge_res = forecaster.forecast(sym, X, y)
                 if ridge_res:
@@ -166,7 +175,7 @@ class WalkForwardBacktester:
                 continue
 
             self.execution_engine.refresh_risk_model(sym_order, returns_matrix)
-            prices = {s: self.data_engine.get_latest_price(s, config.PRIMARY_TIMEFRAME) for s in forecast.universe}
+            prices = {s: self.data_engine.get_latest_price(s, self.timeframe) for s in forecast.universe}
             nav = await self._nav()
             result = await self.execution_engine.process_forecast(
                 forecast=forecast,
@@ -190,7 +199,7 @@ class WalkForwardBacktester:
             # Benchmark: use first symbol close
             bench_sym = self.symbols[0] if self.symbols else None
             if bench_sym:
-                px = self.data_engine.get_latest_price(bench_sym, config.PRIMARY_TIMEFRAME)
+                px = self.data_engine.get_latest_price(bench_sym, self.timeframe)
                 if px:
                     benchmark_prices.append(px)
             if len(equity_curve) > 1:
@@ -331,13 +340,37 @@ class WalkForwardBacktester:
 
     async def _price_lookup(self, symbol: str) -> Optional[float]:
         """Async adapter around DataEngine latest price for SimBroker fills."""
-        return self.data_engine.get_latest_price(symbol, config.PRIMARY_TIMEFRAME)
+        return self.data_engine.get_latest_price(symbol, self.timeframe)
+
+    async def _warmup(self, ohlcv_data: Dict[str, Any]) -> None:
+        """Ingest history prior to start to build features/risk before live walk-forward."""
+        clock = sorted({ts for df in ohlcv_data.values() for ts in df.index})
+        for ts in clock:
+            if ts >= self.start:
+                break
+            self.broker.set_bar_timestamp(ts)
+            for sym in self.symbols:
+                df = ohlcv_data.get(sym)
+                if df is not None and ts in df.index:
+                    candle = df.loc[ts]
+                    bar = [int(ts.timestamp() * 1000)] + candle.tolist()
+                    await self.data_engine.data_fetcher.data_processor.update_tracked_candles(
+                        sym, self.timeframe, bar
+                    )
+            self.data_engine.process_all_latest_bars(self.timeframe)
+            # Keep broker prices aligned with latest bar for MTM consistency
+            tracked_syms = set(self.symbols) | set(self.broker._positions.keys())  # pylint: disable=protected-access
+            price_map = {s: self.data_engine.get_latest_price(s, self.timeframe) for s in tracked_syms}
+            self.broker.update_last_prices(price_map)
 
     async def _load_history(self) -> Dict[str, Any]:
         console_log(f"Loading historical data for {len(self.symbols)} assets")
-        lookback_start = _lookback_start(self.start)
+        if getattr(self.ridge_spec, "lookback_days", None) is not None:
+            lookback_start = self.start - timedelta(days=self.ridge_spec.lookback_days)
+        else:
+            lookback_start = _lookback_start(self.start, self.timeframe)
         tasks = [
-            self.fetcher.download_ohlcv(sym, config.PRIMARY_TIMEFRAME, lookback_start, self.end, force=True)
+            self.fetcher.download_ohlcv(sym, self.timeframe, lookback_start, self.end, force=False)
             for sym in self.symbols
         ]
         dfs = await asyncio.gather(*tasks)
@@ -388,8 +421,11 @@ class WalkForwardBacktester:
         return out
 
 
-def _lookback_start(start: datetime) -> datetime:
-    days = getattr(config, "RIDGE_TRAIN_LOOKBACK_DAYS", None)
+def _lookback_start(start: datetime, timeframe: str) -> datetime:
+    tf_map = getattr(config, "TIMEFRAME_LOOKBACK_DAYS", {})
+    days = tf_map.get(timeframe)
+    if days is None:
+        days = getattr(config, "RIDGE_TRAIN_LOOKBACK_DAYS", None)
     if days is None:
         return start
     return start - timedelta(days=days)

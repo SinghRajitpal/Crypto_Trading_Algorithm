@@ -32,7 +32,7 @@ class DataEngine:
         running: Boolean indicating if the engine is running.
     """
     
-    def __init__(self, binance_client, max_candles: int = 100):
+    def __init__(self, binance_client, max_candles: int = 100, track_timestamps: bool = True):
         """Initialize the data engine.
         
         Args:
@@ -62,9 +62,10 @@ class DataEngine:
             min_volume=config.MIN_BAR_VOLUME,
         )
         self.return_manager = ReturnManager(
-            regression_window=config.REGRESSION_WINDOW,
+            regression_window=required_candles,
             risk_window=config.RISK_WINDOW,
             feature_mode=config.REGRESSION_FEATURE_MODE,
+            track_timestamps=track_timestamps,
         )
         self.universe_selector = UniverseSelector(
             max_rank=config.UNIVERSE_MAX_RANK,
@@ -275,6 +276,17 @@ class DataEngine:
     def get_latest_return(self, symbol: str) -> Optional[float]:
         """Expose the latest validated simple return for the symbol."""
         return self.return_manager.get_latest_return(symbol)
+
+    def dispose(self) -> None:
+        """Release stored state to help long-running batch jobs."""
+        try:
+            self.return_manager.clear()
+        except Exception:
+            pass
+        try:
+            self.data_fetcher.data_processor.clear()
+        except Exception:
+            pass
     
     @staticmethod
     def extract_ohlcv(candle: List[float]) -> Dict[str, float]:

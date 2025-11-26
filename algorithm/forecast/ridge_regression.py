@@ -49,8 +49,9 @@ class RidgeRegressionForecaster:
             return None
 
         # Cap history to max bars
-        X = X[-config.REGRESSION_MAX_BARS :]
-        y = y[-config.REGRESSION_MAX_BARS :]
+        if config.REGRESSION_MAX_BARS:
+            X = X[-config.REGRESSION_MAX_BARS :]
+            y = y[-config.REGRESSION_MAX_BARS :]
         n = len(y)
         if n < config.REGRESSION_MIN_TRAIN:
             return None
@@ -108,20 +109,23 @@ class RidgeRegressionForecaster:
         # Fit on full standardized data with best_k
         scaler_full = Standardizer().fit(X)
         X_std = self._with_intercept(scaler_full.transform(X))
+        # Downcast to float32 for diagnostics-heavy ops to reduce transient RAM.
+        X_std = X_std.astype(np.float32, copy=False)
+        y = y.astype(np.float32, copy=False)
+
+        XtX_full = X_std.T @ X_std
         penalty_full = self._penalty_matrix(X_std.shape[1], best_k)
-        beta_ridge = self._ridge_beta(X_std.T @ X_std, X_std.T @ y, penalty_full)
+        beta_ridge = self._ridge_beta(XtX_full, X_std.T @ y, penalty_full)
 
         # Optional ridge-selection (t-stat pruning)
         dropped: List[str] = []
         beta_final = beta_ridge
         if self.t_threshold and self.t_threshold > 0:
-            hat = X_std @ np.linalg.pinv(X_std.T @ X_std + penalty_full) @ X_std.T
             residuals = y - X_std @ beta_ridge
             sigma2 = float(np.mean(residuals**2))
-            XtX = X_std.T @ X_std
-            cov_beta = sigma2 * np.linalg.pinv(XtX + penalty_full) @ XtX @ np.linalg.pinv(
-                XtX + penalty_full
-            )
+            XtX = XtX_full
+            inv_mat = np.linalg.pinv(XtX + penalty_full)
+            cov_beta = sigma2 * inv_mat @ XtX @ inv_mat
             t_stats = np.abs(beta_ridge) / (np.sqrt(np.diag(cov_beta)) + 1e-12)
             # Skip intercept index 0
             weak_idx = [i for i, t in enumerate(t_stats) if i > 0 and t < self.t_threshold]
@@ -138,7 +142,7 @@ class RidgeRegressionForecaster:
                 beta_ridge = np.zeros_like(beta_ridge)
                 beta_ridge[mask] = beta_final
 
-        latest_std = self._with_intercept(scaler_full.transform(X[-1:].reshape(1, -1)))
+        latest_std = self._with_intercept(scaler_full.transform(X[-1:].reshape(1, -1))).astype(np.float32)
         y_hat = float((latest_std @ beta_ridge).item())
         mu_hat = float(np.exp(y_hat) - 1.0)
 
@@ -147,10 +151,10 @@ class RidgeRegressionForecaster:
         hat_max = 0.0
         resid_sigma = 0.0
         try:
-            H = X_std @ np.linalg.pinv(X_std.T @ X_std + best_k * np.eye(X_std.shape[1])) @ X_std.T
-            hat_vals = np.diag(H)
-            hat_mean = float(np.mean(hat_vals))
-            hat_max = float(np.max(hat_vals))
+            inv_mat = np.linalg.pinv(XtX_full + best_k * np.eye(XtX_full.shape[0], dtype=XtX_full.dtype))
+            hat_diag = self._hat_diag(X_std, inv_mat)
+            hat_mean = float(np.mean(hat_diag))
+            hat_max = float(np.max(hat_diag))
             resid = y - X_std @ beta_ridge
             resid_sigma = float(np.std(resid, ddof=1))
         except Exception:
@@ -197,3 +201,9 @@ class RidgeRegressionForecaster:
     def _with_intercept(X: np.ndarray) -> np.ndarray:
         intercept = np.ones((X.shape[0], 1))
         return np.column_stack([intercept, X])
+
+    @staticmethod
+    def _hat_diag(X: np.ndarray, inv_xtx: np.ndarray) -> np.ndarray:
+        """Return only diagonal of hat matrix without materializing n x n."""
+        # (X @ inv_xtx) has shape (n, p); elementwise multiply by X and row-sum -> diag(H)
+        return np.sum((X @ inv_xtx) * X, axis=1)

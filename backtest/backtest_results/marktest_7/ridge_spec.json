@@ -1,0 +1,39 @@
+{
+  "timeframe": "1w",
+  "k_per_asset": {
+    "BTCUSDT": 1000.0,
+    "ETHUSDT": 10000.0,
+    "XRPUSDT": 1000.0,
+    "BNBUSDT": 10000.0,
+    "SOLUSDT": 10000.0
+  },
+  "msep_per_asset": {
+    "BTCUSDT": 6.5179896211436e-06,
+    "ETHUSDT": 2.1580669082645625e-05,
+    "XRPUSDT": 2.4990182610626296e-05,
+    "BNBUSDT": 2.5955438445720724e-05,
+    "SOLUSDT": 4.222326127318334e-05
+  },
+  "rl_vs_ls": {
+    "BTCUSDT": 0.3435269292389639,
+    "ETHUSDT": 0.4561306371172439,
+    "XRPUSDT": 0.48897965822312833,
+    "BNBUSDT": 0.5073414144769157,
+    "SOLUSDT": 0.6052229398167015
+  },
+  "t_threshold": 1.2,
+  "samples_per_asset": {
+    "BTCUSDT": 1981,
+    "ETHUSDT": 1981,
+    "XRPUSDT": 1979,
+    "BNBUSDT": 1980,
+    "SOLUSDT": 1981
+  },
+  "w_per_asset": {
+    "BTCUSDT": 100,
+    "ETHUSDT": 100,
+    "XRPUSDT": 100,
+    "BNBUSDT": 100,
+    "SOLUSDT": 100
+  }
+}

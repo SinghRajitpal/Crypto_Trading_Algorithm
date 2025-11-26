@@ -39,7 +39,7 @@ def test_run_layer_a_and_b_separately(monkeypatch, tmp_path):
             return ["AAA"]
 
     class DummySelector:
-        def select(self, data_engine, symbols):
+        def select(self, data_engine, symbols, start=None, end=None):
             return run_script.RidgeLayerResult(
                 k_per_asset={symbols[0]: 0.0},
                 msep_per_asset={symbols[0]: 0.0},

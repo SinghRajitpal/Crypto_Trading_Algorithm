@@ -74,11 +74,16 @@ class HistoricalDataFetcher:
         existing_df: Optional[pd.DataFrame] = None
         if os.path.exists(file_path) and not force:
             try:
-                existing_df = pd.read_csv(file_path, parse_dates=["timestamp"], index_col="timestamp")
-            except ValueError:
-                existing_df = pd.read_csv(file_path, parse_dates=[0], index_col=0)
-                existing_df.index.name = "timestamp"
-            existing_df.index = pd.to_datetime(existing_df.index, utc=True)
+                existing_df = pd.read_parquet(file_path)
+                if "timestamp" in existing_df.columns:
+                    existing_df.set_index("timestamp", inplace=True)
+            except Exception:
+                # Backward compatibility: try legacy CSV if parquet read fails
+                csv_path = file_path.replace(".parquet", ".csv")
+                if os.path.exists(csv_path):
+                    existing_df = pd.read_csv(csv_path, parse_dates=["timestamp"], index_col="timestamp")
+            if existing_df is not None:
+                existing_df.index = pd.to_datetime(existing_df.index, utc=True)
 
         since_ms = _to_ms(start)
         end_ms = _to_ms(end)
@@ -105,19 +110,25 @@ class HistoricalDataFetcher:
             f"→ {'up to ' + str(datetime.fromtimestamp(end_ms/1000, UTC)) if end_ms else 'latest'}"
         )
 
-        while True:
-            klines = await self._futures_klines(symbol_norm, timeframe, fetch_since, end_ms)
-            if not klines:
-                break
-            batch = []
-            for k in klines:
-                batch.append([int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])])
-            all_rows.extend(batch)
-            last_ts = batch[-1][0]
-            if end_ms is not None and last_ts >= end_ms:
-                break
-            fetch_since = last_ts + 1
-            await asyncio.sleep(0.2)
+        try:
+            while True:
+                klines = await self._futures_klines(symbol_norm, timeframe, fetch_since, end_ms)
+                if not klines:
+                    break
+                batch = []
+                for k in klines:
+                    batch.append([int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])])
+                all_rows.extend(batch)
+                last_ts = batch[-1][0]
+                if end_ms is not None and last_ts >= end_ms:
+                    break
+                fetch_since = last_ts + 1
+                await asyncio.sleep(0.2)
+        except Exception as exc:
+            if existing_df is not None:
+                logger.warning(f"Download failed ({exc}); returning cached data at {file_path}")
+                return existing_df
+            raise
 
         new_df = self._rows_to_df(all_rows)
         if existing_df is not None:
@@ -126,12 +137,8 @@ class HistoricalDataFetcher:
         else:
             combined = new_df
 
-        combined.to_csv(
-            file_path,
-            index=True,
-            date_format="%Y-%m-%dT%H:%M:%S.%fZ",
-            index_label="timestamp",
-        )
+        combined.index = pd.to_datetime(combined.index, utc=True)
+        combined.to_parquet(file_path, index=True)
         logger.info(f"Saved {len(new_df)} rows → {file_path}")
         return combined
 
@@ -204,7 +211,7 @@ class HistoricalDataFetcher:
     # Helpers
     def _cache_path(self, symbol: str, timeframe: str) -> str:
         symbol_uc = _normalize_symbol(symbol)
-        fname = f"{symbol_uc}-{timeframe}.csv"
+        fname = f"{symbol_uc}-{timeframe}.parquet"
         return os.path.join(self.data_dir, fname)
 
     def _rows_to_df(self, rows: List[List]) -> pd.DataFrame:

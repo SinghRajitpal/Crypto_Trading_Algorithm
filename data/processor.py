@@ -52,8 +52,10 @@ class DataProcessor:
             mins = int(timeframe[:-1]) * 60
         elif timeframe.endswith("d"):
             mins = int(timeframe[:-1]) * 60 * 24
+        elif timeframe.endswith("w"):
+            mins = int(timeframe[:-1]) * 60 * 24 * 7
         else:
-            raise ValueError("Timeframe must end with m/h/d for grid alignment")
+            raise ValueError("Timeframe must end with m/h/d/w for grid alignment")
         return mins * 60 * 1000
 
     @staticmethod
@@ -147,6 +149,13 @@ class DataProcessor:
             List of all symbol-timeframe keys currently being tracked.
         """
         return list(self.symbol_candles.keys())
+
+    def clear(self) -> None:
+        """Release stored candles and duplicate tracking."""
+        self.symbol_candles.clear()
+        self._last_timestamp.clear()
+        self._missing_bars.clear()
+        self._dup_tracker = DuplicateTracker()
 
     
 

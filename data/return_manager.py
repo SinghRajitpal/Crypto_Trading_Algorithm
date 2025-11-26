@@ -12,17 +12,19 @@ class ReturnManager:
         regression_window: int,
         risk_window: int,
         feature_mode: str = "log_price",
+        track_timestamps: bool = True,
     ) -> None:
         self.regression_window = max(1, regression_window)
         self.risk_window = max(1, risk_window)
         self.feature_mode = feature_mode
+        self._track_timestamps = track_timestamps
 
         # Determine buffer sizes with a small safety margin
         self._max_price_window = max(self.regression_window, self.risk_window) + 5
         self._max_return_window = self._max_price_window
         self._max_volume_window = self._max_price_window
         self._max_feature_window = self.regression_window + 5
-        self._bar_timestamps: Dict[str, set] = defaultdict(set)
+        self._bar_timestamps: Dict[str, set] = defaultdict(set) if self._track_timestamps else defaultdict(set)
 
         self.price_history: Dict[str, Deque] = defaultdict(
             lambda: deque(maxlen=self._max_price_window)
@@ -48,10 +50,11 @@ class ReturnManager:
         timestamp = bar["timestamp"]
         close = float(bar["close"])
         volume = float(bar.get("volume", 0.0) or 0.0)
-        if timestamp in self._bar_timestamps[symbol]:
-            # Duplicate bar on grid; skip to avoid double-count
-            return
-        self._bar_timestamps[symbol].add(timestamp)
+        if self._track_timestamps:
+            if timestamp in self._bar_timestamps[symbol]:
+                # Duplicate bar on grid; skip to avoid double-count
+                return
+            self._bar_timestamps[symbol].add(timestamp)
 
         prev_close = self.get_last_close(symbol)
         self.price_history[symbol].append((timestamp, close))
@@ -320,3 +323,40 @@ class ReturnManager:
             if abs(val - mu) > sigma_threshold * sigma:
                 flags.append(ts)
         return flags
+
+    def clear(self) -> None:
+        """Release all rolling state to help GC after batch runs."""
+        for store in (
+            self.price_history,
+            self.return_history,
+            self.feature_history,
+            self.volume_history,
+            self.log_return_history,
+            self.ohlc_history,
+        ):
+            store.clear()
+        self._bar_timestamps.clear()
+
+    def buffer_lengths(self, symbols: Optional[List[str]] = None) -> Dict[str, Dict[str, int]]:
+        """Return current buffer sizes for diagnostics."""
+        symbols = symbols or list(
+            set(list(self.price_history.keys()))
+            | set(self.return_history.keys())
+            | set(self.feature_history.keys())
+            | set(self.volume_history.keys())
+            | set(self.log_return_history.keys())
+            | set(self.ohlc_history.keys())
+        )
+        snapshot: Dict[str, Dict[str, int]] = {}
+        for sym in symbols:
+            snapshot[sym] = {
+                "price": len(self.price_history.get(sym, [])),
+                "returns": len(self.return_history.get(sym, [])),
+                "features": len(self.feature_history.get(sym, [])),
+                "volume": len(self.volume_history.get(sym, [])),
+                "log_returns": len(self.log_return_history.get(sym, [])),
+                "ohlc": len(self.ohlc_history.get(sym, [])),
+            }
+            if self._track_timestamps:
+                snapshot[sym]["seen_ts"] = len(self._bar_timestamps.get(sym, []))
+        return snapshot

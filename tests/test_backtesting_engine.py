@@ -65,12 +65,14 @@ def test_walk_forward_backtester_runs_with_stubbed_history(monkeypatch):
     df = make_df(start, periods)
     symbols = ["TESTUSDT"]
 
+    tf = "5m"
     ridge_spec = RidgeLayerResult(
         k_per_asset={symbols[0]: 0.0},
         msep_per_asset={symbols[0]: 0.0},
         rl_vs_ls={symbols[0]: None},
         t_threshold=config.RIDGE_T_THRESHOLD,
         samples_per_asset={symbols[0]: periods},
+        timeframe=tf,
     )
 
     bt = WalkForwardBacktester(
@@ -82,7 +84,7 @@ def test_walk_forward_backtester_runs_with_stubbed_history(monkeypatch):
         output_dir=None,
     )
     # Ensure data engine processes our synthetic symbol
-    bt.data_engine.data_fetcher.symbol_timeframes = [(symbols[0], config.PRIMARY_TIMEFRAME)]
+    bt.data_engine.data_fetcher.symbol_timeframes = [(symbols[0], tf)]
     # Stub the historical fetcher to avoid network calls
     bt.fetcher = StubFetcher({symbols[0]: df})
 
@@ -102,12 +104,14 @@ def test_backtester_metrics_finite_and_trades(monkeypatch):
     df = make_df(start, periods, price_start=50.0, step=0.5)  # upward trend
     symbols = ["AAA"]
 
+    tf = "5m"
     ridge_spec = RidgeLayerResult(
         k_per_asset={symbols[0]: 0.0},
         msep_per_asset={symbols[0]: 0.0},
         rl_vs_ls={symbols[0]: None},
         t_threshold=config.RIDGE_T_THRESHOLD,
         samples_per_asset={symbols[0]: periods},
+        timeframe=tf,
     )
 
     bt = WalkForwardBacktester(
@@ -118,7 +122,7 @@ def test_backtester_metrics_finite_and_trades(monkeypatch):
         initial_capital=10000.0,
         output_dir=None,
     )
-    bt.data_engine.data_fetcher.symbol_timeframes = [(symbols[0], config.PRIMARY_TIMEFRAME)]
+    bt.data_engine.data_fetcher.symbol_timeframes = [(symbols[0], tf)]
     bt.fetcher = StubFetcher({symbols[0]: df})
 
     metrics = asyncio.run(bt.run())
@@ -139,12 +143,14 @@ def test_backtester_skips_when_not_ready(monkeypatch):
     df = make_df(start, periods, price_start=100.0, step=0.0)  # flat prices
     symbols = ["AAA"]
 
+    tf = "5m"
     ridge_spec = RidgeLayerResult(
         k_per_asset={symbols[0]: 0.0},
         msep_per_asset={symbols[0]: 0.0},
         rl_vs_ls={symbols[0]: None},
         t_threshold=config.RIDGE_T_THRESHOLD,
         samples_per_asset={symbols[0]: periods},
+        timeframe=tf,
     )
 
     bt = WalkForwardBacktester(
@@ -155,7 +161,7 @@ def test_backtester_skips_when_not_ready(monkeypatch):
         initial_capital=10000.0,
         output_dir=None,
     )
-    bt.data_engine.data_fetcher.symbol_timeframes = [(symbols[0], config.PRIMARY_TIMEFRAME)]
+    bt.data_engine.data_fetcher.symbol_timeframes = [(symbols[0], tf)]
     bt.fetcher = StubFetcher({symbols[0]: df})
 
     metrics = asyncio.run(bt.run())
@@ -174,12 +180,14 @@ def test_backtester_monitoring_outputs_finite(monkeypatch):
     df2 = make_df(start, periods, price_start=50.0, step=-0.1)  # downward trend
     symbols = ["AAA", "BBB"]
 
+    tf = "5m"
     ridge_spec = RidgeLayerResult(
         k_per_asset={s: 0.0 for s in symbols},
         msep_per_asset={s: 0.0 for s in symbols},
         rl_vs_ls={s: None for s in symbols},
         t_threshold=config.RIDGE_T_THRESHOLD,
         samples_per_asset={s: periods for s in symbols},
+        timeframe=tf,
     )
 
     bt = WalkForwardBacktester(
@@ -190,7 +198,7 @@ def test_backtester_monitoring_outputs_finite(monkeypatch):
         initial_capital=10000.0,
         output_dir=None,
     )
-    bt.data_engine.data_fetcher.symbol_timeframes = [(s, config.PRIMARY_TIMEFRAME) for s in symbols]
+    bt.data_engine.data_fetcher.symbol_timeframes = [(s, tf) for s in symbols]
     bt.fetcher = StubFetcher({symbols[0]: df1, symbols[1]: df2})
 
     metrics = asyncio.run(bt.run())
