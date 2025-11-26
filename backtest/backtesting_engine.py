@@ -147,7 +147,14 @@ class WalkForwardBacktester:
                     X = X[-w_cap:]
                     y = y[-w_cap:]
                 forecaster = self.strategy.forecaster.__class__(k_grid=[k], t_threshold=self.ridge_spec.t_threshold)
-                ridge_res = forecaster.forecast(sym, X, y)
+                ridge_res = forecaster.forecast(
+                    sym,
+                    X,
+                    y,
+                    fixed_k=k,
+                    train_window=w_cap,
+                    skip_cv=True,
+                )
                 if ridge_res:
                     expected_returns[sym] = ridge_res.expected_simple_return
             logger.debug(

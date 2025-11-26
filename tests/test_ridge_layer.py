@@ -135,7 +135,7 @@ def test_build_engine_trims_to_lookback_and_cap(tmp_path):
         selector = RidgeLayerSelector(train_min=5, val_len=2, embargo=0, fast_mode=True)
         lookback_days = 1
         end_ts = ts[-1]
-        engine = selector._build_engine_for_tf(
+        engine, _ = selector._build_engine_for_tf(
             timeframe,
             [sym],
             base_client=object(),

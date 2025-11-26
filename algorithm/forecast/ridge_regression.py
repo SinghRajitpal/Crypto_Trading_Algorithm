@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -24,6 +24,8 @@ class RidgeForecast:
     hat_mean: float
     hat_max: float
     resid_sigma: float
+    feature_columns: List[str]
+    outliers_dropped: Optional[int] = None
 
 
 class RidgeRegressionForecaster:
@@ -38,7 +40,16 @@ class RidgeRegressionForecaster:
         self.t_threshold = t_threshold
 
     def forecast(
-        self, symbol: str, X: np.ndarray, y: np.ndarray
+        self,
+        symbol: str,
+        X: np.ndarray,
+        y: np.ndarray,
+        fixed_k: Optional[float] = None,
+        train_window: Optional[int] = None,
+        skip_cv: bool = False,
+        train_min: Optional[int] = None,
+        feature_columns: Optional[List[str]] = None,
+        outliers_dropped: Optional[int] = None,
     ) -> Optional[RidgeForecast]:
         """Fit ridge on per-asset data and return one-step-ahead expectation."""
         if X.size == 0 or y.size == 0:
@@ -52,56 +63,69 @@ class RidgeRegressionForecaster:
         if config.REGRESSION_MAX_BARS:
             X = X[-config.REGRESSION_MAX_BARS :]
             y = y[-config.REGRESSION_MAX_BARS :]
+        if train_window is not None:
+            X = X[-train_window:]
+            y = y[-train_window:]
         n = len(y)
-        if n < config.REGRESSION_MIN_TRAIN:
+        eff_train_min = train_min if train_min is not None else config.REGRESSION_MIN_TRAIN
+        if train_window is not None:
+            eff_train_min = min(eff_train_min, train_window)
+        if n < eff_train_min:
             return None
 
-        # Rolling-origin CV
-        train_min = config.REGRESSION_MIN_TRAIN
-        val_len = min(config.REGRESSION_VAL_WINDOW, max(1, n - train_min))
-        best_k = None
+        best_k = fixed_k
         best_msep = np.inf
         best_gcv = np.inf
         gcv_lookup: Dict[float, float] = {}
 
-        # Standardize using train stats each split
-        for start in range(0, n - train_min, val_len):
-            train_end = min(start + train_min, n - val_len)
-            if train_end <= start or train_end + val_len > n:
-                continue
-            X_train = X[start:train_end]
-            y_train = y[start:train_end]
-            X_val = X[train_end : train_end + val_len]
-            y_val = y[train_end : train_end + val_len]
+        run_cv = not skip_cv or best_k is None
+        k_grid = [fixed_k] if fixed_k is not None else list(self.k_grid)
 
-            scaler = Standardizer().fit(X_train)
-            X_train_std = scaler.transform(X_train)
-            X_val_std = scaler.transform(X_val)
+        if run_cv:
+            train_min = eff_train_min
+            val_len = min(config.REGRESSION_VAL_WINDOW, max(1, n - train_min))
 
-            X_train_std = self._with_intercept(X_train_std)
-            X_val_std = self._with_intercept(X_val_std)
+            # Standardize using train stats each split
+            for start in range(0, n - train_min, val_len):
+                train_end = min(start + train_min, n - val_len)
+                if train_end <= start or train_end + val_len > n:
+                    continue
+                X_train = X[start:train_end]
+                y_train = y[start:train_end]
+                X_val = X[train_end : train_end + val_len]
+                y_val = y[train_end : train_end + val_len]
 
-            XtX = X_train_std.T @ X_train_std
-            Xty = X_train_std.T @ y_train
-            for k in self.k_grid:
-                penalty = self._penalty_matrix(XtX.shape[0], k)
-                beta = self._ridge_beta(XtX, Xty, penalty)
-                preds = X_val_std @ beta
-                msep = float(np.mean((y_val - preds) ** 2))
-                # GCV approximation
-                try:
-                    H = X_train_std @ np.linalg.pinv(XtX + penalty) @ X_train_std.T
-                    trace_H = float(np.trace(H))
-                    gcv = float(np.sum((y_train - X_train_std @ beta) ** 2) / (len(y_train) - trace_H) ** 2)
-                except Exception:
-                    gcv = msep
-                if msep < best_msep:
-                    best_msep = msep
-                    best_k = k
-                if gcv < best_gcv:
-                    best_gcv = gcv
-                if best_k is None or k not in gcv_lookup:
-                    gcv_lookup[k] = gcv
+                scaler = Standardizer().fit(X_train)
+                X_train_std = scaler.transform(X_train)
+                X_val_std = scaler.transform(X_val)
+
+                X_train_std = self._with_intercept(X_train_std)
+                X_val_std = self._with_intercept(X_val_std)
+
+                XtX = X_train_std.T @ X_train_std
+                Xty = X_train_std.T @ y_train
+                for k in k_grid:
+                    penalty = self._penalty_matrix(XtX.shape[0], k)
+                    beta = self._ridge_beta(XtX, Xty, penalty)
+                    preds = X_val_std @ beta
+                    msep = float(np.mean((y_val - preds) ** 2))
+                    # GCV approximation
+                    try:
+                        H = X_train_std @ np.linalg.pinv(XtX + penalty) @ X_train_std.T
+                        trace_H = float(np.trace(H))
+                        gcv = float(np.sum((y_train - X_train_std @ beta) ** 2) / (len(y_train) - trace_H) ** 2)
+                    except Exception:
+                        gcv = msep
+                    if msep < best_msep:
+                        best_msep = msep
+                        best_k = k
+                    if gcv < best_gcv:
+                        best_gcv = gcv
+                    if best_k is None or k not in gcv_lookup:
+                        gcv_lookup[k] = gcv
+        else:
+            # No CV path: rely on provided k and compute diagnostics after fit.
+            best_k = best_k if best_k is not None else (k_grid[0] if k_grid else None)
 
         if best_k is None:
             return None
@@ -117,30 +141,14 @@ class RidgeRegressionForecaster:
         penalty_full = self._penalty_matrix(X_std.shape[1], best_k)
         beta_ridge = self._ridge_beta(XtX_full, X_std.T @ y, penalty_full)
 
-        # Optional ridge-selection (t-stat pruning)
+        # Pruning disabled: keep full ridge fit
         dropped: List[str] = []
         beta_final = beta_ridge
-        if self.t_threshold and self.t_threshold > 0:
-            residuals = y - X_std @ beta_ridge
-            sigma2 = float(np.mean(residuals**2))
-            XtX = XtX_full
-            inv_mat = np.linalg.pinv(XtX + penalty_full)
-            cov_beta = sigma2 * inv_mat @ XtX @ inv_mat
-            t_stats = np.abs(beta_ridge) / (np.sqrt(np.diag(cov_beta)) + 1e-12)
-            # Skip intercept index 0
-            weak_idx = [i for i, t in enumerate(t_stats) if i > 0 and t < self.t_threshold]
-            if weak_idx:
-                mask = np.ones(X_std.shape[1], dtype=bool)
-                mask[weak_idx] = False
-                # Intercept preserved
-                X_pruned = X_std[:, mask]
-                penalty_pruned = self._penalty_matrix(X_pruned.shape[1], best_k)
-                beta_final = self._ridge_beta(X_pruned.T @ X_pruned, X_pruned.T @ y, penalty_pruned)
-                # Track dropped features (intercept excluded)
-                dropped = [f"feature_{i-1}" for i in weak_idx]
-                # Reassign for prediction dimension
-                beta_ridge = np.zeros_like(beta_ridge)
-                beta_ridge[mask] = beta_final
+
+        fit_msep = float(np.mean((y - X_std @ beta_ridge) ** 2))
+        if not run_cv:
+            best_msep = fit_msep
+            best_gcv = None
 
         latest_std = self._with_intercept(scaler_full.transform(X[-1:].reshape(1, -1))).astype(np.float32)
         y_hat = float((latest_std @ beta_ridge).item())
@@ -159,6 +167,9 @@ class RidgeRegressionForecaster:
             resid_sigma = float(np.std(resid, ddof=1))
         except Exception:
             pass
+
+        if best_gcv == np.inf:
+            best_gcv = None
 
         # RL vs LS as diagnostic
         rl = None
@@ -183,6 +194,8 @@ class RidgeRegressionForecaster:
             hat_mean=hat_mean,
             hat_max=hat_max,
             resid_sigma=resid_sigma,
+            feature_columns=feature_columns or [],
+            outliers_dropped=outliers_dropped,
         )
 
     @staticmethod

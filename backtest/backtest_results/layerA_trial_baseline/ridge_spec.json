@@ -1,0 +1,25 @@
+{
+  "timeframe": "1m",
+  "k_per_asset": {
+    "ETHUSDT": 10000.0,
+    "BTCUSDT": 100.0
+  },
+  "msep_per_asset": {
+    "ETHUSDT": 1.7035265613372047e-07,
+    "BTCUSDT": 7.845521051393368e-08
+  },
+  "rl_vs_ls": {
+    "ETHUSDT": 0.3222925391608195,
+    "BTCUSDT": 0.3045416193959867
+  },
+  "t_threshold": 1.2,
+  "samples_per_asset": {
+    "ETHUSDT": 19978,
+    "BTCUSDT": 19977
+  },
+  "w_per_asset": {
+    "ETHUSDT": 1000,
+    "BTCUSDT": 500
+  },
+  "lookback_days": 26
+}

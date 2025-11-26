@@ -1,13 +1,13 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from collections import deque
 import gc
 import json
-import os
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import ceil
+import csv
 
 import numpy as np
 import pandas as pd
@@ -16,11 +16,56 @@ import config
 from algorithm.forecast.ridge_regression import RidgeRegressionForecaster
 from data.standardizer import Standardizer
 from data.data_engine import DataEngine
-from data.return_manager import ReturnManager
-from data.universe_selector import UniverseSelector
 from utils.logging_config import get_logger
 
 logger = get_logger(__name__)
+_GLOBAL_ARTIFACTS: Optional["LayerAArtifacts"] = None
+
+
+class LayerAArtifacts:
+    """Helper for persisting Layer A diagnostics and audit artifacts."""
+
+    def __init__(self, base_dir: Path) -> None:
+        self.base_dir = Path(base_dir)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.coverage_path = self.base_dir / "coverage_report.json"
+        self.timeframe_candidates_path = self.base_dir / "timeframe_candidates.jsonl"
+        self.warnings_path = self.base_dir / "warnings_and_skips.jsonl"
+        self.mem_trace_path = self.base_dir / "memory_trace.jsonl"
+        self.cv_grid_dir = self.base_dir / "cv_grid"
+        self.model_diag_dir = self.base_dir / "model_diagnostics"
+        self.summary_path = self.base_dir / "layerA_summary.json"
+        self.cv_grid_dir.mkdir(parents=True, exist_ok=True)
+        self.model_diag_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _write_json(path: Path, payload: Dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(payload, f, indent=2, default=str)
+
+    @staticmethod
+    def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a") as f:
+            f.write(json.dumps(payload, default=str) + "\n")
+
+    def log_mem(self, stage: str, payload: Dict[str, Any]) -> None:
+        record = {"stage": stage, "timestamp": datetime.utcnow().isoformat(), **payload}
+        self._append_jsonl(self.mem_trace_path, record)
+
+    def warn(self, payload: Dict[str, Any]) -> None:
+        payload = {"timestamp": datetime.utcnow().isoformat(), **payload}
+        self._append_jsonl(self.warnings_path, payload)
+
+    def record_timeframe_candidate(self, payload: Dict[str, Any]) -> None:
+        self._append_jsonl(self.timeframe_candidates_path, payload)
+
+    def write_coverage_report(self, payload: Dict[str, Any]) -> None:
+        self._write_json(self.coverage_path, payload)
+
+    def write_summary(self, payload: Dict[str, Any]) -> None:
+        self._write_json(self.summary_path, payload)
 
 
 def _mem_usage_mb() -> Optional[float]:
@@ -52,6 +97,8 @@ def _log_mem(stage: str, **extra: Any) -> None:
     payload = {"rss_mb": round(rss, 1)}
     if extra:
         payload.update(extra)
+    if _GLOBAL_ARTIFACTS:
+        _GLOBAL_ARTIFACTS.log_mem(stage, payload)
     logger.info("[LayerA][mem] %s | %s", stage, payload)
 
 
@@ -431,6 +478,7 @@ class RidgeLayerResult:
     samples_per_asset: Dict[str, int] = field(default_factory=dict)
     timeframe: str = config.PRIMARY_TIMEFRAME
     w_per_asset: Dict[str, int] = field(default_factory=dict)
+    train_samples_used: Dict[str, int] = field(default_factory=dict)
     lookback_days: Optional[int] = None
 
     def to_json(self, path: str) -> None:
@@ -444,6 +492,7 @@ class RidgeLayerResult:
                     "t_threshold": self.t_threshold,
                     "samples_per_asset": self.samples_per_asset,
                     "w_per_asset": self.w_per_asset,
+                    "train_samples_used": self.train_samples_used,
                     "lookback_days": self.lookback_days,
                 },
                 f,
@@ -462,6 +511,7 @@ class RidgeLayerResult:
             t_threshold=float(data.get("t_threshold", config.RIDGE_T_THRESHOLD)),
             samples_per_asset={k: int(v) for k, v in data.get("samples_per_asset", {}).items()},
             w_per_asset={k: int(v) for k, v in data.get("w_per_asset", {}).items()},
+            train_samples_used={k: int(v) for k, v in data.get("train_samples_used", {}).items()},
             lookback_days=(int(data["lookback_days"]) if data.get("lookback_days") is not None else None),
         )
 
@@ -480,9 +530,17 @@ class RidgeLayerSelector:
         tf_candidates: Optional[List[str]] = None,
         max_splits: int = 50,
         fast_mode: bool = False,
+        min_splits: int = 2,
+        min_effective_lookback_days: int = 30,
     ) -> None:
         self.fast_mode = fast_mode
-        self.k_grid = k_grid or ([1e-4, 1e-3, 1e-2, 1e-1] if fast_mode else config.RIDGE_K_GRID)
+        if k_grid is None:
+            # Bias toward smaller k; cap maximum to 1e2 for Layer A
+            base_grid = [0.0, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0]
+            self.k_grid = [float(v) for v in base_grid]
+        else:
+            # Preserve caller-provided ordering but ensure floats
+            self.k_grid = [float(v) for v in k_grid]
         self.train_min = train_min
         self.val_len = val_len
         self.t_threshold = t_threshold
@@ -490,6 +548,8 @@ class RidgeLayerSelector:
         self.lookback_days_grid = lookback_days_grid or getattr(config, "LAYERA_LOOKBACK_DAYS_GRID", {}) or {}
         self.tf_candidates = tf_candidates or config.TF_CANDIDATES
         self.max_splits = min(max_splits, 10) if fast_mode else max_splits
+        self.min_splits = max(1, min_splits)
+        self.min_effective_lookback_days = max(1, min_effective_lookback_days)
 
     def select(
         self,
@@ -497,25 +557,52 @@ class RidgeLayerSelector:
         universe: Optional[List[str]] = None,
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
+        artifacts_dir: Optional[str] = None,
     ) -> RidgeLayerResult:
+        global _GLOBAL_ARTIFACTS
+        artifacts: Optional[LayerAArtifacts] = None
+        if artifacts_dir:
+            artifacts = LayerAArtifacts(Path(artifacts_dir))
+            _GLOBAL_ARTIFACTS = artifacts
+
         symbols = universe or data_engine.get_active_universe()
         default_ws = [self.train_min, max(self.train_min * 2, self.val_len)]
         result: Optional[RidgeLayerResult] = None
+        try:
+            # Prefer cached history selection when a full DataEngine is provided
+            if isinstance(data_engine, DataEngine):
+                result = self._select_with_cached_history(data_engine, symbols, default_ws, start, artifacts, end)
 
-        # Prefer cached history selection when a full DataEngine is provided
-        if isinstance(data_engine, DataEngine):
-            result = self._select_with_cached_history(data_engine, symbols, default_ws, start)
+            # Fallback to direct feature-provider selection (used in tests or pre-seeded engines)
+            if result is None:
+                result = self._select_from_feature_provider(data_engine, symbols, default_ws, artifacts)
 
-        # Fallback to direct feature-provider selection (used in tests or pre-seeded engines)
-        if result is None:
-            result = self._select_from_feature_provider(data_engine, symbols, default_ws)
+            if result is None:
+                raise ValueError("Layer A selection produced no assets across all timeframes.")
+            return result
+        finally:
+            _GLOBAL_ARTIFACTS = None
 
-        if result is None:
-            raise ValueError("Layer A selection produced no assets across all timeframes.")
-        return result
+    def _resolve_bar_cap(self, timeframe: str) -> Optional[int]:
+        """Determine the effective bar cap for a timeframe using Layer A + global caps."""
+        caps = [
+            getattr(config, "LAYERA_MAX_BARS_BY_TF", {}).get(timeframe),
+            getattr(config, "LAYERA_REGRESSION_MAX_BARS", None),
+            getattr(config, "REGRESSION_MAX_BARS", None),
+        ]
+        caps = [int(c) for c in caps if c is not None]
+        if not caps:
+            return None
+        return min(caps)
 
     def _select_with_cached_history(
-        self, data_engine: DataEngine, symbols: List[str], default_ws: List[int], start: Optional[datetime]
+        self,
+        data_engine: DataEngine,
+        symbols: List[str],
+        default_ws: List[int],
+        start: Optional[datetime],
+        artifacts: Optional[LayerAArtifacts],
+        end: Optional[datetime],
     ) -> Optional[RidgeLayerResult]:
         base_client = getattr(data_engine, "binance_client", None)
         if base_client is None:
@@ -527,10 +614,11 @@ class RidgeLayerSelector:
         _log_mem("selection-start", tf_count=total_tf, assets=total_sym)
         tf_scores: Dict[Tuple[str, Optional[int]], float] = {}
         tf_best: Dict[Tuple[str, Optional[int]], Dict[str, Any]] = {}
+        tf_asset_windows: Dict[Tuple[str, Optional[int]], Dict[str, Dict[str, Any]]] = {}
 
         # Dynamically adjust lookbacks based on cached coverage relative to start
         coverage = self._scan_cache_coverage(symbols)
-        adjusted_lb, tf_earliest = self._adjust_lookbacks_by_coverage(coverage, start)
+        adjusted_lb, tf_earliest = self._adjust_lookbacks_by_coverage(coverage, start, artifacts)
 
         # Report earliest feasible start across TFs for transparency
         feasible_starts = []
@@ -552,6 +640,9 @@ class RidgeLayerSelector:
                 w_grid = w_grid[:1]
             lookback_grid = adjusted_lb.get(tf) or [None]
             if not lookback_grid:
+                logger.warning("[LayerA] Skipping TF=%s because effective lookback grid is empty", tf)
+                continue
+            if not lookback_grid:
                 logger.warning("[LayerA] Skipping TF=%s because no usable lookbacks after coverage adjustment", tf)
                 continue
             if self.fast_mode and len(lookback_grid) > 1:
@@ -567,24 +658,27 @@ class RidgeLayerSelector:
                     len(lookback_grid),
                 )
                 _log_mem("tf-start", tf=tf, lookback=lb_days)
-                tf_engine = self._build_engine_for_tf(
-                    tf, symbols, base_client, w_grid, lookback_days=lb_days, end_ts=start
+                tf_engine, asset_windows = self._build_engine_for_tf(
+                    tf, symbols, base_client, w_grid, lookback_days=lb_days, end_ts=start, artifacts=artifacts
                 )
                 if tf_engine is None:
                     logger.warning("[LayerA] Skipping TF=%s lookback=%s due to missing cached data", tf, lb_days)
                     continue
+                tf_asset_windows[(tf, lb_days)] = asset_windows
 
                 k_per_asset: Dict[str, float] = {}
                 msep_per_asset: Dict[str, float] = {}
                 rl_vs_ls: Dict[str, Optional[float]] = {}
                 samples_per_asset: Dict[str, int] = {}
                 w_per_asset: Dict[str, int] = {}
+                train_samples_used: Dict[str, int] = {}
+                ic_per_asset: Dict[str, Optional[float]] = {}
 
                 # Parallelize per asset using threads (no pickle overhead) but keep worker count low to cap memory.
                 max_workers = min(2, len(symbols)) or 1
                 with ThreadPoolExecutor(max_workers=max_workers) as pool:
                     futures = {
-                        pool.submit(self._select_for_asset, tf, sym, tf_engine, w_grid): sym
+                        pool.submit(self._select_for_asset, tf, sym, tf_engine, w_grid, artifacts, lb_days): sym
                         for sym in symbols
                     }
                     done_count = 0
@@ -592,12 +686,14 @@ class RidgeLayerSelector:
                         res = fut.result()
                         if res is None:
                             continue
-                        sym_out, best_k, best_w, best_msep, rl, samples = res
+                        sym_out, best_k, best_w, best_msep, rl, samples, best_ic = res
                         k_per_asset[sym_out] = best_k
                         msep_per_asset[sym_out] = best_msep
                         rl_vs_ls[sym_out] = rl
                         samples_per_asset[sym_out] = samples
                         w_per_asset[sym_out] = best_w
+                        train_samples_used[sym_out] = min(best_w, samples)
+                        ic_per_asset[sym_out] = best_ic
                         done_count += 1
                         logger.info(
                             "[LayerA] TF=%s lookback=%s progress %d/%d assets complete",
@@ -609,24 +705,112 @@ class RidgeLayerSelector:
 
                 if k_per_asset:
                     tf_key = (tf, lb_days)
-                    tf_scores[tf_key] = float(np.mean(list(msep_per_asset.values())))
+                    coverage_ratio = len(k_per_asset) / max(1, len(symbols))
+                    avg_msep = float(np.mean(list(msep_per_asset.values())))
+                    ic_vals = [v for v in ic_per_asset.values() if v is not None]
+                    mean_ic = float(np.mean(ic_vals)) if ic_vals else None
+                    # Penalize missing assets so the chosen TF represents the full universe.
+                    coverage_penalty = max(coverage_ratio, 0.05)
+                    asset_win = tf_asset_windows.get((tf, lb_days), {})
+                    starts = [v.get("start_ts") for v in asset_win.values() if v.get("start_ts") is not None]
+                    ends = [v.get("end_ts") for v in asset_win.values() if v.get("end_ts") is not None]
+                    any_cap = any(v.get("cap_hit") for v in asset_win.values())
+                    realized_days = None
+                    if starts and ends:
+                        realized_days = (max(ends) - min(starts)).days
+                    if any_cap:
+                        logger.warning("[LayerA] Skipping TF=%s lookback=%s because cap hit on at least one asset", tf, lb_days)
+                        if artifacts:
+                            artifacts.warn(
+                                {
+                                    "type": "candidate_skipped_cap",
+                                    "timeframe": tf,
+                                    "lookback_days": lb_days,
+                                }
+                            )
+                        continue
+                    if lb_days is not None and realized_days is not None and realized_days < 0.8 * lb_days:
+                        logger.warning(
+                            "[LayerA] Skipping TF=%s lookback=%s because realized days %.1f < 80%% of requested",
+                            tf,
+                            lb_days,
+                            realized_days,
+                        )
+                        if artifacts:
+                            artifacts.warn(
+                                {
+                                    "type": "candidate_skipped_short_window",
+                                    "timeframe": tf,
+                                    "lookback_days": lb_days,
+                                    "realized_days": realized_days,
+                                }
+                            )
+                        continue
+                    if mean_ic is not None and np.isfinite(mean_ic):
+                        raw_score = -mean_ic / coverage_penalty
+                        score = raw_score  # IC is scale-free
+                    else:
+                        raw_score = avg_msep / coverage_penalty
+                        score = raw_score * _bars_per_day(tf)
+                    tf_scores[tf_key] = score
                     tf_best[tf_key] = {
                         "k_per_asset": k_per_asset,
                         "msep_per_asset": msep_per_asset,
                         "rl_vs_ls": rl_vs_ls,
                         "samples_per_asset": samples_per_asset,
                         "w_per_asset": w_per_asset,
+                        "train_samples_used": train_samples_used,
                         "lookback_days": lb_days,
+                        "coverage_ratio": coverage_ratio,
+                        "tf_score_raw": raw_score,
+                        "ic_per_asset": ic_per_asset,
+                        "mean_ic": mean_ic,
                     }
                     logger.info(
-                        "[LayerA] Timeframe %s (%d/%d) lookback=%s complete | assets=%d | avg_msep=%.4e",
+                        "[LayerA] Timeframe %s (%d/%d) lookback=%s complete | assets=%d/%d | avg_msep=%.4e | score=%.4e",
                         tf,
                         tf_idx,
                         total_tf,
                         lb_days,
                         len(k_per_asset),
-                        tf_scores[tf_key],
+                        len(symbols),
+                        avg_msep,
+                        score,
                     )
+                    if artifacts:
+                        asset_win = tf_asset_windows.get((tf, lb_days), {})
+                        starts = [v.get("start_ts") for v in asset_win.values() if v.get("start_ts") is not None]
+                        ends = [v.get("end_ts") for v in asset_win.values() if v.get("end_ts") is not None]
+                        any_cap = any(v.get("cap_hit") for v in asset_win.values())
+                        artifacts.record_timeframe_candidate(
+                            {
+                                "timeframe": tf,
+                                "lookback_days": lb_days,
+                                "w_grid": w_grid,
+                                "k_grid": list(self.k_grid),
+                                "avg_msep": avg_msep,
+                                "tf_score_normalized": score,
+                                "tf_score_raw": raw_score,
+                                "mean_ic": mean_ic,
+                                "coverage_ratio": coverage_ratio,
+                                "asset_count": len(k_per_asset),
+                                "universe_size": len(symbols),
+                                "bar_cap": self._resolve_bar_cap(tf),
+                                "effective_lookback_grid": adjusted_lb.get(tf),
+                                "data_window_estimate": {
+                                    "start": (start - pd.Timedelta(days=lb_days)).isoformat()
+                                    if start is not None and lb_days is not None
+                                    else None,
+                                    "end": start.isoformat() if start is not None else None,
+                                },
+                                "data_window_actual": {
+                                    "start": min(starts).isoformat() if starts else None,
+                                    "end": max(ends).isoformat() if ends else None,
+                                    "cap_hit_any": any_cap,
+                                    "realized_days": (max(ends) - min(starts)).days if starts and ends else None,
+                                },
+                            }
+                        )
 
                 # Release per-timeframe engines promptly to avoid RSS accumulation across TFs.
                 if tf_engine is not None:
@@ -640,6 +824,46 @@ class RidgeLayerSelector:
 
         tf_star, lb_star = min(tf_scores, key=tf_scores.get)
         best = tf_best[(tf_star, lb_star)]
+        if artifacts:
+            per_asset = {}
+            for sym, k_val in best["k_per_asset"].items():
+                per_asset[sym] = {
+                    "k": k_val,
+                    "w": best["w_per_asset"].get(sym),
+                    "msep": best["msep_per_asset"].get(sym),
+                    "rl_vs_ls": best["rl_vs_ls"].get(sym),
+                    "samples_available": best["samples_per_asset"].get(sym),
+                    "train_samples_used": best.get("train_samples_used", {}).get(sym),
+                    "ic": best.get("ic_per_asset", {}).get(sym),
+                }
+            summary = {
+                "requested_start": start,
+                "requested_end": end,
+                "fast_mode": self.fast_mode,
+                "train_min": self.train_min,
+                "val_len": self.val_len,
+                "embargo": self.embargo,
+                "k_grid": list(self.k_grid),
+                "tf_candidates": list(self.tf_candidates),
+                "lookback_days_grid": self.lookback_days_grid,
+                "effective_lookback_grid": adjusted_lb,
+                "max_splits": self.max_splits,
+                "min_splits": self.min_splits,
+                "chosen_timeframe": tf_star,
+                "chosen_lookback_days": lb_star,
+                "tf_score_normalized": tf_scores[(tf_star, lb_star)],
+                "tf_score_raw": tf_best[(tf_star, lb_star)].get("tf_score_raw"),
+                "mean_ic": tf_best[(tf_star, lb_star)].get("mean_ic"),
+                "coverage_ratio": best.get("coverage_ratio"),
+                "chosen_data_window": tf_asset_windows.get((tf_star, lb_star), {}),
+                "bar_caps": {
+                    "layerA_max": getattr(config, "LAYERA_MAX_BARS_BY_TF", {}),
+                    "layerA_regression_max_bars": getattr(config, "LAYERA_REGRESSION_MAX_BARS", None),
+                    "regression_max_bars": getattr(config, "REGRESSION_MAX_BARS", None),
+                },
+                "per_asset": per_asset,
+            }
+            artifacts.write_summary(summary)
         return RidgeLayerResult(
             timeframe=tf_star,
             k_per_asset=best["k_per_asset"],
@@ -648,6 +872,7 @@ class RidgeLayerSelector:
             t_threshold=self.t_threshold,
             samples_per_asset=best["samples_per_asset"],
             w_per_asset=best["w_per_asset"],
+            train_samples_used=best.get("train_samples_used", {}),
             lookback_days=best.get("lookback_days"),
         )
 
@@ -678,14 +903,23 @@ class RidgeLayerSelector:
         self,
         coverage: Dict[str, Dict[str, Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]]],
         start: Optional[datetime],
+        artifacts: Optional[LayerAArtifacts],
     ) -> Tuple[Dict[str, List[Optional[int]]], Dict[str, Optional[pd.Timestamp]]]:
         """Clip lookback grids per TF based on earliest available cached ts for requested start."""
         adjusted: Dict[str, List[Optional[int]]] = {}
         tf_earliest: Dict[str, Optional[pd.Timestamp]] = {}
+        report: Dict[str, Any] = {"requested_start": start, "coverage": coverage, "tf_summary": {}}
         if start is None:
             for tf in self.tf_candidates:
                 adjusted[tf] = self.lookback_days_grid.get(tf) or [None]
                 tf_earliest[tf] = None
+                report["tf_summary"][tf] = {
+                    "earliest_ts": None,
+                    "max_usable_days": None,
+                    "effective_lookbacks": adjusted[tf],
+                }
+            if artifacts:
+                artifacts.write_coverage_report(report)
             return adjusted, tf_earliest
 
         start_ts = pd.to_datetime(start, utc=True)
@@ -701,9 +935,41 @@ class RidgeLayerSelector:
             if earliest_ts is None:
                 logger.warning("[LayerA] No cached coverage for TF=%s across symbols; using configured lookbacks", tf)
                 adjusted[tf] = lb_grid
+                report["tf_summary"][tf] = {
+                    "earliest_ts": None,
+                    "max_usable_days": None,
+                    "effective_lookbacks": adjusted[tf],
+                    "clipped": False,
+                }
                 continue
 
             max_usable_days = int((start_ts - earliest_ts).days)
+            if max_usable_days < self.min_effective_lookback_days:
+                logger.warning(
+                    "[LayerA] Skipping TF=%s because max usable lookback %d < minimum %d",
+                    tf,
+                    max_usable_days,
+                    self.min_effective_lookback_days,
+                )
+                if artifacts:
+                    artifacts.warn(
+                        {
+                            "type": "lookback_too_short",
+                            "timeframe": tf,
+                            "max_usable_days": max_usable_days,
+                            "min_required_days": self.min_effective_lookback_days,
+                            "earliest_ts": earliest_ts,
+                            "requested_start": start_ts,
+                        }
+                    )
+                adjusted[tf] = []
+                report["tf_summary"][tf] = {
+                    "earliest_ts": earliest_ts,
+                    "max_usable_days": max_usable_days,
+                    "effective_lookbacks": [],
+                    "clipped": True,
+                }
+                continue
             usable: List[Optional[int]] = []
             for lb in lb_grid:
                 if lb is None:
@@ -721,10 +987,33 @@ class RidgeLayerSelector:
                         earliest_ts,
                         start_ts,
                     )
+                    if artifacts:
+                        artifacts.warn(
+                            {
+                                "type": "lookback_clipped",
+                                "timeframe": tf,
+                                "earliest_ts": earliest_ts,
+                                "requested_start": start_ts,
+                                "max_usable_days": max_usable_days,
+                                "original_grid": lb_grid,
+                                "effective_grid": usable,
+                            }
+                        )
                 else:
                     logger.warning(
                         "[LayerA] TF=%s has no usable lookback; earliest=%s start=%s", tf, earliest_ts, start_ts
                     )
+                    if artifacts:
+                        artifacts.warn(
+                            {
+                                "type": "no_usable_lookback",
+                                "timeframe": tf,
+                                "earliest_ts": earliest_ts,
+                                "requested_start": start_ts,
+                                "max_usable_days": max_usable_days,
+                                "original_grid": lb_grid,
+                            }
+                        )
             adjusted[tf] = usable
 
             logger.info(
@@ -735,11 +1024,19 @@ class RidgeLayerSelector:
                 max_usable_days,
                 usable,
             )
+            report["tf_summary"][tf] = {
+                "earliest_ts": earliest_ts,
+                "max_usable_days": max_usable_days,
+                "effective_lookbacks": usable,
+                "clipped": usable != lb_grid,
+            }
 
+        if artifacts:
+            artifacts.write_coverage_report(report)
         return adjusted, tf_earliest
 
     def _select_from_feature_provider(
-        self, feature_provider, symbols: List[str], default_ws: List[int]
+        self, feature_provider, symbols: List[str], default_ws: List[int], artifacts: Optional[LayerAArtifacts]
     ) -> Optional[RidgeLayerResult]:
         tf_label = getattr(feature_provider, "primary_timeframe", config.PRIMARY_TIMEFRAME)
         logger.info("[LayerA] Using preloaded features for timeframe %s", tf_label)
@@ -749,22 +1046,24 @@ class RidgeLayerSelector:
         rl_vs_ls: Dict[str, Optional[float]] = {}
         samples_per_asset: Dict[str, int] = {}
         w_per_asset: Dict[str, int] = {}
+        train_samples_used: Dict[str, int] = {}
 
         for sym in symbols:
-            res = self._select_for_asset(tf_label, sym, feature_provider, default_ws)
+            res = self._select_for_asset(tf_label, sym, feature_provider, default_ws, artifacts, None)
             if res is None:
                 continue
-            sym_out, best_k, best_w, best_msep, rl, samples = res
+            sym_out, best_k, best_w, best_msep, rl, samples, best_ic = res
             k_per_asset[sym_out] = best_k
             msep_per_asset[sym_out] = best_msep
             rl_vs_ls[sym_out] = rl
             samples_per_asset[sym_out] = samples
             w_per_asset[sym_out] = best_w
+            train_samples_used[sym_out] = min(best_w, samples)
 
         if not k_per_asset:
             return RidgeLayerResult(timeframe=tf_label, lookback_days=None)
 
-        return RidgeLayerResult(
+        res = RidgeLayerResult(
             timeframe=tf_label,
             k_per_asset=k_per_asset,
             msep_per_asset=msep_per_asset,
@@ -772,8 +1071,45 @@ class RidgeLayerSelector:
             t_threshold=self.t_threshold,
             samples_per_asset=samples_per_asset,
             w_per_asset=w_per_asset,
+            train_samples_used=train_samples_used,
             lookback_days=None,
         )
+        if artifacts:
+            artifacts.write_summary(
+                {
+                    "requested_start": None,
+                    "requested_end": None,
+                    "fast_mode": self.fast_mode,
+                    "train_min": self.train_min,
+                    "val_len": self.val_len,
+                    "embargo": self.embargo,
+                    "k_grid": list(self.k_grid),
+                    "tf_candidates": [tf_label],
+                    "lookback_days_grid": {tf_label: [None]},
+                    "max_splits": self.max_splits,
+                    "min_splits": self.min_splits,
+                    "chosen_timeframe": tf_label,
+                    "chosen_lookback_days": None,
+                    "tf_score": None,
+                    "coverage_ratio": len(k_per_asset) / max(1, len(symbols)),
+                    "bar_caps": {
+                        "layerA_max": getattr(config, "LAYERA_MAX_BARS_BY_TF", {}),
+                        "layerA_regression_max_bars": getattr(config, "LAYERA_REGRESSION_MAX_BARS", None),
+                        "regression_max_bars": getattr(config, "REGRESSION_MAX_BARS", None),
+                    },
+                    "per_asset": {
+                        sym: {
+                            "k": k_per_asset.get(sym),
+                            "w": w_per_asset.get(sym),
+                            "msep": msep_per_asset.get(sym),
+                            "rl_vs_ls": rl_vs_ls.get(sym),
+                            "samples": samples_per_asset.get(sym),
+                        }
+                        for sym in k_per_asset
+                    },
+                }
+            )
+        return res
 
     def _build_engine_for_tf(
         self,
@@ -783,7 +1119,8 @@ class RidgeLayerSelector:
         w_grid: List[int],
         lookback_days: Optional[int] = None,
         end_ts: Optional[datetime] = None,
-    ) -> Optional[DataEngine]:
+        artifacts: Optional[LayerAArtifacts] = None,
+    ) -> Tuple[Optional[DataEngine], Dict[str, Dict[str, Any]]]:
         """Build a fresh DataEngine loaded with cached history for the given timeframe.
 
         Uses cached parquet/CSV history and optionally trims by lookback_days to search over horizons.
@@ -797,6 +1134,7 @@ class RidgeLayerSelector:
         _log_mem("pre-load", tf=timeframe, lookback=lookback_days, buffer=buffer_estimate)
 
         ingested = 0
+        asset_windows: Dict[str, Dict[str, Any]] = {}
         for sym in symbols:
             parquet_path = data_dir / f"{sym}-{timeframe}.parquet"
             csv_path = data_dir / f"{sym}-{timeframe}.csv"
@@ -809,7 +1147,7 @@ class RidgeLayerSelector:
             if lookback_days is not None and effective_end is not None:
                 start_cutoff = effective_end - pd.Timedelta(days=lookback_days)
 
-            tf_cap = getattr(config, "LAYERA_MAX_BARS_BY_TF", {}).get(timeframe)
+            tf_cap = self._resolve_bar_cap(timeframe)
             max_rows = tf_cap if tf_cap is not None else buffer_estimate
 
             bars, stats = _load_cached_bars_window(
@@ -830,8 +1168,43 @@ class RidgeLayerSelector:
                     start_cutoff,
                     effective_end,
                 )
+                if artifacts:
+                    artifacts.warn(
+                        {
+                            "type": "missing_data",
+                            "symbol": sym,
+                            "timeframe": timeframe,
+                            "reason": missing_reason,
+                            "start_cutoff": start_cutoff,
+                            "end_ts": effective_end,
+                        }
+                    )
                 continue
 
+            ts_vals = [bar["timestamp"] for bar in bars if "timestamp" in bar]
+            start_ts_val = min(ts_vals) if ts_vals else None
+            end_ts_val = max(ts_vals) if ts_vals else None
+            cap_hit = max_rows is not None and stats.get("rows_read", 0) > stats.get("rows_kept", 0) >= max_rows
+            asset_windows[sym] = {
+                "start_ts": pd.to_datetime(start_ts_val, unit="ms", utc=True) if start_ts_val else None,
+                "end_ts": pd.to_datetime(end_ts_val, unit="ms", utc=True) if end_ts_val else None,
+                "rows_read": stats.get("rows_read", 0),
+                "rows_kept": stats.get("rows_kept", len(bars)),
+                "cap_hit": cap_hit,
+                "cap": max_rows,
+            }
+            if cap_hit and artifacts:
+                artifacts.warn(
+                    {
+                        "type": "cap_hit",
+                        "symbol": sym,
+                        "timeframe": timeframe,
+                        "lookback_days": lookback_days,
+                        "rows_read": stats.get("rows_read", 0),
+                        "rows_kept": stats.get("rows_kept", len(bars)),
+                        "cap": max_rows,
+                    }
+                )
             for bar in bars:
                 engine.return_manager.update(sym, bar)
 
@@ -861,9 +1234,9 @@ class RidgeLayerSelector:
         _log_mem("post-load", tf=timeframe, lookback=lookback_days, assets_ingested=ingested)
 
         if ingested == 0:
-            return None
+            return None, {}
 
-        return engine
+        return engine, asset_windows
 
     def _estimate_buffer(self, timeframe: str, lookback_days: Optional[int], w_grid: List[int]) -> int:
         """Estimate max_candles needed for ReturnManager without over-allocating."""
@@ -884,11 +1257,9 @@ class RidgeLayerSelector:
         min_required = self.train_min + self.val_len + self.embargo + 10
         estimate = max(int(estimate), min_required)
 
-        tf_cap = getattr(config, "LAYERA_MAX_BARS_BY_TF", {}).get(timeframe)
-        reg_caps = [getattr(config, "LAYERA_REGRESSION_MAX_BARS", None), getattr(config, "REGRESSION_MAX_BARS", None)]
-        hard_caps = [c for c in reg_caps + [tf_cap] if c is not None]
-        if hard_caps:
-            estimate = min(estimate, min(hard_caps))
+        cap = self._resolve_bar_cap(timeframe)
+        if cap is not None:
+            estimate = min(estimate, cap)
             estimate = max(estimate, min_required)
         return int(estimate)
 
@@ -907,54 +1278,111 @@ class RidgeLayerSelector:
     def _ridge_beta(XtX: np.ndarray, Xty: np.ndarray, penalty: np.ndarray) -> np.ndarray:
         return np.linalg.pinv(XtX + penalty) @ Xty
 
-    def _select_for_asset(self, tf: str, sym: str, tf_engine: DataEngine, w_grid: List[int]):
+    def _select_for_asset(
+        self,
+        tf: str,
+        sym: str,
+        tf_engine: DataEngine,
+        w_grid: List[int],
+        artifacts: Optional[LayerAArtifacts] = None,
+        lookback_days: Optional[int] = None,
+    ):
         """Run CV for a single asset (used in multiprocessing pool)."""
         X_raw, y_raw, ts, cols = tf_engine.get_feature_matrix(sym)
         _log_mem("asset-cv-start", tf=tf, asset=sym, bars=len(y_raw), features=X_raw.shape[1] if X_raw.size else 0)
         if y_raw.size < self.train_min:
+            if artifacts:
+                artifacts.warn(
+                    {
+                        "type": "insufficient_history",
+                        "symbol": sym,
+                        "timeframe": tf,
+                        "lookback_days": lookback_days,
+                        "available_samples": int(y_raw.size),
+                        "train_min": self.train_min,
+                    }
+                )
             return None
-        # Apply global cap and optional Layer-A per-timeframe cap
-        caps = [config.REGRESSION_MAX_BARS, getattr(config, "LAYERA_REGRESSION_MAX_BARS", None)]
-        tf_cap = getattr(config, "LAYERA_MAX_BARS_BY_TF", {}).get(tf)
-        if tf_cap:
-            caps.append(tf_cap)
-        cap = min([c for c in caps if c is not None], default=None)
+        # Apply unified cap once to keep sample count consistent across CV and final fit.
+        cap = self._resolve_bar_cap(tf)
         if cap:
             X_raw = X_raw[-cap:]
             y_raw = y_raw[-cap:]
+            ts = ts[-cap:]
         n = len(y_raw)
         if n < self.train_min:
+            if artifacts:
+                artifacts.warn(
+                    {
+                        "type": "insufficient_history_after_cap",
+                        "symbol": sym,
+                        "timeframe": tf,
+                        "lookback_days": lookback_days,
+                        "available_samples": int(n),
+                        "train_min": self.train_min,
+                        "cap": cap,
+                    }
+                )
             return None
-        scaler_full = Standardizer().fit(X_raw)
-        X_std_full = scaler_full.transform(X_raw)
-        X_std_full = self._with_intercept(X_std_full)
-        y_full = y_raw
+        available_samples = n
 
+        k_vec = np.array(self.k_grid, dtype=float)
         best_k = None
         best_msep = np.inf
         best_w = None
-        val_len = min(self.val_len, max(1, n - self.train_min))
-        k_vec = np.array(self.k_grid, dtype=float)
-        eye_penalty = np.eye(X_std_full.shape[1])
-        eye_penalty[0, 0] = 0.0
+        best_ic = None
+        best_rl = None
+        split_rows: List[Dict[str, Any]] = []
+
+        def _cv_blocks(n_obs: int, window: int, v_len: int) -> List[Tuple[int, int, int, int]]:
+            splits: List[Tuple[int, int, int, int]] = []
+            start_idx = 0
+            while True:
+                train_end = start_idx + window
+                val_start = train_end + self.embargo
+                val_end = val_start + v_len
+                if val_end > n_obs:
+                    break
+                splits.append((start_idx, train_end, val_start, val_end))
+                start_idx += v_len
+            return splits
 
         for W in w_grid:
-            if n < W + val_len + self.embargo:
+            max_val = n - W - self.embargo
+            if max_val <= 0 or n < max(W, self.train_min):
                 continue
-            splits_done = 0
-            for start in range(0, n - W - val_len, val_len):
-                train_end = start + W
-                val_start = train_end + self.embargo
-                val_end = val_start + val_len
-                if val_end > n:
-                    break
-                X_train_std = X_std_full[start:train_end]
-                y_train = y_full[start:train_end]
-                X_val_std = X_std_full[val_start:val_end]
-                y_val = y_full[val_start:val_end]
+            v_len = min(self.val_len, max(max_val, 1), max(3, W // 2))
+            if W < 2 * v_len:
+                continue
+            splits = _cv_blocks(n, W, v_len)
+            if len(splits) < self.min_splits and v_len > 1:
+                v_len = max(1, v_len // 2)
+                splits = _cv_blocks(n, W, v_len)
+            if self.max_splits and len(splits) > self.max_splits:
+                splits = splits[: self.max_splits]
+            if not splits:
+                continue
+
+            eye_penalty = None
+            mseps_accum = np.zeros_like(k_vec, dtype=float)
+            counts = np.zeros_like(k_vec, dtype=float)
+            ic_accum = np.zeros_like(k_vec, dtype=float)
+            ic_counts = np.zeros_like(k_vec, dtype=float)
+            for split_idx, (start_idx, train_end, val_start, val_end) in enumerate(splits):
+                X_train = X_raw[start_idx:train_end]
+                y_train = y_raw[start_idx:train_end]
+                X_val = X_raw[val_start:val_end]
+                y_val = y_raw[val_start:val_end]
+
+                scaler = Standardizer().fit(X_train)
+                X_train_std = self._with_intercept(scaler.transform(X_train))
+                X_val_std = self._with_intercept(scaler.transform(X_val))
 
                 XtX = X_train_std.T @ X_train_std
                 Xty = X_train_std.T @ y_train
+                if eye_penalty is None or eye_penalty.shape[0] != XtX.shape[0]:
+                    eye_penalty = np.eye(XtX.shape[0])
+                    eye_penalty[0, 0] = 0.0
                 mats = XtX[None, :, :] + k_vec[:, None, None] * eye_penalty
                 rhs = np.broadcast_to(Xty, (k_vec.size, Xty.shape[0]))[..., None]
                 try:
@@ -965,23 +1393,198 @@ class RidgeLayerSelector:
                 preds = betas @ X_val_std.T  # shape (k, val_len)
                 errors = y_val[None, :] - preds
                 mseps = np.mean(errors * errors, axis=1)
-                idx = int(np.argmin(mseps))
-                msep = float(mseps[idx])
-                if msep < best_msep:
-                    best_msep = msep
-                    best_k = float(k_vec[idx])
-                    best_w = W
-                splits_done += 1
-                if self.max_splits and splits_done >= self.max_splits:
-                    break
+                mseps_accum += mseps
+                counts += 1.0
+                # IC per k
+                for ki, pred_row in enumerate(preds):
+                    if pred_row.size < 3:
+                        continue
+                    try:
+                        if np.std(pred_row) < 1e-12 or np.std(y_val) < 1e-12:
+                            continue
+                        ic_val = np.corrcoef(pred_row, y_val)[0, 1]
+                        if not np.isfinite(ic_val):
+                            # Spearman fallback
+                            ic_val = pd.Series(pred_row).corr(pd.Series(y_val), method="spearman")
+                    except Exception:
+                        ic_val = np.nan
+                    if np.isfinite(ic_val):
+                        ic_accum[ki] += ic_val
+                        ic_counts[ki] += 1.0
+                if artifacts:
+                    train_start_ts = ts[start_idx] if start_idx < len(ts) else None
+                    train_end_ts = ts[train_end - 1] if train_end - 1 < len(ts) else None
+                    val_start_ts = ts[val_start] if val_start < len(ts) else None
+                    val_end_ts = ts[val_end - 1] if val_end - 1 < len(ts) else None
+                    for k_val, msep_val in zip(k_vec, mseps):
+                        split_rows.append(
+                            {
+                                "window": W,
+                                "k": float(k_val),
+                                "split_idx": split_idx,
+                                "train_start_ts": train_start_ts,
+                                "train_end_ts": train_end_ts,
+                                "val_start_ts": val_start_ts,
+                                "val_end_ts": val_end_ts,
+                                "val_len": val_end - val_start,
+                                "msep": float(msep_val),
+                            }
+                        )
+
+            if np.any(counts == 0):
+                continue
+            mean_msep = mseps_accum / counts
+            mean_ic = np.full_like(mean_msep, -np.inf)
+            valid_ic = ic_counts > 0
+            mean_ic[valid_ic] = ic_accum[valid_ic] / ic_counts[valid_ic]
+
+            # Objective: maximize IC, tie-break by msep then smaller k
+            positive_ic_mask = mean_ic > 0
+            candidates_mask = positive_ic_mask
+            if np.any(candidates_mask):
+                idx = int(np.nanargmax(mean_ic))
+                # tie-break on msep within IC tolerance
+                ic_best = mean_ic[idx]
+                close_ic = np.isclose(mean_ic, ic_best, rtol=1e-6, atol=1e-9) & candidates_mask
+                if np.any(close_ic):
+                    msep_candidates = mean_msep.copy()
+                    msep_candidates[~close_ic] = np.inf
+                    idx = int(np.nanargmin(msep_candidates))
+                    # tie-break by smallest k
+                    best_msep_tie = msep_candidates[idx]
+                    close_msep = np.isclose(mean_msep, best_msep_tie, rtol=1e-6, atol=1e-9) & close_ic
+                    if np.any(close_msep):
+                        k_candidates = k_vec.copy()
+                        k_candidates[~close_msep] = np.inf
+                        idx = int(np.nanargmin(k_candidates))
+                msep = float(mean_msep[idx])
+                ic_val = float(mean_ic[idx]) if np.isfinite(mean_ic[idx]) else None
+            else:
+                # No positive IC: fall back to OLS if available
+                zero_k_idx = np.where(k_vec == 0.0)[0]
+                if zero_k_idx.size:
+                    idx = int(zero_k_idx[0])
+                else:
+                    idx = int(np.nanargmin(mean_msep))
+                msep = float(mean_msep[idx])
+                ic_val = None
+
+            if msep < best_msep or best_k is None:
+                best_msep = msep
+                best_k = float(k_vec[idx])
+                best_w = W
+                best_ic = ic_val
 
         if best_k is None or best_w is None:
+            if artifacts:
+                artifacts.warn(
+                    {
+                        "type": "no_valid_cv_splits",
+                        "symbol": sym,
+                        "timeframe": tf,
+                        "lookback_days": lookback_days,
+                        "candidate_windows": w_grid,
+                    }
+                )
             return None
 
         forecaster = RidgeRegressionForecaster(k_grid=[best_k], t_threshold=self.t_threshold)
-        ridge_result = forecaster.forecast(sym, X_raw, y_raw)
+        # Fit with the chosen k; enforce RL guard post-fit
+        def _fit_with_k(k_val: float) -> Optional[RidgeForecast]:
+            return forecaster.forecast(
+                sym,
+                X_raw,
+                y_raw,
+                fixed_k=k_val,
+                train_window=best_w,
+                skip_cv=True,
+                train_min=self.train_min,
+                feature_columns=cols,
+            )
+
+        ridge_result = _fit_with_k(best_k)
         if not ridge_result:
             return None
+
+        if ridge_result.rl_vs_ls is None or ridge_result.rl_vs_ls > 1.001:
+            # Try k=0 (OLS) as fallback
+            if best_k != 0.0:
+                fallback = _fit_with_k(0.0)
+                if fallback and fallback.rl_vs_ls is not None and fallback.rl_vs_ls <= 1.001:
+                    ridge_result = fallback
+                    best_k = 0.0
+            # If still bad, warn and skip this asset
+            if ridge_result.rl_vs_ls is not None and ridge_result.rl_vs_ls > 1.001:
+                if artifacts:
+                    artifacts.warn(
+                        {
+                            "type": "ridge_underperforms_ls",
+                            "symbol": sym,
+                            "timeframe": tf,
+                            "lookback_days": lookback_days,
+                            "best_k": best_k,
+                            "best_w": best_w,
+                            "rl_vs_ls": ridge_result.rl_vs_ls,
+                        }
+                    )
+                return None
+
+        if artifacts and split_rows:
+            def _ts_iso(ts_val: Optional[int]) -> Optional[str]:
+                if ts_val is None:
+                    return None
+                try:
+                    return pd.to_datetime(ts_val, unit="ms", utc=True).isoformat()
+                except Exception:
+                    return str(ts_val)
+
+            path = artifacts.cv_grid_dir / f"{sym}-{tf}-lb{lookback_days if lookback_days is not None else 'all'}.csv"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fieldnames = [
+                "window",
+                "k",
+                "split_idx",
+                "train_start_ts",
+                "train_end_ts",
+                "val_start_ts",
+                "val_end_ts",
+                "val_len",
+                "msep",
+            ]
+            with open(path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                for row in split_rows:
+                    row = dict(row)
+                    row["train_start_ts"] = _ts_iso(row["train_start_ts"])
+                    row["train_end_ts"] = _ts_iso(row["train_end_ts"])
+                    row["val_start_ts"] = _ts_iso(row["val_start_ts"])
+                    row["val_end_ts"] = _ts_iso(row["val_end_ts"])
+                    writer.writerow(row)
+        if artifacts and ridge_result:
+            diag_path = artifacts.model_diag_dir / f"{sym}-{tf}-lb{lookback_days if lookback_days is not None else 'all'}.json"
+            diag_payload = {
+                "symbol": sym,
+                "timeframe": tf,
+                "lookback_days": lookback_days,
+                "best_k": best_k,
+                "best_window": best_w,
+                "best_msep": best_msep,
+                "gcv": ridge_result.gcv,
+                "rl_vs_ls": ridge_result.rl_vs_ls,
+                "samples": ridge_result.samples,
+                "t_threshold": ridge_result.t_threshold,
+                "dropped_features": ridge_result.dropped_features,
+                "hat_mean": ridge_result.hat_mean,
+                "hat_max": ridge_result.hat_max,
+                "resid_sigma": ridge_result.resid_sigma,
+                "feature_columns": ridge_result.feature_columns,
+                "outliers_dropped": ridge_result.outliers_dropped,
+                "ic": best_ic,
+            }
+            diag_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(diag_path, "w") as f:
+                json.dump(diag_payload, f, indent=2, default=str)
 
         logger.info(
             "[LayerA] TF=%s asset=%s k=%.4g W=%d msep=%.4e samples=%d",
@@ -990,7 +1593,7 @@ class RidgeLayerSelector:
             best_k,
             best_w,
             best_msep,
-            ridge_result.samples,
+            available_samples,
         )
         _log_mem("asset-cv-end", tf=tf, asset=sym, bars=n, best_k=best_k, best_w=best_w)
-        return sym, best_k, best_w, best_msep, ridge_result.rl_vs_ls, ridge_result.samples
+        return sym, best_k, best_w, best_msep, ridge_result.rl_vs_ls, available_samples, best_ic

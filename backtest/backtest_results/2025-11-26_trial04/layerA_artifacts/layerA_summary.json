@@ -1,0 +1,163 @@
+{
+  "requested_start": "2025-06-01 00:00:00+00:00",
+  "requested_end": "2025-06-06 00:00:00+00:00",
+  "fast_mode": false,
+  "train_min": 120,
+  "val_len": 500,
+  "embargo": 10,
+  "k_grid": [
+    0.0,
+    1e-07,
+    1e-06,
+    1e-05,
+    0.0001,
+    0.001,
+    0.01,
+    0.1,
+    1.0,
+    10.0,
+    100.0
+  ],
+  "tf_candidates": [
+    "1m",
+    "5m",
+    "15m",
+    "30m",
+    "1h",
+    "4h",
+    "8h",
+    "1d",
+    "1w"
+  ],
+  "lookback_days_grid": {
+    "1m": [
+      30,
+      90
+    ],
+    "5m": [
+      60,
+      180
+    ],
+    "15m": [
+      90,
+      270
+    ],
+    "30m": [
+      180
+    ],
+    "1h": [
+      180,
+      365
+    ],
+    "4h": [
+      365,
+      730
+    ],
+    "8h": [
+      365,
+      730
+    ],
+    "1d": [
+      730
+    ],
+    "1w": [
+      1825
+    ]
+  },
+  "effective_lookback_grid": {
+    "1m": [
+      30,
+      90
+    ],
+    "5m": [
+      60,
+      180
+    ],
+    "15m": [
+      90,
+      270
+    ],
+    "30m": [
+      180
+    ],
+    "1h": [
+      180,
+      365
+    ],
+    "4h": [
+      365,
+      730
+    ],
+    "8h": [
+      365,
+      730
+    ],
+    "1d": [
+      730
+    ],
+    "1w": [
+      1825
+    ]
+  },
+  "max_splits": 50,
+  "min_splits": 2,
+  "chosen_timeframe": "1w",
+  "chosen_lookback_days": 1825,
+  "tf_score_normalized": -0.11940140604360167,
+  "tf_score_raw": -0.11940140604360167,
+  "mean_ic": 0.11940140604360167,
+  "coverage_ratio": 1.0,
+  "chosen_data_window": {
+    "BTCUSDT": {
+      "start_ts": "2020-06-08 00:00:00+00:00",
+      "end_ts": "2025-05-26 00:00:00+00:00",
+      "rows_read": 260,
+      "rows_kept": 260,
+      "cap_hit": false,
+      "cap": 20000
+    },
+    "ETHUSDT": {
+      "start_ts": "2020-06-08 00:00:00+00:00",
+      "end_ts": "2025-05-26 00:00:00+00:00",
+      "rows_read": 260,
+      "rows_kept": 260,
+      "cap_hit": false,
+      "cap": 20000
+    }
+  },
+  "bar_caps": {
+    "layerA_max": {
+      "1m": 50000,
+      "5m": 30000,
+      "15m": 20000,
+      "30m": 15000,
+      "1h": null,
+      "4h": null,
+      "8h": null,
+      "1d": null,
+      "1w": null
+    },
+    "layerA_regression_max_bars": 20000,
+    "regression_max_bars": null
+  },
+  "per_asset": {
+    "BTCUSDT": {
+      "k": 0.0,
+      "w": 200,
+      "msep": 0.0034824136917212126,
+      "rl_vs_ls": 1.0000000061453147,
+      "samples_available": 235,
+      "train_samples_used": 200,
+      "ic": null
+    },
+    "ETHUSDT": {
+      "k": 0.0,
+      "w": 100,
+      "msep": 0.006251231267276025,
+      "rl_vs_ls": 1.0000001099134659,
+      "samples_available": 235,
+      "train_samples_used": 100,
+      "ic": 0.11940140604360167
+    }
+  }
+}

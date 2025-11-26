@@ -51,6 +51,7 @@ async def main():
     ridge_spec = None
 
     if args.layer in ("A", "both"):
+        artifacts_dir = os.path.join(output_dir, "layerA_artifacts")
         selector = RidgeLayerSelector()
         # Keep the seed DataEngine buffer modest; per-TF engines built inside Layer A are sized precisely.
         if hasattr(selector, "_estimate_buffer") and hasattr(selector, "tf_candidates"):
@@ -67,7 +68,7 @@ async def main():
         else:
             max_buffer = max(config.REGRESSION_MIN_TRAIN + config.REGRESSION_VAL_WINDOW + config.REGRESSION_EMBARGO_BARS + 100, 50_000)
         data_engine = DataEngine(binance_client=BinanceClient(testnet=True), max_candles=max_buffer)
-        ridge_spec = selector.select(data_engine, symbols, start=start, end=end)
+        ridge_spec = selector.select(data_engine, symbols, start=start, end=end, artifacts_dir=artifacts_dir)
         os.makedirs(os.path.dirname(ridge_spec_path) or ".", exist_ok=True)
         ridge_spec.to_json(ridge_spec_path)
         if args.layer == "A":

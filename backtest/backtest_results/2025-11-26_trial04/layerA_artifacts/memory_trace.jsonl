@@ -1,0 +1,147 @@
+{"stage": "selection-start", "timestamp": "2025-11-26T18:11:19.110906", "rss_mb": 154.3, "tf_count": 9, "assets": 2}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:19.179876", "rss_mb": 156.9, "tf": "1m", "lookback": 30}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:19.180293", "rss_mb": 156.9, "tf": "1m", "lookback": 30, "buffer": 20000}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:19.519371", "rss_mb": 289.0, "tf": "1m", "lookback": 30, "asset": "BTCUSDT", "rows_read": 43201, "rows_kept": 20000, "path": "data/cache/BTCUSDT-1m.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:19.768401", "rss_mb": 312.6, "tf": "1m", "lookback": 30, "asset": "ETHUSDT", "rows_read": 43201, "rows_kept": 20000, "path": "data/cache/ETHUSDT-1m.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:19.769731", "rss_mb": 312.6, "tf": "1m", "lookback": 30, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:21.450285", "rss_mb": 336.6, "tf": "1m", "asset": "BTCUSDT", "bars": 19974, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:21.450507", "rss_mb": 336.6, "tf": "1m", "asset": "ETHUSDT", "bars": 19965, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:22.228499", "rss_mb": 336.6, "tf": "1m", "asset": "ETHUSDT", "bars": 19965, "best_k": 1.0, "best_w": 1000}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:22.294116", "rss_mb": 336.6, "tf": "1m", "asset": "BTCUSDT", "bars": 19974, "best_k": 0.0, "best_w": 1000}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:22.295330", "rss_mb": 336.6, "tf": "1m", "lookback": 90}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:22.295625", "rss_mb": 336.6, "tf": "1m", "lookback": 90, "buffer": 20000}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:22.649483", "rss_mb": 336.6, "tf": "1m", "lookback": 90, "asset": "BTCUSDT", "rows_read": 129601, "rows_kept": 20000, "path": "data/cache/BTCUSDT-1m.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:22.988566", "rss_mb": 353.4, "tf": "1m", "lookback": 90, "asset": "ETHUSDT", "rows_read": 129601, "rows_kept": 20000, "path": "data/cache/ETHUSDT-1m.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:22.990055", "rss_mb": 353.4, "tf": "1m", "lookback": 90, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:24.630320", "rss_mb": 378.2, "tf": "1m", "asset": "BTCUSDT", "bars": 19974, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:24.630550", "rss_mb": 378.2, "tf": "1m", "asset": "ETHUSDT", "bars": 19965, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:25.385287", "rss_mb": 378.2, "tf": "1m", "asset": "ETHUSDT", "bars": 19965, "best_k": 1.0, "best_w": 1000}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:25.447438", "rss_mb": 378.2, "tf": "1m", "asset": "BTCUSDT", "bars": 19974, "best_k": 0.0, "best_w": 1000}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:25.448763", "rss_mb": 378.2, "tf": "5m", "lookback": 60}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:25.449133", "rss_mb": 378.2, "tf": "5m", "lookback": 60, "buffer": 17290}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:25.604313", "rss_mb": 378.2, "tf": "5m", "lookback": 60, "asset": "BTCUSDT", "rows_read": 17281, "rows_kept": 17281, "path": "data/cache/BTCUSDT-5m.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:25.745955", "rss_mb": 378.2, "tf": "5m", "lookback": 60, "asset": "ETHUSDT", "rows_read": 17281, "rows_kept": 17281, "path": "data/cache/ETHUSDT-5m.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:25.747281", "rss_mb": 378.2, "tf": "5m", "lookback": 60, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:27.168569", "rss_mb": 378.2, "tf": "5m", "asset": "BTCUSDT", "bars": 17247, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:27.193116", "rss_mb": 378.2, "tf": "5m", "asset": "ETHUSDT", "bars": 17246, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:27.840861", "rss_mb": 378.2, "tf": "5m", "asset": "BTCUSDT", "bars": 17247, "best_k": 100.0, "best_w": 1500}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:27.950527", "rss_mb": 378.2, "tf": "5m", "asset": "ETHUSDT", "bars": 17246, "best_k": 0.0, "best_w": 1500}
+{"stage": "tf-dispose", "timestamp": "2025-11-26T18:11:27.966125", "rss_mb": 378.2, "tf": "5m", "lookback": 60}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:28.030045", "rss_mb": 378.2, "tf": "5m", "lookback": 180}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:28.030675", "rss_mb": 378.2, "tf": "5m", "lookback": 180, "buffer": 20000}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:28.200453", "rss_mb": 378.2, "tf": "5m", "lookback": 180, "asset": "BTCUSDT", "rows_read": 51841, "rows_kept": 20000, "path": "data/cache/BTCUSDT-5m.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:28.380369", "rss_mb": 378.2, "tf": "5m", "lookback": 180, "asset": "ETHUSDT", "rows_read": 51841, "rows_kept": 20000, "path": "data/cache/ETHUSDT-5m.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:28.381837", "rss_mb": 378.2, "tf": "5m", "lookback": 180, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:30.037473", "rss_mb": 378.2, "tf": "5m", "asset": "ETHUSDT", "bars": 19963, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:30.037656", "rss_mb": 378.2, "tf": "5m", "asset": "BTCUSDT", "bars": 19966, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:30.860526", "rss_mb": 378.2, "tf": "5m", "asset": "BTCUSDT", "bars": 19966, "best_k": 0.0, "best_w": 750}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:30.860676", "rss_mb": 378.2, "tf": "5m", "asset": "ETHUSDT", "bars": 19963, "best_k": 0.0, "best_w": 1500}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:30.862353", "rss_mb": 378.2, "tf": "15m", "lookback": 90}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:30.862680", "rss_mb": 378.2, "tf": "15m", "lookback": 90, "buffer": 8650}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:30.929299", "rss_mb": 378.2, "tf": "15m", "lookback": 90, "asset": "BTCUSDT", "rows_read": 8641, "rows_kept": 8641, "path": "data/cache/BTCUSDT-15m.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:30.995811", "rss_mb": 378.2, "tf": "15m", "lookback": 90, "asset": "ETHUSDT", "rows_read": 8641, "rows_kept": 8641, "path": "data/cache/ETHUSDT-15m.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:30.996780", "rss_mb": 378.2, "tf": "15m", "lookback": 90, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:31.698067", "rss_mb": 378.2, "tf": "15m", "asset": "BTCUSDT", "bars": 8610, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:31.698220", "rss_mb": 378.2, "tf": "15m", "asset": "ETHUSDT", "bars": 8609, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:32.201900", "rss_mb": 378.2, "tf": "15m", "asset": "ETHUSDT", "bars": 8609, "best_k": 0.0, "best_w": 1500}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:32.202919", "rss_mb": 378.2, "tf": "15m", "asset": "BTCUSDT", "bars": 8610, "best_k": 0.0, "best_w": 1500}
+{"stage": "tf-dispose", "timestamp": "2025-11-26T18:11:32.209748", "rss_mb": 378.2, "tf": "15m", "lookback": 90}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:32.266770", "rss_mb": 378.2, "tf": "15m", "lookback": 270}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:32.267392", "rss_mb": 378.2, "tf": "15m", "lookback": 270, "buffer": 20000}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:32.376886", "rss_mb": 378.2, "tf": "15m", "lookback": 270, "asset": "BTCUSDT", "rows_read": 25921, "rows_kept": 20000, "path": "data/cache/BTCUSDT-15m.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:32.498063", "rss_mb": 378.2, "tf": "15m", "lookback": 270, "asset": "ETHUSDT", "rows_read": 25921, "rows_kept": 20000, "path": "data/cache/ETHUSDT-15m.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:32.499298", "rss_mb": 378.2, "tf": "15m", "lookback": 270, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:34.154167", "rss_mb": 378.2, "tf": "15m", "asset": "ETHUSDT", "bars": 19964, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:34.154329", "rss_mb": 378.2, "tf": "15m", "asset": "BTCUSDT", "bars": 19961, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:34.791542", "rss_mb": 378.2, "tf": "15m", "asset": "ETHUSDT", "bars": 19964, "best_k": 0.0, "best_w": 250}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:34.977965", "rss_mb": 378.2, "tf": "15m", "asset": "BTCUSDT", "bars": 19961, "best_k": 0.0, "best_w": 1500}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:34.979163", "rss_mb": 378.2, "tf": "30m", "lookback": 180}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:34.979708", "rss_mb": 378.2, "tf": "30m", "lookback": 180, "buffer": 8650}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:35.043509", "rss_mb": 378.2, "tf": "30m", "lookback": 180, "asset": "BTCUSDT", "rows_read": 8641, "rows_kept": 8641, "path": "data/cache/BTCUSDT-30m.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:35.108222", "rss_mb": 378.2, "tf": "30m", "lookback": 180, "asset": "ETHUSDT", "rows_read": 8641, "rows_kept": 8641, "path": "data/cache/ETHUSDT-30m.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:35.109038", "rss_mb": 378.2, "tf": "30m", "lookback": 180, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:35.809039", "rss_mb": 378.2, "tf": "30m", "asset": "BTCUSDT", "bars": 8611, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:35.809260", "rss_mb": 378.2, "tf": "30m", "asset": "ETHUSDT", "bars": 8612, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:36.180456", "rss_mb": 378.2, "tf": "30m", "asset": "ETHUSDT", "bars": 8612, "best_k": 100.0, "best_w": 3000}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:36.180589", "rss_mb": 378.2, "tf": "30m", "asset": "BTCUSDT", "bars": 8611, "best_k": 0.0, "best_w": 3000}
+{"stage": "tf-dispose", "timestamp": "2025-11-26T18:11:36.190643", "rss_mb": 378.2, "tf": "30m", "lookback": 180}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:36.251141", "rss_mb": 378.2, "tf": "1h", "lookback": 180}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:36.251693", "rss_mb": 378.2, "tf": "1h", "lookback": 180, "buffer": 4330}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:36.289337", "rss_mb": 378.2, "tf": "1h", "lookback": 180, "asset": "BTCUSDT", "rows_read": 4321, "rows_kept": 4321, "path": "data/cache/BTCUSDT-1h.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:36.342287", "rss_mb": 378.2, "tf": "1h", "lookback": 180, "asset": "ETHUSDT", "rows_read": 4321, "rows_kept": 4321, "path": "data/cache/ETHUSDT-1h.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:36.343155", "rss_mb": 378.2, "tf": "1h", "lookback": 180, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:36.728789", "rss_mb": 378.2, "tf": "1h", "asset": "ETHUSDT", "bars": 4292, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:36.728940", "rss_mb": 378.2, "tf": "1h", "asset": "BTCUSDT", "bars": 4292, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:36.866488", "rss_mb": 378.2, "tf": "1h", "asset": "BTCUSDT", "bars": 4292, "best_k": 100.0, "best_w": 4000}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:36.866611", "rss_mb": 378.2, "tf": "1h", "asset": "ETHUSDT", "bars": 4292, "best_k": 0.0, "best_w": 4000}
+{"stage": "tf-dispose", "timestamp": "2025-11-26T18:11:36.870093", "rss_mb": 378.2, "tf": "1h", "lookback": 180}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:36.902224", "rss_mb": 378.2, "tf": "1h", "lookback": 365}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:36.902732", "rss_mb": 378.2, "tf": "1h", "lookback": 365, "buffer": 8770}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:36.951531", "rss_mb": 378.2, "tf": "1h", "lookback": 365, "asset": "BTCUSDT", "rows_read": 8761, "rows_kept": 8761, "path": "data/cache/BTCUSDT-1h.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:37.009169", "rss_mb": 378.2, "tf": "1h", "lookback": 365, "asset": "ETHUSDT", "rows_read": 8761, "rows_kept": 8761, "path": "data/cache/ETHUSDT-1h.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:37.014842", "rss_mb": 378.2, "tf": "1h", "lookback": 365, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:37.715826", "rss_mb": 378.2, "tf": "1h", "asset": "BTCUSDT", "bars": 8732, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:37.715991", "rss_mb": 378.2, "tf": "1h", "asset": "ETHUSDT", "bars": 8730, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:38.052971", "rss_mb": 378.2, "tf": "1h", "asset": "BTCUSDT", "bars": 8732, "best_k": 100.0, "best_w": 2000}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:38.053353", "rss_mb": 378.2, "tf": "1h", "asset": "ETHUSDT", "bars": 8730, "best_k": 0.0, "best_w": 500}
+{"stage": "tf-dispose", "timestamp": "2025-11-26T18:11:38.059788", "rss_mb": 378.2, "tf": "1h", "lookback": 365}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:38.096847", "rss_mb": 378.2, "tf": "4h", "lookback": 365}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:38.098553", "rss_mb": 378.2, "tf": "4h", "lookback": 365, "buffer": 2200}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:38.123048", "rss_mb": 378.2, "tf": "4h", "lookback": 365, "asset": "BTCUSDT", "rows_read": 2191, "rows_kept": 2191, "path": "data/cache/BTCUSDT-4h.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:38.146534", "rss_mb": 378.2, "tf": "4h", "lookback": 365, "asset": "ETHUSDT", "rows_read": 2191, "rows_kept": 2191, "path": "data/cache/ETHUSDT-4h.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:38.147111", "rss_mb": 378.2, "tf": "4h", "lookback": 365, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:38.321840", "rss_mb": 378.2, "tf": "4h", "asset": "BTCUSDT", "bars": 2166, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:38.322000", "rss_mb": 378.2, "tf": "4h", "asset": "ETHUSDT", "bars": 2164, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:38.428528", "rss_mb": 378.2, "tf": "4h", "asset": "BTCUSDT", "bars": 2166, "best_k": 0.0, "best_w": 300}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:38.428901", "rss_mb": 378.2, "tf": "4h", "asset": "ETHUSDT", "bars": 2164, "best_k": 0.0, "best_w": 300}
+{"stage": "tf-dispose", "timestamp": "2025-11-26T18:11:38.431333", "rss_mb": 378.2, "tf": "4h", "lookback": 365}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:38.463615", "rss_mb": 378.2, "tf": "4h", "lookback": 730}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:38.464243", "rss_mb": 378.2, "tf": "4h", "lookback": 730, "buffer": 4390}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:38.494736", "rss_mb": 378.2, "tf": "4h", "lookback": 730, "asset": "BTCUSDT", "rows_read": 4381, "rows_kept": 4381, "path": "data/cache/BTCUSDT-4h.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:38.515500", "rss_mb": 378.2, "tf": "4h", "lookback": 730, "asset": "ETHUSDT", "rows_read": 4381, "rows_kept": 4381, "path": "data/cache/ETHUSDT-4h.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:38.518042", "rss_mb": 378.2, "tf": "4h", "lookback": 730, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:38.860872", "rss_mb": 378.2, "tf": "4h", "asset": "BTCUSDT", "bars": 4355, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:38.866813", "rss_mb": 378.2, "tf": "4h", "asset": "ETHUSDT", "bars": 4352, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:39.105862", "rss_mb": 378.2, "tf": "4h", "asset": "BTCUSDT", "bars": 4355, "best_k": 0.0, "best_w": 300}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:39.106642", "rss_mb": 378.2, "tf": "4h", "asset": "ETHUSDT", "bars": 4352, "best_k": 0.0, "best_w": 300}
+{"stage": "tf-dispose", "timestamp": "2025-11-26T18:11:39.110060", "rss_mb": 378.2, "tf": "4h", "lookback": 730}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:39.142770", "rss_mb": 378.2, "tf": "8h", "lookback": 365}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:39.143277", "rss_mb": 378.2, "tf": "8h", "lookback": 365, "buffer": 1510}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:39.163393", "rss_mb": 378.2, "tf": "8h", "lookback": 365, "asset": "BTCUSDT", "rows_read": 1096, "rows_kept": 1096, "path": "data/cache/BTCUSDT-8h.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:39.186415", "rss_mb": 378.2, "tf": "8h", "lookback": 365, "asset": "ETHUSDT", "rows_read": 1096, "rows_kept": 1096, "path": "data/cache/ETHUSDT-8h.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:39.231716", "rss_mb": 378.2, "tf": "8h", "lookback": 365, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:39.326598", "rss_mb": 378.2, "tf": "8h", "asset": "BTCUSDT", "bars": 1071, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:39.326754", "rss_mb": 378.2, "tf": "8h", "asset": "ETHUSDT", "bars": 1071, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:39.359266", "rss_mb": 378.2, "tf": "8h", "asset": "ETHUSDT", "bars": 1071, "best_k": 0.0, "best_w": 300}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:39.374575", "rss_mb": 378.2, "tf": "8h", "asset": "BTCUSDT", "bars": 1071, "best_k": 0.0, "best_w": 800}
+{"stage": "tf-dispose", "timestamp": "2025-11-26T18:11:39.375991", "rss_mb": 378.2, "tf": "8h", "lookback": 365}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:39.407856", "rss_mb": 378.2, "tf": "8h", "lookback": 730}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:39.408363", "rss_mb": 378.2, "tf": "8h", "lookback": 730, "buffer": 2200}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:39.430840", "rss_mb": 378.2, "tf": "8h", "lookback": 730, "asset": "BTCUSDT", "rows_read": 2191, "rows_kept": 2191, "path": "data/cache/BTCUSDT-8h.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:39.443172", "rss_mb": 378.2, "tf": "8h", "lookback": 730, "asset": "ETHUSDT", "rows_read": 2191, "rows_kept": 2191, "path": "data/cache/ETHUSDT-8h.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:39.443672", "rss_mb": 378.2, "tf": "8h", "lookback": 730, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:39.618937", "rss_mb": 378.2, "tf": "8h", "asset": "BTCUSDT", "bars": 2166, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:39.619086", "rss_mb": 378.2, "tf": "8h", "asset": "ETHUSDT", "bars": 2165, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:39.726129", "rss_mb": 378.2, "tf": "8h", "asset": "BTCUSDT", "bars": 2166, "best_k": 0.0, "best_w": 300}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:39.726277", "rss_mb": 378.2, "tf": "8h", "asset": "ETHUSDT", "bars": 2165, "best_k": 1.0, "best_w": 300}
+{"stage": "tf-dispose", "timestamp": "2025-11-26T18:11:39.729465", "rss_mb": 378.2, "tf": "8h", "lookback": 730}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:39.764678", "rss_mb": 378.2, "tf": "1d", "lookback": 730}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:39.765183", "rss_mb": 378.2, "tf": "1d", "lookback": 730, "buffer": 1010}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:39.784233", "rss_mb": 378.2, "tf": "1d", "lookback": 730, "asset": "BTCUSDT", "rows_read": 731, "rows_kept": 731, "path": "data/cache/BTCUSDT-1d.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:39.791991", "rss_mb": 378.2, "tf": "1d", "lookback": 730, "asset": "ETHUSDT", "rows_read": 731, "rows_kept": 731, "path": "data/cache/ETHUSDT-1d.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:39.792369", "rss_mb": 378.2, "tf": "1d", "lookback": 730, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:39.843218", "rss_mb": 378.2, "tf": "1d", "asset": "BTCUSDT", "bars": 706, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:39.852711", "rss_mb": 378.2, "tf": "1d", "asset": "ETHUSDT", "bars": 706, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:39.899788", "rss_mb": 378.2, "tf": "1d", "asset": "ETHUSDT", "bars": 706, "best_k": 0.0, "best_w": 200}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:39.900192", "rss_mb": 378.2, "tf": "1d", "asset": "BTCUSDT", "bars": 706, "best_k": 0.0, "best_w": 500}
+{"stage": "tf-dispose", "timestamp": "2025-11-26T18:11:39.912004", "rss_mb": 378.2, "tf": "1d", "lookback": 730}
+{"stage": "tf-start", "timestamp": "2025-11-26T18:11:39.949353", "rss_mb": 378.2, "tf": "1w", "lookback": 1825}
+{"stage": "pre-load", "timestamp": "2025-11-26T18:11:39.950054", "rss_mb": 378.2, "tf": "1w", "lookback": 1825, "buffer": 1835}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:39.967948", "rss_mb": 378.2, "tf": "1w", "lookback": 1825, "asset": "BTCUSDT", "rows_read": 260, "rows_kept": 260, "path": "data/cache/BTCUSDT-1w.parquet"}
+{"stage": "asset-load", "timestamp": "2025-11-26T18:11:39.974233", "rss_mb": 378.2, "tf": "1w", "lookback": 1825, "asset": "ETHUSDT", "rows_read": 260, "rows_kept": 260, "path": "data/cache/ETHUSDT-1w.parquet"}
+{"stage": "post-load", "timestamp": "2025-11-26T18:11:39.974617", "rss_mb": 378.2, "tf": "1w", "lookback": 1825, "assets_ingested": 2}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:39.994847", "rss_mb": 378.2, "tf": "1w", "asset": "BTCUSDT", "bars": 235, "features": 20}
+{"stage": "asset-cv-start", "timestamp": "2025-11-26T18:11:39.995026", "rss_mb": 378.2, "tf": "1w", "asset": "ETHUSDT", "bars": 235, "features": 20}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:40.021649", "rss_mb": 378.2, "tf": "1w", "asset": "BTCUSDT", "bars": 235, "best_k": 0.0, "best_w": 200}
+{"stage": "asset-cv-end", "timestamp": "2025-11-26T18:11:40.031393", "rss_mb": 378.2, "tf": "1w", "asset": "ETHUSDT", "bars": 235, "best_k": 0.0, "best_w": 100}
+{"stage": "tf-dispose", "timestamp": "2025-11-26T18:11:40.032715", "rss_mb": 378.2, "tf": "1w", "lookback": 1825}

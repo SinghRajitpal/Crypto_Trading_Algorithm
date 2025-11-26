@@ -1,0 +1,12 @@
+{"timestamp": "2025-11-26T18:11:19.469088", "type": "cap_hit", "symbol": "BTCUSDT", "timeframe": "1m", "lookback_days": 30, "rows_read": 43201, "rows_kept": 20000, "cap": 20000}
+{"timestamp": "2025-11-26T18:11:19.717346", "type": "cap_hit", "symbol": "ETHUSDT", "timeframe": "1m", "lookback_days": 30, "rows_read": 43201, "rows_kept": 20000, "cap": 20000}
+{"timestamp": "2025-11-26T18:11:22.294983", "type": "candidate_skipped_cap", "timeframe": "1m", "lookback_days": 30}
+{"timestamp": "2025-11-26T18:11:22.572163", "type": "cap_hit", "symbol": "BTCUSDT", "timeframe": "1m", "lookback_days": 90, "rows_read": 129601, "rows_kept": 20000, "cap": 20000}
+{"timestamp": "2025-11-26T18:11:22.905670", "type": "cap_hit", "symbol": "ETHUSDT", "timeframe": "1m", "lookback_days": 90, "rows_read": 129601, "rows_kept": 20000, "cap": 20000}
+{"timestamp": "2025-11-26T18:11:25.448307", "type": "candidate_skipped_cap", "timeframe": "1m", "lookback_days": 90}
+{"timestamp": "2025-11-26T18:11:28.151274", "type": "cap_hit", "symbol": "BTCUSDT", "timeframe": "5m", "lookback_days": 180, "rows_read": 51841, "rows_kept": 20000, "cap": 20000}
+{"timestamp": "2025-11-26T18:11:28.327390", "type": "cap_hit", "symbol": "ETHUSDT", "timeframe": "5m", "lookback_days": 180, "rows_read": 51841, "rows_kept": 20000, "cap": 20000}
+{"timestamp": "2025-11-26T18:11:30.861981", "type": "candidate_skipped_cap", "timeframe": "5m", "lookback_days": 180}
+{"timestamp": "2025-11-26T18:11:32.329291", "type": "cap_hit", "symbol": "BTCUSDT", "timeframe": "15m", "lookback_days": 270, "rows_read": 25921, "rows_kept": 20000, "cap": 20000}
+{"timestamp": "2025-11-26T18:11:32.447609", "type": "cap_hit", "symbol": "ETHUSDT", "timeframe": "15m", "lookback_days": 270, "rows_read": 25921, "rows_kept": 20000, "cap": 20000}
+{"timestamp": "2025-11-26T18:11:34.978797", "type": "candidate_skipped_cap", "timeframe": "15m", "lookback_days": 270}

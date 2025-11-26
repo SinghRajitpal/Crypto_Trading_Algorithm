@@ -1,0 +1,29 @@
+{
+  "timeframe": "8h",
+  "k_per_asset": {
+    "BTCUSDT": 10000.0,
+    "ETHUSDT": 1000.0
+  },
+  "msep_per_asset": {
+    "BTCUSDT": 0.00020663824157927434,
+    "ETHUSDT": 0.0003001395724080358
+  },
+  "rl_vs_ls": {
+    "BTCUSDT": 1.06788761120381,
+    "ETHUSDT": 1.0717515715132677
+  },
+  "t_threshold": 1.2,
+  "samples_per_asset": {
+    "BTCUSDT": 2166,
+    "ETHUSDT": 2165
+  },
+  "w_per_asset": {
+    "BTCUSDT": 300,
+    "ETHUSDT": 300
+  },
+  "train_samples_used": {
+    "BTCUSDT": 300,
+    "ETHUSDT": 300
+  },
+  "lookback_days": 730
+}
