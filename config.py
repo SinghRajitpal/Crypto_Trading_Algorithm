@@ -1,4 +1,4 @@
-# Mean-variance trading configuration for 5-minute Binance USD-M futures.
+# GRU-based trading configuration for Binance USD-M futures (8h timeframe).
 
 # Binance API configuration
 from utils.logging_config import get_logger, console_log
@@ -20,7 +20,7 @@ binance_futures_testnet = {
 }
 
 # Symbol universe and timeframe settings
-PRIMARY_TIMEFRAME = "1h"
+PRIMARY_TIMEFRAME = "8h"
 DEFAULT_UNIVERSE = [
     "BTCUSDT",
     "ETHUSDT",
@@ -61,68 +61,25 @@ INCLUDE_TIME_OF_DAY = True  # Add time-of-day sin/cos features
 REGRESSION_MAX_BARS = None  # Use all available history per asset (no cap)
 REGRESSION_MIN_TRAIN = 120  # Minimum training observations required (must be <= buffer capacity)
 REGRESSION_VAL_WINDOW = 500  # Validation window size for rolling CV blocks
-# Training lookback horizon; if None, use all available history. Otherwise, use this many days before backtest start.
-RIDGE_TRAIN_LOOKBACK_DAYS = 120
 # Embargo between train/val splits to avoid leakage (in bars)
 REGRESSION_EMBARGO_BARS = 10
-# Candidate timeframes for Layer A selection (global TF)
-TF_CANDIDATES = ["1m", "5m", "15m", "30m", "1h", "4h", "8h", "1d", "1w"]
-# Per-timeframe training window candidates (bars); fallback to a default list if TF missing
-W_CANDIDATES_BY_TF = {
-    "1m": [200, 500, 1000],
-    "5m": [250, 750, 1500],
-    "15m": [250, 750, 1500],
-    "30m": [500, 1500, 3000],
-    "1h": [500, 2000, 4000],
-    "4h": [300, 800, 1500],
-    "8h": [300, 800, 1500],
-    "1d": [200, 500, 1000],
-    "1w": [100, 200, 300],
-}
-
-# Timeframe-specific lookbacks (days) for historical fetch; None means all available.
-TIMEFRAME_LOOKBACK_DAYS = {
-    "1m": 90,
-    "5m": 180,
-    "10m": 180,
-    "30m": 365,
-    "1h": 730,
-    "4h": 1095,
-    "8h": 1460,
-    "1d": 1825,
-    "1w": 1825,
-}
-# Candidate historical lookback windows (days) for Layer A per timeframe; None means use all cached history.
-LAYERA_LOOKBACK_DAYS_GRID = {
-    "1m": [30, 90],
-    "5m": [60, 180],
-    "15m": [90, 270],
-    "30m": [180],
-    "1h": [180, 365],
-    "4h": [365, 730],
-    "8h": [365, 730],
-    "1d": [730],
-    "1w": [1825],
-}
-# Optional Layer-A only caps on bars per timeframe to speed CV (None means full history)
-LAYERA_MAX_BARS_BY_TF = {
-    # Keep the smallest timeframes on a tighter leash to avoid ballooning memory.
-    "1m": 50_000,
-    "5m": 30_000,
-    "15m": 20_000,
-    # Higher timeframes are already sparse; clip only if we hit memory walls.
-    "30m": 15_000,
-    "1h": None,
-    "4h": None,
-    "8h": None,
-    "1d": None,
-    "1w": None,
-}
-LAYERA_DEBUG_MEM = True  # Enable verbose Layer A memory diagnostics
-# Optional Layer-A only cap on regression bars (applied before CV); None means no additional cap
-LAYERA_REGRESSION_MAX_BARS = 20_000
-RIDGE_T_THRESHOLD = 1.2  # Default |t| threshold for ridge feature pruning
-RIDGE_K_GRID = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0, 1e2, 1e3, 1e4]
+# GRU Forecast Parameters (Keras baseline)
+GRU_TIMEFRAME = "8h"
+GRU_LOOKBACK = 64
+GRU_FEATURES = ["log_return", "log_volume"]
+GRU_HIDDEN_SIZE = 64
+GRU_NUM_LAYERS = 1
+GRU_DROPOUT = 0.0
+GRU_BATCH_SIZE = 32
+GRU_LR = 1e-3
+GRU_EPOCHS = 50
+GRU_EARLY_STOP_PATIENCE = 5
+GRU_GRAD_CLIP = 1.0
+GRU_VALIDATION_SPLIT = 0.2
+GRU_HUBER_DELTA = 1.0
+GRU_MODEL_DIR = "backtest/backtest_results/gru_artifacts"
+GRU_TRAIN_VERBOSE = 1  # Keras fit verbosity (0=silent, 1=progress bar)
+GRU_DEVICE = "mps"  # Try Apple Metal first, fallback to cpu
 
 # Risk Model Data Parameters
 RISK_WINDOW = 180  # Bars used for covariance estimation

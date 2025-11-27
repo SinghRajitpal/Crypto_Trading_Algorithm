@@ -241,7 +241,7 @@ class DataEngine:
     def get_feature_matrix(
         self, symbol: str, length: Optional[int] = None
     ):
-        """Return standardized-ready feature matrix (X, y, ts, columns) for ridge/OLS."""
+        """Return standardized-ready feature matrix (X, y, ts, columns) for legacy linear models."""
         return self.return_manager.get_feature_matrix(
             symbol, length or config.REGRESSION_MAX_BARS
         )

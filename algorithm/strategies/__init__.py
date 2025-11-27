@@ -1,5 +1,5 @@
 # Strategies package initializer
 
-from .mean_variance import MeanVarianceForecastStrategy
+from .gru_forecast import GRUForecastStrategy
 
-__all__ = ["MeanVarianceForecastStrategy"]
+__all__ = ["GRUForecastStrategy"]

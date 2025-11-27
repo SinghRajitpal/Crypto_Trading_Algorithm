@@ -10,12 +10,11 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 import config
-from algorithm.algo_engine import AlgoEngine
-from algorithm.strategies.mean_variance import MeanVarianceForecastStrategy
+from algorithm.forecast.gru_torch import GRUForecasterTorch
+from algorithm.forecast.forecast_result import ForecastResult
 from backtest.broker import SimBroker
 from backtest.ras import ras_sharpe
-from backtest.ridge_layer import RidgeLayerResult
-from algorithm.forecast.forecast_result import ForecastResult
+from backtest.ras import ras_ic
 from data.data_engine import DataEngine
 from data.historical_data import HistoricalDataFetcher
 from execution.execution_engine import ExecutionEngine
@@ -27,7 +26,6 @@ from backtest.visualization import (
     plot_scatter,
     save_summary_json,
 )
-from backtest.ras import ras_ic
 
 logger = get_logger(__name__)
 
@@ -53,24 +51,25 @@ class WalkForwardBacktester:
         symbols: List[str],
         start: datetime,
         end: datetime,
-        ridge_spec: RidgeLayerResult,
+        gru_model_dir: str,
         initial_capital: float = 10_000.0,
         output_dir: Optional[str] = None,
     ) -> None:
+        if not gru_model_dir:
+            raise ValueError("gru_model_dir is required for GRU backtesting.")
         self.symbols = symbols
         self.start = start
         self.end = end
-        self.ridge_spec = ridge_spec
+        self.gru_model_dir = gru_model_dir
+        self.gru_forecaster: Optional[GRUForecasterTorch] = None
         self.initial_capital = initial_capital
         self.output_dir = output_dir
-        self.timeframe = getattr(ridge_spec, "timeframe", config.PRIMARY_TIMEFRAME) or config.PRIMARY_TIMEFRAME
+        self.timeframe = config.GRU_TIMEFRAME
 
         self.broker = SimBroker(initial_capital)
         self.data_engine = DataEngine(binance_client=self.broker, max_candles=2000)
         self.data_engine.primary_timeframe = self.timeframe
         self.data_engine.data_fetcher.symbol_timeframes = [(s, self.timeframe) for s in symbols]
-        self.algo_engine = AlgoEngine(self.data_engine)
-        self.strategy = MeanVarianceForecastStrategy(self.data_engine)
         self.execution_engine = ExecutionEngine(binance_client=self.broker, total_capital=initial_capital)
         self.fetcher = HistoricalDataFetcher(testnet=False)
         self._metrics: Dict[str, Any] = {}
@@ -80,6 +79,8 @@ class WalkForwardBacktester:
     async def run(self) -> BacktestMetrics:
         ohlcv_data = await self._load_history()
         await self._warmup(ohlcv_data)
+        if self.gru_model_dir:
+            self.gru_forecaster = GRUForecasterTorch.load(self.gru_model_dir, device=config.GRU_DEVICE)
         clock = sorted({ts for df in ohlcv_data.values() for ts in df.index})
 
         equity_curve: List[float] = []
@@ -131,32 +132,7 @@ class WalkForwardBacktester:
                 len(self.broker._positions),  # pylint: disable=protected-access
             )
 
-            expected_returns: Dict[str, float] = {}
-            for sym in self.symbols:
-                if self.data_engine.get_missing_bars(sym, self.timeframe):
-                    continue
-                X, y, ts_list, cols = self.data_engine.get_feature_matrix(sym)
-                if y.size < config.REGRESSION_MIN_TRAIN:
-                    continue
-                k = self.ridge_spec.k_per_asset.get(sym)
-                if k is None:
-                    continue
-                # Apply per-asset training window if provided
-                w_cap = self.ridge_spec.w_per_asset.get(sym) if hasattr(self.ridge_spec, "w_per_asset") else None
-                if w_cap is not None and y.size > w_cap:
-                    X = X[-w_cap:]
-                    y = y[-w_cap:]
-                forecaster = self.strategy.forecaster.__class__(k_grid=[k], t_threshold=self.ridge_spec.t_threshold)
-                ridge_res = forecaster.forecast(
-                    sym,
-                    X,
-                    y,
-                    fixed_k=k,
-                    train_window=w_cap,
-                    skip_cv=True,
-                )
-                if ridge_res:
-                    expected_returns[sym] = ridge_res.expected_simple_return
+            expected_returns = self._predict_with_gru()
             logger.debug(
                 "Bar %s | forecasts=%d | universe=%s",
                 ts.isoformat(),
@@ -167,12 +143,13 @@ class WalkForwardBacktester:
             if not expected_returns:
                 continue
 
+            diagnostics = {"model": "gru"} if self.gru_forecaster else {}
             forecast = ForecastResult(
                 timestamp=int(ts.timestamp() * 1000),
                 universe=list(expected_returns.keys()),
                 expected_returns=expected_returns,
                 betas={},
-                diagnostics={},
+                diagnostics=diagnostics,
             )
 
             returns_matrix, sym_order = self.data_engine.get_return_matrix(
@@ -256,24 +233,6 @@ class WalkForwardBacktester:
         if len(benchmark_prices) > 1:
             bench_rets = np.diff(np.array(benchmark_prices)) / np.array(benchmark_prices[:-1])
             benchmark_sharpe = self._sharpe(list(bench_rets))
-        ic_ras_lower = float("nan")
-        if self.strategy._ic_history:
-            ic_series = []
-            for vals in self.strategy._ic_history.values():
-                if vals:
-                    ic_series.append(list(vals))
-            if ic_series:
-                maxlen = max(len(v) for v in ic_series)
-                padded = []
-                for seq in ic_series:
-                    pad = [float("nan")] * (maxlen - len(seq))
-                    padded.append(seq + pad)
-                ic_matrix = np.array(padded, dtype=float)
-                mask = ~np.isnan(ic_matrix).all(axis=0)
-                ic_matrix = ic_matrix[:, mask]
-                ic_matrix = np.nan_to_num(ic_matrix, nan=0.0)
-                ic_emp, ic_lower = ras_ic(ic_matrix)
-                ic_ras_lower = float(np.nanmean(ic_lower)) if ic_lower.size else float("nan")
         if returns:
             strat_returns = np.array(returns, dtype=float).reshape(1, -1)
             ras_emp, ras_lower = ras_sharpe(strat_returns)
@@ -307,7 +266,7 @@ class WalkForwardBacktester:
             "risk_diag_avg": risk_diag_avg,
             "cov_loss_avg": cov_loss_avg,
             "benchmark_sharpe": benchmark_sharpe,
-            "ras_ic_lower": ic_ras_lower,
+            "ras_ic_lower": float("nan"),
         }
         self._metrics = summary
 
@@ -345,6 +304,35 @@ class WalkForwardBacktester:
 
         return metrics
 
+    def _predict_with_gru(self) -> Dict[str, float]:
+        """Generate expected returns using the loaded GRU forecaster."""
+        if self.gru_forecaster is None:
+            return {}
+        expected: Dict[str, float] = {}
+        lookback = self.gru_forecaster.lookback
+        for sym in self.symbols:
+            if self.data_engine.get_missing_bars(sym, self.timeframe):
+                continue
+            lr_hist = self.data_engine.return_manager.log_return_history.get(sym, [])
+            vol_hist = self.data_engine.return_manager.volume_history.get(sym, [])
+            if len(lr_hist) < lookback or len(vol_hist) < lookback:
+                continue
+            log_returns = np.array([v for _, v in lr_hist], dtype=float)
+            volumes = np.array([v for _, v in vol_hist], dtype=float)
+            volumes = volumes[-len(log_returns) :]
+            lr_slice = log_returns[-lookback:]
+            vol_slice = volumes[-lookback:]
+            if lr_slice.shape[0] < lookback or vol_slice.shape[0] < lookback:
+                continue
+            window = np.stack([lr_slice, np.log1p(vol_slice)], axis=1)
+            if not np.all(np.isfinite(window)):
+                continue
+            try:
+                expected[sym] = self.gru_forecaster.predict_simple_return(window)
+            except Exception as exc:
+                logger.warning("GRU forecast failed for %s: %s", sym, exc)
+        return expected
+
     async def _price_lookup(self, symbol: str) -> Optional[float]:
         """Async adapter around DataEngine latest price for SimBroker fills."""
         return self.data_engine.get_latest_price(symbol, self.timeframe)
@@ -372,10 +360,7 @@ class WalkForwardBacktester:
 
     async def _load_history(self) -> Dict[str, Any]:
         console_log(f"Loading historical data for {len(self.symbols)} assets")
-        if getattr(self.ridge_spec, "lookback_days", None) is not None:
-            lookback_start = self.start - timedelta(days=self.ridge_spec.lookback_days)
-        else:
-            lookback_start = _lookback_start(self.start, self.timeframe)
+        lookback_start = _lookback_start(self.start, self.timeframe)
         tasks = [
             self.fetcher.download_ohlcv(sym, self.timeframe, lookback_start, self.end, force=False)
             for sym in self.symbols
@@ -429,10 +414,16 @@ class WalkForwardBacktester:
 
 
 def _lookback_start(start: datetime, timeframe: str) -> datetime:
-    tf_map = getattr(config, "TIMEFRAME_LOOKBACK_DAYS", {})
-    days = tf_map.get(timeframe)
-    if days is None:
-        days = getattr(config, "RIDGE_TRAIN_LOOKBACK_DAYS", None)
-    if days is None:
-        return start
+    # Fetch enough history to cover GRU lookback plus cushion
+    try:
+        if timeframe.endswith("h"):
+            hours = int(timeframe[:-1])
+        elif timeframe.endswith("d"):
+            hours = int(timeframe[:-1]) * 24
+        else:
+            hours = 1
+        bars_needed = config.GRU_LOOKBACK + 50
+        days = max(90, int((bars_needed * hours) / 24) + 30)
+    except Exception:
+        days = 90
     return start - timedelta(days=days)

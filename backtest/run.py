@@ -11,16 +11,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import config
-from backtest.ridge_layer import RidgeLayerSelector
-from backtest.backtesting_engine import WalkForwardBacktester
-from backtest.ridge_layer import RidgeLayerResult
+from backtest.gru_layer import GRULayerTrainer, GRULayerResult
 from data.data_engine import DataEngine
 from data.historical_data import HistoricalDataFetcher
 from binance_exchange import BinanceClient
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Run Layer A (ridge selection) and/or Layer B backtest.")
+    parser = argparse.ArgumentParser(description="Run Layer A GRU training and/or Layer B GRU backtest.")
     parser.add_argument("--symbols", default=None, help="Comma-separated symbols (default: config.DEFAULT_UNIVERSE)")
     parser.add_argument("--start", required=True, help="Start date YYYY-MM-DD")
     parser.add_argument("--end", required=True, help="End date YYYY-MM-DD")
@@ -33,12 +31,12 @@ async def main():
         "--layer",
         choices=["A", "B", "both"],
         default="both",
-        help="Which layer(s) to run. A: ridge selection only, B: backtest only, both: sequential.",
+        help="Which layer(s) to run. A: GRU training only, B: backtest only, both: sequential.",
     )
     parser.add_argument(
-        "--ridge-spec-file",
+        "--gru-model-dir",
         default=None,
-        help="Path to save (Layer A) or load (Layer B) ridge spec JSON. Defaults to <output>/ridge_spec.json",
+        help="Path to a trained GRU model directory (uses Layer A output if not provided).",
     )
     args = parser.parse_args()
 
@@ -46,41 +44,32 @@ async def main():
     symbols = [s.strip().upper() for s in args.symbols.split(",")] if args.symbols else config.DEFAULT_UNIVERSE
     start = datetime.fromisoformat(args.start).replace(tzinfo=UTC)
     end = datetime.fromisoformat(args.end).replace(tzinfo=UTC)
-    ridge_spec_path = args.ridge_spec_file or os.path.join(output_dir, "ridge_spec.json")
+    gru_spec_path = os.path.join(output_dir, "gru_spec.json")
+    gru_model_dir = args.gru_model_dir
 
-    ridge_spec = None
+    gru_spec: GRULayerResult | None = None
 
     if args.layer in ("A", "both"):
         artifacts_dir = os.path.join(output_dir, "layerA_artifacts")
-        selector = RidgeLayerSelector()
-        # Keep the seed DataEngine buffer modest; per-TF engines built inside Layer A are sized precisely.
-        if hasattr(selector, "_estimate_buffer") and hasattr(selector, "tf_candidates"):
-            max_buffer = max(
-                selector._estimate_buffer(
-                    tf,
-                    None,
-                    config.W_CANDIDATES_BY_TF.get(
-                        tf, [selector.train_min, max(selector.train_min * 2, selector.val_len)]
-                    ),
-                )
-                for tf in selector.tf_candidates
-            )
-        else:
-            max_buffer = max(config.REGRESSION_MIN_TRAIN + config.REGRESSION_VAL_WINDOW + config.REGRESSION_EMBARGO_BARS + 100, 50_000)
-        data_engine = DataEngine(binance_client=BinanceClient(testnet=True), max_candles=max_buffer)
-        ridge_spec = selector.select(data_engine, symbols, start=start, end=end, artifacts_dir=artifacts_dir)
-        os.makedirs(os.path.dirname(ridge_spec_path) or ".", exist_ok=True)
-        ridge_spec.to_json(ridge_spec_path)
+        trainer = GRULayerTrainer(symbols[0], timeframe=config.GRU_TIMEFRAME)
+        gru_spec = await trainer.train(start=start, end=end, output_dir=artifacts_dir)
+        gru_model_dir = gru_spec.model_dir
+        os.makedirs(os.path.dirname(gru_spec_path) or ".", exist_ok=True)
+        gru_spec.to_json(gru_spec_path)
         if args.layer == "A":
             return
 
     if args.layer in ("B", "both"):
-        if ridge_spec is None:
-            if not os.path.exists(ridge_spec_path):
-                raise FileNotFoundError(f"Ridge spec file not found: {ridge_spec_path}")
-            ridge_spec = RidgeLayerResult.from_json(ridge_spec_path)
+        # Import backtester lazily to avoid heavy imports (matplotlib) when only running Layer A.
+        from backtest.backtesting_engine import WalkForwardBacktester
+        if gru_model_dir is None:
+            if os.path.exists(gru_spec_path):
+                gru_spec = GRULayerResult.from_json(gru_spec_path)
+                gru_model_dir = gru_spec.model_dir
+        if gru_model_dir is None:
+            raise FileNotFoundError("GRU model directory not provided and gru_spec.json not found.")
         backtester = WalkForwardBacktester(
-            symbols, start, end, ridge_spec, initial_capital=10_000.0, output_dir=output_dir
+            symbols, start, end, gru_model_dir=gru_model_dir, initial_capital=10_000.0, output_dir=output_dir
         )
         metrics = await backtester.run()
         os.makedirs(output_dir, exist_ok=True)
@@ -89,12 +78,12 @@ async def main():
 
 
 async def _seed_data_engine(data_engine: DataEngine, symbols, start: datetime, end: datetime) -> None:
-    """Load historical OHLCV into the data engine so Layer A can fit ridge."""
+    """Load historical OHLCV into the data engine so Layer A can fit GRU."""
     fetcher = HistoricalDataFetcher(testnet=False)
     try:
-        lookback_start = _lookback_start(start, config.PRIMARY_TIMEFRAME)
+        lookback_start = _lookback_start(start, config.GRU_TIMEFRAME)
         ohlcv_data = await asyncio.gather(
-            *[fetcher.download_ohlcv(sym, config.PRIMARY_TIMEFRAME, lookback_start, end, force=False) for sym in symbols]
+            *[fetcher.download_ohlcv(sym, config.GRU_TIMEFRAME, lookback_start, end, force=False) for sym in symbols]
         )
     finally:
         # Ensure the aiohttp/binance client is closed to avoid unclosed-session warnings.
@@ -108,19 +97,24 @@ async def _seed_data_engine(data_engine: DataEngine, symbols, start: datetime, e
                 candle = df.loc[ts]
                 bar = [int(ts.timestamp() * 1000)] + candle.tolist()
                 await data_engine.data_fetcher.data_processor.update_tracked_candles(
-                    sym, config.PRIMARY_TIMEFRAME, bar
+                    sym, config.GRU_TIMEFRAME, bar
                 )
-        data_engine.process_all_latest_bars(config.PRIMARY_TIMEFRAME)
+        data_engine.process_all_latest_bars(config.GRU_TIMEFRAME)
 
 
 def _lookback_start(start: datetime, timeframe: str) -> datetime:
-    """Compute training lookback start; prefer timeframe-specific lookback, fallback to global."""
-    tf_map = getattr(config, "TIMEFRAME_LOOKBACK_DAYS", {})
-    days = tf_map.get(timeframe)
-    if days is None:
-        days = getattr(config, "RIDGE_TRAIN_LOOKBACK_DAYS", None)
-    if days is None:
-        return start
+    """Compute training lookback start for GRU window with cushion."""
+    try:
+        if timeframe.endswith("h"):
+            hours = int(timeframe[:-1])
+        elif timeframe.endswith("d"):
+            hours = int(timeframe[:-1]) * 24
+        else:
+            hours = 1
+        bars_needed = config.GRU_LOOKBACK + 50
+        days = max(90, int((bars_needed * hours) / 24) + 30)
+    except Exception:
+        days = 90
     return start - timedelta(days=days)
 
 
@@ -147,4 +141,3 @@ def _resolve_output_dir(output_arg: str | None) -> str:
 
 if __name__ == "__main__":
     asyncio.run(main())
-from datetime import timedelta

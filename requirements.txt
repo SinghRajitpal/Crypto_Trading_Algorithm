@@ -1,8 +1,9 @@
 # Core
-python-binance>=1.0.17
-numpy>=1.24.0
-pandas>=1.5.0
-matplotlib>=3.7.0
-requests>=2.31.0
-pyarrow>=15.0.0
-pytest>=7.4.0
+python-binance==1.0.17
+numpy==1.26.4
+pandas==1.5.3
+matplotlib==3.7.3
+requests==2.31.0
+pyarrow==15.0.0
+pytest==7.4.4
+torch==2.2.2

@@ -6,13 +6,13 @@ generating trading signals, and processing market data for decision making.
 
 # Algorithm package initializer
 from .algo_engine import AlgoEngine
-from .strategies.mean_variance import MeanVarianceForecastStrategy
-from .forecast.ridge_regression import RidgeRegressionForecaster
+from .strategies.gru_forecast import GRUForecastStrategy
+from .forecast.gru_torch import GRUForecasterTorch
 from .forecast.forecast_result import ForecastResult
 
 __all__ = [
     'AlgoEngine',
-    'MeanVarianceForecastStrategy',
-    'RidgeRegressionForecaster',
+    'GRUForecastStrategy',
+    'GRUForecasterTorch',
     'ForecastResult',
 ] 

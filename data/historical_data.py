@@ -67,6 +67,7 @@ class HistoricalDataFetcher:
         start: Union[str, datetime, int, None] = None,
         end: Union[str, datetime, int, None] = None,
         force: bool = False,
+        cache_only: bool = False,
     ) -> pd.DataFrame:
         symbol_norm = _normalize_symbol(symbol)
         file_path = self._cache_path(symbol, timeframe)
@@ -89,6 +90,13 @@ class HistoricalDataFetcher:
         end_ms = _to_ms(end)
 
         if existing_df is not None and not existing_df.empty:
+            # If no explicit start/end provided, return cache immediately.
+            if since_ms is None and end_ms is None:
+                logger.info(f"Cache hit – returning {file_path} without download.")
+                return existing_df
+            if cache_only:
+                logger.info(f"Cache-only mode – returning {file_path} without download.")
+                return existing_df
             earliest_cached = int(existing_df.index[0].timestamp() * 1000)
             latest_cached = int(existing_df.index[-1].timestamp() * 1000)
             if since_ms is None or since_ms < earliest_cached:
@@ -99,6 +107,8 @@ class HistoricalDataFetcher:
                 logger.info(f"Cache hit – returning {file_path} without download.")
                 return existing_df
         else:
+            if cache_only:
+                raise FileNotFoundError(f"Cache-only mode requested but cache missing: {file_path}")
             since_ms_needed = since_ms
 
         all_rows: List[List] = []

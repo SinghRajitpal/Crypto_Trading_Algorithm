@@ -1,11 +1,12 @@
 import asyncio
 import time
+import os
 from typing import Dict, List, Optional
 
 from binance_exchange import BinanceClient
 from data.data_engine import DataEngine
 from algorithm.algo_engine import AlgoEngine
-from algorithm.strategies.mean_variance import MeanVarianceForecastStrategy
+from algorithm.strategies.gru_forecast import GRUForecastStrategy
 from execution.execution_engine import ProductionExecutionEngine
 from execution.alerts import check_thresholds
 from utils.logging_config import get_logger, console_log
@@ -19,13 +20,24 @@ logger = get_logger(__name__)
 class TradingAlgorithm:
     """Coordinates data, forecasting, and execution for the mean–variance strategy."""
 
-    def __init__(self, testnet: bool = True) -> None:
+    def __init__(self, testnet: bool = True, gru_model_dir: Optional[str] = None) -> None:
         self.binance_client = BinanceClient(testnet=testnet)
         self.data_engine = DataEngine(
             binance_client=self.binance_client,
             max_candles=config.RISK_WINDOW + config.REGRESSION_WINDOW + 20,
         )
-        self.strategy = MeanVarianceForecastStrategy(self.data_engine)
+        # Use GRU forecaster by default; fall back to provided directory if set
+        model_dir = gru_model_dir or config.GRU_MODEL_DIR
+        if not model_dir or not os.path.isdir(model_dir):
+            raise FileNotFoundError(f"GRU model directory not found: {model_dir}")
+        self.data_engine.primary_timeframe = config.GRU_TIMEFRAME
+        self.data_engine.data_fetcher.symbol_timeframes = [(sym, config.GRU_TIMEFRAME) for sym in config.DEFAULT_UNIVERSE]
+        self.strategy = GRUForecastStrategy(
+            self.data_engine,
+            model_dir=model_dir,
+            symbols=config.DEFAULT_UNIVERSE,
+            timeframe=config.GRU_TIMEFRAME,
+        )
         self.algo_engine = AlgoEngine(self.data_engine)
         self.execution_engine = ProductionExecutionEngine(
             binance_client=self.binance_client
