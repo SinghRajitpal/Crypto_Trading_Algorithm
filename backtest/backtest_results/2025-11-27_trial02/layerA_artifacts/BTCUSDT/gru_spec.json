@@ -1,0 +1,14 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "8h",
+  "lookback": 64,
+  "retrain_days": 30,
+  "artifact_dir": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-27_trial02/layerA_artifacts/BTCUSDT",
+  "predictions_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-27_trial02/layerA_artifacts/BTCUSDT/predictions.csv",
+  "metrics_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-27_trial02/layerA_artifacts/BTCUSDT/metrics.jsonl",
+  "summary_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-27_trial02/layerA_artifacts/BTCUSDT/summary.json",
+  "samples": 6743,
+  "train_start": "2019-09-08 16:00:00+00:00",
+  "test_start": "2025-01-01 00:00:00+00:00",
+  "test_end": "2025-02-01 00:00:00+00:00"
+}

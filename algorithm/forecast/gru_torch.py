@@ -72,6 +72,7 @@ class GRUSpec:
     num_layers: int
     dropout: float
     learning_rate: float
+    weight_decay: float
     batch_size: int
     epochs: int
     huber_delta: float
@@ -88,6 +89,8 @@ class GRUSpec:
     def from_json(cls, path: str) -> "GRUSpec":
         with open(path, "r") as f:
             data = json.load(f)
+        if "weight_decay" not in data:
+            data["weight_decay"] = 0.0
         return cls(**data)
 
 
@@ -118,6 +121,7 @@ class GRUForecasterTorch:
         num_layers: int = 1,
         dropout: float = 0.0,
         learning_rate: float = 1e-3,
+        weight_decay: float = 0.0,
         huber_delta: float = 1.0,
         grad_clip: float = 1.0,
         batch_size: int = 32,
@@ -133,6 +137,7 @@ class GRUForecasterTorch:
         self.num_layers = num_layers
         self.dropout = dropout
         self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
         self.huber_delta = huber_delta
         self.grad_clip = grad_clip
         self.batch_size = batch_size
@@ -163,16 +168,18 @@ class GRUForecasterTorch:
         if X.shape[1] != self.lookback or X.shape[2] != self.input_size:
             raise ValueError(f"Expected X shape (*, {self.lookback}, {self.input_size}), got {X.shape}")
 
-        self.scaler = SequenceStandardizer.fit(X, y)
-        X_std = self.scaler.transform_features(X)
-        y_std = self.scaler.transform_target(y)
-
-        # Train/val split
-        n = len(y_std)
+        # Train/val split on raw features; scaler uses train only to avoid leakage
+        n = len(y)
         val_size = max(1, int(n * self.validation_split))
         train_size = n - val_size
-        X_train, X_val = X_std[:train_size], X_std[train_size:]
-        y_train, y_val = y_std[:train_size], y_std[train_size:]
+        X_train_raw, X_val_raw = X[:train_size], X[train_size:]
+        y_train_raw, y_val_raw = y[:train_size], y[train_size:]
+
+        self.scaler = SequenceStandardizer.fit(X_train_raw, y_train_raw)
+        X_train = self.scaler.transform_features(X_train_raw)
+        y_train = self.scaler.transform_target(y_train_raw)
+        X_val = self.scaler.transform_features(X_val_raw)
+        y_val = self.scaler.transform_target(y_val_raw)
 
         train_ds = TensorDataset(
             torch.from_numpy(X_train).float(),
@@ -186,7 +193,7 @@ class GRUForecasterTorch:
         val_loader = DataLoader(val_ds, batch_size=self.batch_size, shuffle=False, drop_last=False)
 
         self.model = _GRUModel(self.input_size, self.hidden_size, self.num_layers, self.dropout).to(self.device)
-        opt = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        opt = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         loss_fn = nn.SmoothL1Loss(beta=self.huber_delta)
 
         best_state = None
@@ -249,6 +256,7 @@ class GRUForecasterTorch:
             num_layers=self.num_layers,
             dropout=self.dropout,
             learning_rate=self.learning_rate,
+            weight_decay=self.weight_decay,
             batch_size=self.batch_size,
             epochs=len(history["val_loss"]),
             huber_delta=self.huber_delta,
@@ -268,6 +276,26 @@ class GRUForecasterTorch:
         with torch.no_grad():
             pred_std = self.model(tensor).cpu().numpy()[0]
         return float(self.scaler.inverse_target(np.array([pred_std]))[0])
+
+    def predict_batch(self, windows: np.ndarray, return_std: bool = False) -> np.ndarray:
+        """Predict log returns for a batch of windows.
+
+        Args:
+            windows: ndarray (n_samples, lookback, input_size).
+            return_std: if True, return standardized predictions instead of de-standardized.
+        """
+        if self.model is None or self.scaler is None:
+            raise RuntimeError("Model not trained or loaded.")
+        if windows.ndim != 3 or windows.shape[1:] != (self.lookback, self.input_size):
+            raise ValueError(f"Expected windows shape (*, {self.lookback}, {self.input_size}), got {windows.shape}")
+        windows_std = self.scaler.transform_features(windows)
+        tensor = torch.from_numpy(windows_std).float().to(self.device)
+        self.model.eval()
+        with torch.no_grad():
+            preds_std = self.model(tensor).cpu().numpy()
+        if return_std:
+            return preds_std
+        return self.scaler.inverse_target(preds_std)
 
     def predict_simple_return(self, window: np.ndarray) -> float:
         log_ret = self.predict_log_return(window)
@@ -317,6 +345,7 @@ class GRUForecasterTorch:
             num_layers=state.get("num_layers", 1),
             dropout=state.get("dropout", 0.0),
             learning_rate=getattr(spec, "learning_rate", 1e-3) if spec else 1e-3,
+            weight_decay=getattr(spec, "weight_decay", 0.0) if spec else 0.0,
             huber_delta=getattr(spec, "huber_delta", 1.0) if spec else 1.0,
             grad_clip=getattr(spec, "grad_clip", 1.0) if spec else 1.0,
             batch_size=getattr(spec, "batch_size", 32) if spec else 32,

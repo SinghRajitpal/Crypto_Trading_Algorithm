@@ -48,3 +48,26 @@ def build_sequences(df: pd.DataFrame, lookback: int = 64) -> Tuple[np.ndarray, n
     if not X_list:
         return np.empty((0, lookback, 2)), np.empty((0,))
     return np.stack(X_list, axis=0), np.array(y_list, dtype=float)
+
+
+def build_sequences_with_index(df: pd.DataFrame, lookback: int = 64) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Generate supervised sequences plus target timestamps.
+
+    Returns:
+        X: ndarray (n_samples, lookback, 2)
+        y: ndarray (n_samples,)
+        ts: ndarray of pandas.Timestamp for each target
+    """
+    feats = _compute_features(df)
+    values = feats[["log_return", "log_volume"]].to_numpy()
+    idx = feats.index.to_numpy()
+    X_list: list[np.ndarray] = []
+    y_list: list[float] = []
+    ts_list: list[np.datetime64] = []
+    for i in range(lookback, len(values)):
+        X_list.append(values[i - lookback : i])
+        y_list.append(values[i, 0])
+        ts_list.append(idx[i])
+    if not X_list:
+        return np.empty((0, lookback, 2)), np.empty((0,)), np.empty((0,))
+    return np.stack(X_list, axis=0), np.array(y_list, dtype=float), np.array(ts_list)

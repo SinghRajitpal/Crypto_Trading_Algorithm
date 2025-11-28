@@ -1,9 +1,11 @@
 import asyncio
 import argparse
+import json
 from datetime import datetime, UTC, timedelta
 import os
 import sys
 from pathlib import Path
+from dataclasses import asdict
 
 # Ensure repository root is on sys.path for direct execution without PYTHONPATH.
 ROOT = Path(__file__).resolve().parent.parent
@@ -14,7 +16,6 @@ import config
 from backtest.gru_layer import GRULayerTrainer, GRULayerResult
 from data.data_engine import DataEngine
 from data.historical_data import HistoricalDataFetcher
-from binance_exchange import BinanceClient
 
 
 async def main():
@@ -34,9 +35,15 @@ async def main():
         help="Which layer(s) to run. A: GRU training only, B: backtest only, both: sequential.",
     )
     parser.add_argument(
-        "--gru-model-dir",
+        "--predictions",
+        nargs="?",
         default=None,
-        help="Path to a trained GRU model directory (uses Layer A output if not provided).",
+        const="",
+        help=(
+            "Optional comma-separated paths to Layer A predictions.csv files (one per symbol). "
+            "If omitted or empty and layer=A|both, uses freshly produced Layer A outputs. "
+            "If layer=B only and not provided, tries to auto-discover predictions under the output dir."
+        ),
     )
     args = parser.parse_args()
 
@@ -44,32 +51,37 @@ async def main():
     symbols = [s.strip().upper() for s in args.symbols.split(",")] if args.symbols else config.DEFAULT_UNIVERSE
     start = datetime.fromisoformat(args.start).replace(tzinfo=UTC)
     end = datetime.fromisoformat(args.end).replace(tzinfo=UTC)
-    gru_spec_path = os.path.join(output_dir, "gru_spec.json")
-    gru_model_dir = args.gru_model_dir
-
-    gru_spec: GRULayerResult | None = None
+    predictions_paths = _parse_predictions_arg(args.predictions)
 
     if args.layer in ("A", "both"):
-        artifacts_dir = os.path.join(output_dir, "layerA_artifacts")
-        trainer = GRULayerTrainer(symbols[0], timeframe=config.GRU_TIMEFRAME)
-        gru_spec = await trainer.train(start=start, end=end, output_dir=artifacts_dir)
-        gru_model_dir = gru_spec.model_dir
-        os.makedirs(os.path.dirname(gru_spec_path) or ".", exist_ok=True)
-        gru_spec.to_json(gru_spec_path)
+        artifacts_root = os.path.join(output_dir, "layerA_artifacts")
+        os.makedirs(artifacts_root, exist_ok=True)
+        layer_a_results: list[GRULayerResult] = []
+        for sym in symbols:
+            sym_dir = os.path.join(artifacts_root, sym)
+            trainer = GRULayerTrainer(sym, timeframe=config.GRU_TIMEFRAME)
+            result = await trainer.run(start=start, end=end, output_dir=sym_dir)
+            layer_a_results.append(result)
+            predictions_paths.append(result.predictions_path)
+        manifest_path = os.path.join(artifacts_root, "layerA_manifest.json")
+        with open(manifest_path, "w") as f:
+            json.dump([asdict(r) for r in layer_a_results], f, indent=2)
         if args.layer == "A":
             return
 
     if args.layer in ("B", "both"):
         # Import backtester lazily to avoid heavy imports (matplotlib) when only running Layer A.
         from backtest.backtesting_engine import WalkForwardBacktester
-        if gru_model_dir is None:
-            if os.path.exists(gru_spec_path):
-                gru_spec = GRULayerResult.from_json(gru_spec_path)
-                gru_model_dir = gru_spec.model_dir
-        if gru_model_dir is None:
-            raise FileNotFoundError("GRU model directory not provided and gru_spec.json not found.")
+        if not predictions_paths:
+            predictions_paths = _discover_predictions(output_dir)
+        if not predictions_paths:
+            raise FileNotFoundError(
+                "Predictions paths not provided and could not be auto-discovered. "
+                "Pass --predictions with comma-separated paths to predictions.csv files "
+                "or point --output to a prior Layer A artifacts directory."
+            )
         backtester = WalkForwardBacktester(
-            symbols, start, end, gru_model_dir=gru_model_dir, initial_capital=10_000.0, output_dir=output_dir
+            symbols, start, end, predictions_paths=predictions_paths, initial_capital=10_000.0, output_dir=output_dir
         )
         metrics = await backtester.run()
         os.makedirs(output_dir, exist_ok=True)
@@ -137,6 +149,22 @@ def _resolve_output_dir(output_arg: str | None) -> str:
     next_trial = (max(trial_nums) + 1) if trial_nums else 1
     run_name = f"{date_prefix}_trial{next_trial:02d}"
     return os.path.join(base_dir, run_name)
+
+
+def _parse_predictions_arg(raw: str | None) -> list[str]:
+    """Parse comma-separated predictions argument into a clean list of paths."""
+    if raw is None:
+        return []
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def _discover_predictions(output_dir: str) -> list[str]:
+    """Find predictions.csv files under the Layer A artifacts directory."""
+    artifacts_root = Path(output_dir) / "layerA_artifacts"
+    if not artifacts_root.exists():
+        return []
+    candidates = sorted(artifacts_root.glob("*/predictions.csv"))
+    return [str(p) for p in candidates if p.is_file()]
 
 
 if __name__ == "__main__":

@@ -80,6 +80,8 @@ GRU_HUBER_DELTA = 1.0
 GRU_MODEL_DIR = "backtest/backtest_results/gru_artifacts"
 GRU_TRAIN_VERBOSE = 1  # Keras fit verbosity (0=silent, 1=progress bar)
 GRU_DEVICE = "mps"  # Try Apple Metal first, fallback to cpu
+GRU_RETRAIN_DAYS = 30
+GRU_MIN_TRAIN_SAMPLES = 200
 
 # Risk Model Data Parameters
 RISK_WINDOW = 180  # Bars used for covariance estimation

@@ -1,0 +1,15 @@
+{
+  "symbol": "XRPUSDT",
+  "timeframe": "8h",
+  "lookback": 64,
+  "retrain_days": 30,
+  "predictions": 93,
+  "steps": 2,
+  "count": 93,
+  "mse": 0.0007520269792783751,
+  "rmse": 0.02742311031371852,
+  "mae": 0.020013080895401495,
+  "ic_pearson": 0.14588971740696746,
+  "ic_spearman": 0.2203455581749276,
+  "sign_accuracy": 0.5806451612903226
+}

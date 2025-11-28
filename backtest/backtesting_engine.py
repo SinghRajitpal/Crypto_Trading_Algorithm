@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import pandas as pd
 
 import config
-from algorithm.forecast.gru_torch import GRUForecasterTorch
 from algorithm.forecast.forecast_result import ForecastResult
 from backtest.broker import SimBroker
 from backtest.ras import ras_sharpe
@@ -51,20 +51,19 @@ class WalkForwardBacktester:
         symbols: List[str],
         start: datetime,
         end: datetime,
-        gru_model_dir: str,
+        predictions_paths: List[str],
         initial_capital: float = 10_000.0,
         output_dir: Optional[str] = None,
     ) -> None:
-        if not gru_model_dir:
-            raise ValueError("gru_model_dir is required for GRU backtesting.")
         self.symbols = symbols
         self.start = start
         self.end = end
-        self.gru_model_dir = gru_model_dir
-        self.gru_forecaster: Optional[GRUForecasterTorch] = None
+        self.predictions_paths = predictions_paths
         self.initial_capital = initial_capital
         self.output_dir = output_dir
         self.timeframe = config.GRU_TIMEFRAME
+        self._pred_map: Dict[int, Dict[str, float]] = {}
+        self._pred_df: Optional[pd.DataFrame] = None
 
         self.broker = SimBroker(initial_capital)
         self.data_engine = DataEngine(binance_client=self.broker, max_candles=2000)
@@ -79,8 +78,7 @@ class WalkForwardBacktester:
     async def run(self) -> BacktestMetrics:
         ohlcv_data = await self._load_history()
         await self._warmup(ohlcv_data)
-        if self.gru_model_dir:
-            self.gru_forecaster = GRUForecasterTorch.load(self.gru_model_dir, device=config.GRU_DEVICE)
+        self._pred_map = self._load_prediction_feed(self.predictions_paths)
         clock = sorted({ts for df in ohlcv_data.values() for ts in df.index})
 
         equity_curve: List[float] = []
@@ -132,7 +130,7 @@ class WalkForwardBacktester:
                 len(self.broker._positions),  # pylint: disable=protected-access
             )
 
-            expected_returns = self._predict_with_gru()
+            expected_returns = self._expected_returns(ts)
             logger.debug(
                 "Bar %s | forecasts=%d | universe=%s",
                 ts.isoformat(),
@@ -143,7 +141,7 @@ class WalkForwardBacktester:
             if not expected_returns:
                 continue
 
-            diagnostics = {"model": "gru"} if self.gru_forecaster else {}
+            diagnostics = {"model": "gru_layerA_feed"}
             forecast = ForecastResult(
                 timestamp=int(ts.timestamp() * 1000),
                 universe=list(expected_returns.keys()),
@@ -304,34 +302,49 @@ class WalkForwardBacktester:
 
         return metrics
 
-    def _predict_with_gru(self) -> Dict[str, float]:
-        """Generate expected returns using the loaded GRU forecaster."""
-        if self.gru_forecaster is None:
+    def _expected_returns(self, ts: datetime) -> Dict[str, float]:
+        """Read pre-computed expected returns for the current bar."""
+        ts_ms = int(ts.timestamp() * 1000)
+        raw = self._pred_map.get(ts_ms, {})
+        if not raw:
             return {}
         expected: Dict[str, float] = {}
-        lookback = self.gru_forecaster.lookback
-        for sym in self.symbols:
-            if self.data_engine.get_missing_bars(sym, self.timeframe):
+        for sym, log_ret in raw.items():
+            if sym not in self.symbols:
                 continue
-            lr_hist = self.data_engine.return_manager.log_return_history.get(sym, [])
-            vol_hist = self.data_engine.return_manager.volume_history.get(sym, [])
-            if len(lr_hist) < lookback or len(vol_hist) < lookback:
-                continue
-            log_returns = np.array([v for _, v in lr_hist], dtype=float)
-            volumes = np.array([v for _, v in vol_hist], dtype=float)
-            volumes = volumes[-len(log_returns) :]
-            lr_slice = log_returns[-lookback:]
-            vol_slice = volumes[-lookback:]
-            if lr_slice.shape[0] < lookback or vol_slice.shape[0] < lookback:
-                continue
-            window = np.stack([lr_slice, np.log1p(vol_slice)], axis=1)
-            if not np.all(np.isfinite(window)):
-                continue
-            try:
-                expected[sym] = self.gru_forecaster.predict_simple_return(window)
-            except Exception as exc:
-                logger.warning("GRU forecast failed for %s: %s", sym, exc)
+            # Convert predicted log-return to simple return for portfolio layer
+            expected[sym] = float(np.exp(log_ret) - 1.0)
         return expected
+
+    def _load_prediction_feed(self, paths: List[str]) -> Dict[int, Dict[str, float]]:
+        """Load Layer A predictions into an in-memory lookup keyed by timestamp."""
+        if not paths:
+            raise ValueError("predictions_paths is required for Layer B backtest.")
+        frames: List[pd.DataFrame] = []
+        for path in paths:
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"Predictions file not found: {path}")
+            df = pd.read_csv(path)
+            if "timestamp" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+            if "timestamp_ms" not in df.columns:
+                if "timestamp" not in df.columns:
+                    raise ValueError(f"Predictions file missing timestamp columns: {path}")
+                df["timestamp_ms"] = (df["timestamp"].astype("int64") // 1_000_000).astype("int64")
+            frames.append(df[["timestamp_ms", "symbol", "y_pred_logret"]])
+        if not frames:
+            return {}
+        df_all = pd.concat(frames, ignore_index=True)
+        df_all["symbol"] = df_all["symbol"].astype(str).str.upper()
+        df_all = df_all.dropna(subset=["timestamp_ms", "symbol", "y_pred_logret"])
+        df_all.sort_values("timestamp_ms", inplace=True)
+        pred_map: Dict[int, Dict[str, float]] = {}
+        for row in df_all.itertuples(index=False):
+            ts_ms = int(row.timestamp_ms)
+            sym = row.symbol
+            pred_map.setdefault(ts_ms, {})[sym] = float(row.y_pred_logret)
+        self._pred_df = df_all
+        return pred_map
 
     async def _price_lookup(self, symbol: str) -> Optional[float]:
         """Async adapter around DataEngine latest price for SimBroker fills."""
