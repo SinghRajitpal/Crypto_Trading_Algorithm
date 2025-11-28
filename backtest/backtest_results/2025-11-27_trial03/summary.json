@@ -1,0 +1,25 @@
+{
+  "pnl": -287.91906831773304,
+  "cum_return_pct": -2.879190683177335,
+  "sharpe": -26.7036577127744,
+  "max_drawdown": 0.0416334914209903,
+  "turnover": 0.05610251076195996,
+  "winrate": 0.1625441696113074,
+  "impact_vs_slippage": 26.882181089044884,
+  "ras_sharpe": -0.0003122716628465922,
+  "ras_sharpe_lower": -0.28349601344752695,
+  "risk_diag_avg": {
+    "malv_mean": -2.533196089351206,
+    "symbols": 5.0,
+    "vol_mse_avg": 6.709581619364052e-07,
+    "vol_qlike_avg": -7.288283165378272,
+    "last_mahalanobis_d2": 3.2845146591987517,
+    "cov_turnover_fro": 0.0013946916231485122
+  },
+  "cov_loss_avg": {
+    "cov_port_mse": 1.912413929896109e-08,
+    "cov_port_qlike": -6.615075630659373
+  },
+  "benchmark_sharpe": 19.4753083569378,
+  "ras_ic_lower": NaN
+}

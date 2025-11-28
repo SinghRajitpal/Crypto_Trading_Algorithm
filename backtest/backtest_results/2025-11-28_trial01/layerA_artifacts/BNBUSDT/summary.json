@@ -1,0 +1,15 @@
+{
+  "symbol": "BNBUSDT",
+  "timeframe": "8h",
+  "lookback": 64,
+  "retrain_days": 30,
+  "predictions": 270,
+  "steps": 3,
+  "count": 270,
+  "mse": 0.0002897335518068412,
+  "rmse": 0.01702156137981593,
+  "mae": 0.01189793200103903,
+  "ic_pearson": 0.0380776265495248,
+  "ic_spearman": 0.006621947260364796,
+  "sign_accuracy": 0.45925925925925926
+}

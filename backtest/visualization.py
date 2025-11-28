@@ -9,13 +9,18 @@ import numpy as np
 def plot_equity(equity: List[float], drawdowns: Optional[List[float]], path: str) -> None:
     if not equity:
         return
-    plt.figure(figsize=(8, 4))
-    plt.plot(equity, label="Equity")
+    plt.figure(figsize=(9, 4.5))
+    plt.plot(equity, label="Equity", color="#1f77b4", linewidth=1.4)
     if drawdowns:
-        plt.twinx()
-        plt.plot(drawdowns, color="red", alpha=0.3, label="Drawdown")
-    plt.title("Equity Curve")
-    plt.legend()
+        ax2 = plt.twinx()
+        ax2.plot(drawdowns, color="#d62728", alpha=0.4, label="Drawdown")
+        ax2.set_ylabel("Drawdown (fraction)", fontsize=11)
+        ax2.legend(loc="upper right")
+    plt.title("Equity Curve", fontsize=12)
+    plt.xlabel("Bars", fontsize=11)
+    plt.ylabel("Equity (USD)", fontsize=11)
+    plt.legend(loc="upper left")
+    plt.grid(alpha=0.2)
     plt.tight_layout()
     plt.savefig(path)
     plt.close()
@@ -26,10 +31,12 @@ def plot_risk_diagnostics(risk_diag: Dict[str, float], path: str) -> None:
         return
     keys = list(risk_diag.keys())
     vals = [risk_diag[k] for k in keys]
-    plt.figure(figsize=(8, 4))
-    plt.bar(keys, vals)
+    plt.figure(figsize=(9, 4.5))
+    plt.bar(keys, vals, color="#9467bd", alpha=0.8)
     plt.xticks(rotation=45, ha="right")
-    plt.title("Risk Diagnostics")
+    plt.title("Risk Diagnostics", fontsize=12)
+    plt.ylabel("Value", fontsize=11)
+    plt.grid(axis="y", alpha=0.2)
     plt.tight_layout()
     plt.savefig(path)
     plt.close()
@@ -38,11 +45,14 @@ def plot_risk_diagnostics(risk_diag: Dict[str, float], path: str) -> None:
 def plot_series(series: Dict[str, List[float]], path: str, title: str) -> None:
     if not series:
         return
-    plt.figure(figsize=(8, 4))
+    plt.figure(figsize=(9, 4.5))
     for name, vals in series.items():
-        plt.plot(vals, label=name)
-    plt.title(title)
+        plt.plot(vals, label=name, linewidth=1.2)
+    plt.title(title, fontsize=12)
+    plt.xlabel("Bars", fontsize=11)
+    plt.ylabel("Value", fontsize=11)
     plt.legend()
+    plt.grid(alpha=0.2)
     plt.tight_layout()
     plt.savefig(path)
     plt.close()
@@ -51,11 +61,12 @@ def plot_series(series: Dict[str, List[float]], path: str, title: str) -> None:
 def plot_scatter(x: List[float], y: List[float], path: str, xlabel: str, ylabel: str, title: str) -> None:
     if not x or not y:
         return
-    plt.figure(figsize=(6, 4))
-    plt.scatter(x, y, alpha=0.6)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.title(title)
+    plt.figure(figsize=(6.5, 4.5))
+    plt.scatter(x, y, alpha=0.6, color="#ff7f0e")
+    plt.xlabel(xlabel, fontsize=11)
+    plt.ylabel(ylabel, fontsize=11)
+    plt.title(title, fontsize=12)
+    plt.grid(alpha=0.2)
     plt.tight_layout()
     plt.savefig(path)
     plt.close()

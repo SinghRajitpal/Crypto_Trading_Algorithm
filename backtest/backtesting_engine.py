@@ -35,10 +35,15 @@ class BacktestMetrics:
     pnl: float
     cum_return_pct: float
     sharpe: float
+    volatility: float
     max_drawdown: float
+    avg_drawdown: float
     turnover: float
+    turnover_sum: float
     winrate: float
-    impact_vs_slippage: float
+    avg_win: float
+    avg_loss: float
+    fees: float
     ras_sharpe: float = float("nan")
     ras_sharpe_lower: float = float("nan")
 
@@ -76,231 +81,248 @@ class WalkForwardBacktester:
         self.broker.set_price_callback(self._price_lookup)
 
     async def run(self) -> BacktestMetrics:
-        ohlcv_data = await self._load_history()
-        await self._warmup(ohlcv_data)
-        self._pred_map = self._load_prediction_feed(self.predictions_paths)
-        clock = sorted({ts for df in ohlcv_data.values() for ts in df.index})
+        try:
+            ohlcv_data = await self._load_history()
+            await self._warmup(ohlcv_data)
+            self._pred_map = self._load_prediction_feed(self.predictions_paths, self.start, self.end)
+            self._validate_predictions(self.start, self.end)
+            clock = sorted({ts for df in ohlcv_data.values() for ts in df.index})
 
-        equity_curve: List[float] = []
-        returns: List[float] = []
-        turnovers: List[float] = []
-        impact_vs_slippage: List[float] = []
-        wins = 0
-        trades = 0
-        risk_diags: List[Dict[str, Any]] = []
-        cov_losses: List[Dict[str, Any]] = []
-        drawdowns: List[float] = []
-        peak = self.initial_capital
-        benchmark_prices: List[float] = []
-        kelly_fs: List[float] = []
-        kelly_drawdowns: List[float] = []
-        impact_estimates: List[float] = []
-        slippages: List[float] = []
-        risk_series: List[Dict[str, Any]] = []
+            equity_curve: List[float] = []
+            returns: List[float] = []
+            turnovers: List[float] = []
+            fees_list: List[float] = []
+            wins = 0
+            trades = 0
+            risk_diags: List[Dict[str, Any]] = []
+            cov_losses: List[Dict[str, Any]] = []
+            drawdowns: List[float] = []
+            peak = self.initial_capital
+            benchmark_prices: List[float] = []
+            kelly_fs: List[float] = []
+            kelly_drawdowns: List[float] = []
+            risk_series: List[Dict[str, Any]] = []
 
-        for ts in clock:
-            if ts < self.start or ts > self.end:
-                continue
+            for ts in clock:
+                if ts < self.start or ts > self.end:
+                    continue
 
-            # Align simulated broker timestamps with bar time
-            self.broker.set_bar_timestamp(ts)
+                # Align simulated broker timestamps with bar time
+                self.broker.set_bar_timestamp(ts)
 
-            for sym in self.symbols:
-                df = ohlcv_data.get(sym)
-                if df is not None and ts in df.index:
-                    candle = df.loc[ts]
-                    bar = [int(ts.timestamp() * 1000)] + candle.tolist()
-                    await self.data_engine.data_fetcher.data_processor.update_tracked_candles(
-                        sym, self.timeframe, bar
+                for sym in self.symbols:
+                    df = ohlcv_data.get(sym)
+                    if df is not None and ts in df.index:
+                        candle = df.loc[ts]
+                        bar = [int(ts.timestamp() * 1000)] + candle.tolist()
+                        await self.data_engine.data_fetcher.data_processor.update_tracked_candles(
+                            sym, self.timeframe, bar
+                        )
+
+                self.data_engine.process_all_latest_bars(self.timeframe)
+
+                # Mark-to-market: cache latest closes for all tracked symbols so equity reflects price moves even without trades.
+                tracked_syms = set(self.symbols) | set(self.broker._positions.keys())  # pylint: disable=protected-access
+                price_map = {
+                    s: self.data_engine.get_latest_price(s, self.timeframe)
+                    for s in tracked_syms
+                }
+                self.broker.update_last_prices(price_map)
+                logger.debug(
+                    "Bar %s | tracked_syms=%d | positions=%d",
+                    ts.isoformat(),
+                    len(tracked_syms),
+                    len(self.broker._positions),  # pylint: disable=protected-access
+                )
+
+                expected_returns = self._expected_returns(ts)
+                logger.debug(
+                    "Bar %s | forecasts=%d | universe=%s",
+                    ts.isoformat(),
+                    len(expected_returns),
+                    list(expected_returns.keys()),
+                )
+
+                bar_turnover = 0.0
+                bar_fees = 0.0
+                if expected_returns:
+                    diagnostics = {"model": "gru_layerA_feed"}
+                    forecast = ForecastResult(
+                        timestamp=int(ts.timestamp() * 1000),
+                        universe=list(expected_returns.keys()),
+                        expected_returns=expected_returns,
+                        betas={},
+                        diagnostics=diagnostics,
                     )
 
-            self.data_engine.process_all_latest_bars(self.timeframe)
+                    returns_matrix, sym_order = self.data_engine.get_return_matrix(
+                        forecast.universe, config.RISK_WINDOW
+                    )
+                    if returns_matrix.size == 0 or not sym_order:
+                        # still record equity later
+                        pass
+                    else:
+                        self.execution_engine.refresh_risk_model(sym_order, returns_matrix)
+                        prices = {s: self.data_engine.get_latest_price(s, self.timeframe) for s in forecast.universe}
+                        nav = await self._nav()
+                        result = await self.execution_engine.process_forecast(
+                            forecast=forecast,
+                            nav=nav,
+                            prices=prices,
+                            returns_matrix=returns_matrix,
+                        )
+                        logger.debug(
+                            "Bar %s | nav=%.2f | orders=%d | turnover=%.4f",
+                            ts.isoformat(),
+                            nav,
+                            len(result.get("orders", [])),
+                            result.get("turnover", 0.0),
+                        )
+                        bar_turnover = result.get("turnover", 0.0) or 0.0
+                        bar_fees = result.get("fees", 0.0) or 0.0
+                        trades += len(result.get("orders", []))
+                        if result.get("risk_diag"):
+                            risk_diags.append(result.get("risk_diag"))
+                        if result.get("risk_cov_loss"):
+                            cov_losses.append(result.get("risk_cov_loss"))
+                        # Capture time-series risk/impact
+                        risk_series.append(
+                            {
+                                "ts": forecast.timestamp,
+                                "risk_diag": result.get("risk_diag"),
+                                "risk_cov_loss": result.get("risk_cov_loss"),
+                                "turnover": result.get("turnover"),
+                                "impact_est": result.get("impact_cost_est"),
+                                "impact_concave": result.get("impact_cost_concave"),
+                                "impact_propagator": result.get("impact_cost_propagator"),
+                            }
+                        )
+                        if result.get("kelly_f") is not None:
+                            kelly_fs.append(result.get("kelly_f"))
+                        if result.get("kelly_drawdown") is not None:
+                            kelly_drawdowns.append(result.get("kelly_drawdown"))
+                        if result.get("impact_cost_est") is not None:
+                            impact_estimates.append(result.get("impact_cost_est"))
+                        if result.get("realized_slippage_bp") is not None:
+                            slippages.append(result.get("realized_slippage_bp"))
 
-            # Mark-to-market: cache latest closes for all tracked symbols so equity reflects price moves even without trades.
-            tracked_syms = set(self.symbols) | set(self.broker._positions.keys())  # pylint: disable=protected-access
-            price_map = {
-                s: self.data_engine.get_latest_price(s, self.timeframe)
-                for s in tracked_syms
+                nav_new = await self._nav()
+                equity_curve.append(nav_new)
+                peak = max(peak, nav_new)
+                dd = (peak - nav_new) / peak if peak > 0 else 0.0
+                drawdowns.append(dd)
+                # Benchmark: use first symbol close
+                bench_sym = self.symbols[0] if self.symbols else None
+                if bench_sym:
+                    px = self.data_engine.get_latest_price(bench_sym, self.timeframe)
+                    if px:
+                        benchmark_prices.append(px)
+                if len(equity_curve) > 1:
+                    r = (equity_curve[-1] - equity_curve[-2]) / equity_curve[-2]
+                    returns.append(r)
+                    if r > 0 and expected_returns:
+                        wins += 1
+                turnovers.append(bar_turnover)
+                fees_list.append(bar_fees)
+
+            pnl = equity_curve[-1] - self.initial_capital if equity_curve else 0.0
+            cum_return_pct = (equity_curve[-1] / self.initial_capital - 1) * 100 if equity_curve else 0.0
+            bars_per_day = self._bars_per_day(self.timeframe)
+            sharpe = self._sharpe(returns, bars_per_day)
+            vol = self._volatility(returns, bars_per_day)
+            max_dd = self._max_drawdown(equity_curve)
+            avg_dd = float(np.mean(drawdowns)) if drawdowns else 0.0
+            turnover = float(np.mean(turnovers)) if turnovers else 0.0
+            turnover_sum = float(np.sum(turnovers)) if turnovers else 0.0
+            winrate = wins / max(1, trades)
+            risk_diag_avg = self._avg_diag(risk_diags)
+            cov_loss_avg = self._avg_diag(cov_losses)
+            avg_win, avg_loss = self._avg_win_loss(returns)
+            fees_total = float(np.sum(fees_list)) if fees_list else 0.0
+            benchmark_sharpe = float("nan")
+            if len(benchmark_prices) > 1:
+                bench_rets = np.diff(np.array(benchmark_prices)) / np.array(benchmark_prices[:-1])
+                benchmark_sharpe = self._sharpe(list(bench_rets), bars_per_day)
+            if returns:
+                strat_returns = np.array(returns, dtype=float).reshape(1, -1)
+                ras_emp, ras_lower = ras_sharpe(strat_returns)
+                ras_sharpe_emp = float(ras_emp[0]) if ras_emp.size else float("nan")
+                ras_sharpe_lower = float(ras_lower[0]) if ras_lower.size else float("nan")
+            else:
+                ras_sharpe_emp = float("nan")
+                ras_sharpe_lower = float("nan")
+
+            metrics = BacktestMetrics(
+                pnl=float(pnl),
+                cum_return_pct=float(cum_return_pct),
+                sharpe=float(sharpe),
+                volatility=float(vol),
+                max_drawdown=float(max_dd),
+                avg_drawdown=float(avg_dd),
+                turnover=turnover,
+                turnover_sum=turnover_sum,
+                winrate=winrate,
+                avg_win=avg_win,
+                avg_loss=avg_loss,
+                fees=fees_total,
+                ras_sharpe=ras_sharpe_emp,
+                ras_sharpe_lower=ras_sharpe_lower,
+            )
+            summary = {
+                "pnl": pnl,
+                "cum_return_pct": cum_return_pct,
+                "sharpe": sharpe,
+                "volatility": vol,
+                "max_drawdown": max_dd,
+                "avg_drawdown": avg_dd,
+                "turnover": turnover,
+                "turnover_sum": turnover_sum,
+                "winrate": winrate,
+                "avg_win": avg_win,
+                "avg_loss": avg_loss,
+                "fees": fees_total,
+                "ras_sharpe": ras_sharpe_emp,
+                "ras_sharpe_lower": ras_sharpe_lower,
+                "risk_diag_avg": risk_diag_avg,
+                "cov_loss_avg": cov_loss_avg,
+                "benchmark_sharpe": benchmark_sharpe,
+                "ras_ic_lower": float("nan"),
             }
-            self.broker.update_last_prices(price_map)
-            logger.debug(
-                "Bar %s | tracked_syms=%d | positions=%d",
-                ts.isoformat(),
-                len(tracked_syms),
-                len(self.broker._positions),  # pylint: disable=protected-access
-            )
+            self._metrics = summary
 
-            expected_returns = self._expected_returns(ts)
-            logger.debug(
-                "Bar %s | forecasts=%d | universe=%s",
-                ts.isoformat(),
-                len(expected_returns),
-                list(expected_returns.keys()),
-            )
-
-            if not expected_returns:
-                continue
-
-            diagnostics = {"model": "gru_layerA_feed"}
-            forecast = ForecastResult(
-                timestamp=int(ts.timestamp() * 1000),
-                universe=list(expected_returns.keys()),
-                expected_returns=expected_returns,
-                betas={},
-                diagnostics=diagnostics,
-            )
-
-            returns_matrix, sym_order = self.data_engine.get_return_matrix(
-                forecast.universe, config.RISK_WINDOW
-            )
-            if returns_matrix.size == 0 or not sym_order:
-                continue
-
-            self.execution_engine.refresh_risk_model(sym_order, returns_matrix)
-            prices = {s: self.data_engine.get_latest_price(s, self.timeframe) for s in forecast.universe}
-            nav = await self._nav()
-            result = await self.execution_engine.process_forecast(
-                forecast=forecast,
-                nav=nav,
-                prices=prices,
-                returns_matrix=returns_matrix,
-            )
-            logger.debug(
-                "Bar %s | nav=%.2f | orders=%d | turnover=%.4f",
-                ts.isoformat(),
-                nav,
-                len(result.get("orders", [])),
-                result.get("turnover", 0.0),
-            )
-
-            nav_new = await self._nav()
-            equity_curve.append(nav_new)
-            peak = max(peak, nav_new)
-            dd = (peak - nav_new) / peak if peak > 0 else 0.0
-            drawdowns.append(dd)
-            # Benchmark: use first symbol close
-            bench_sym = self.symbols[0] if self.symbols else None
-            if bench_sym:
-                px = self.data_engine.get_latest_price(bench_sym, self.timeframe)
-                if px:
-                    benchmark_prices.append(px)
-            if len(equity_curve) > 1:
-                r = (equity_curve[-1] - equity_curve[-2]) / equity_curve[-2]
-                returns.append(r)
-                trades += len(result.get("orders", []))
-                if r > 0:
-                    wins += 1
-            turnovers.append(result.get("turnover", 0.0))
-            if "impact_vs_slippage" in result and result.get("impact_vs_slippage") is not None:
-                impact_vs_slippage.append(result.get("impact_vs_slippage"))
-            if result.get("risk_diag"):
-                risk_diags.append(result.get("risk_diag"))
-            if result.get("risk_cov_loss"):
-                cov_losses.append(result.get("risk_cov_loss"))
-            # Capture time-series risk/impact
-            risk_series.append(
-                {
-                    "ts": forecast.timestamp,
-                    "risk_diag": result.get("risk_diag"),
-                    "risk_cov_loss": result.get("risk_cov_loss"),
-                    "turnover": result.get("turnover"),
-                    "impact_est": result.get("impact_cost_est"),
-                    "impact_concave": result.get("impact_cost_concave"),
-                    "impact_propagator": result.get("impact_cost_propagator"),
-                }
-            )
-            if result.get("kelly_f") is not None:
-                kelly_fs.append(result.get("kelly_f"))
-            if result.get("kelly_drawdown") is not None:
-                kelly_drawdowns.append(result.get("kelly_drawdown"))
-            if result.get("impact_cost_est") is not None:
-                impact_estimates.append(result.get("impact_cost_est"))
-            if result.get("realized_slippage_bp") is not None:
-                slippages.append(result.get("realized_slippage_bp"))
-
-        pnl = equity_curve[-1] - self.initial_capital if equity_curve else 0.0
-        cum_return_pct = (equity_curve[-1] / self.initial_capital - 1) * 100 if equity_curve else 0.0
-        sharpe = self._sharpe(returns)
-        max_dd = self._max_drawdown(equity_curve)
-        turnover = float(np.mean(turnovers)) if turnovers else 0.0
-        winrate = wins / max(1, trades)
-        ivs = float(np.mean(impact_vs_slippage)) if impact_vs_slippage else float("nan")
-        risk_diag_avg = self._avg_diag(risk_diags)
-        cov_loss_avg = self._avg_diag(cov_losses)
-        benchmark_sharpe = float("nan")
-        if len(benchmark_prices) > 1:
-            bench_rets = np.diff(np.array(benchmark_prices)) / np.array(benchmark_prices[:-1])
-            benchmark_sharpe = self._sharpe(list(bench_rets))
-        if returns:
-            strat_returns = np.array(returns, dtype=float).reshape(1, -1)
-            ras_emp, ras_lower = ras_sharpe(strat_returns)
-            ras_sharpe_emp = float(ras_emp[0]) if ras_emp.size else float("nan")
-            ras_sharpe_lower = float(ras_lower[0]) if ras_lower.size else float("nan")
-        else:
-            ras_sharpe_emp = float("nan")
-            ras_sharpe_lower = float("nan")
-
-        metrics = BacktestMetrics(
-            pnl=float(pnl),
-            cum_return_pct=float(cum_return_pct),
-            sharpe=float(sharpe),
-            max_drawdown=float(max_dd),
-            turnover=turnover,
-            winrate=winrate,
-            impact_vs_slippage=ivs,
-            ras_sharpe=ras_sharpe_emp,
-            ras_sharpe_lower=ras_sharpe_lower,
-        )
-        summary = {
-            "pnl": pnl,
-            "cum_return_pct": cum_return_pct,
-            "sharpe": sharpe,
-            "max_drawdown": max_dd,
-            "turnover": turnover,
-            "winrate": winrate,
-            "impact_vs_slippage": ivs,
-            "ras_sharpe": ras_sharpe_emp,
-            "ras_sharpe_lower": ras_sharpe_lower,
-            "risk_diag_avg": risk_diag_avg,
-            "cov_loss_avg": cov_loss_avg,
-            "benchmark_sharpe": benchmark_sharpe,
-            "ras_ic_lower": float("nan"),
-        }
-        self._metrics = summary
-
-        if self.output_dir:
-            os.makedirs(self.output_dir, exist_ok=True)
-            save_summary_json(summary, os.path.join(self.output_dir, "summary.json"))
-            if equity_curve:
-                with open(os.path.join(self.output_dir, "equity.csv"), "w") as f:
-                    f.write("equity\n")
-                    for v in equity_curve:
-                        f.write(f"{v}\n")
-                plot_equity(equity_curve, drawdowns, os.path.join(self.output_dir, "equity.png"))
-            if risk_diag_avg:
-                plot_risk_diagnostics(risk_diag_avg, os.path.join(self.output_dir, "risk_diag.png"))
-            # Additional plots
-            if kelly_fs or kelly_drawdowns:
-                plot_series(
-                    {"kelly_f": kelly_fs, "kelly_drawdown": kelly_drawdowns},
-                    os.path.join(self.output_dir, "kelly.png"),
-                    "Kelly & Drawdown",
-                )
-            if impact_estimates or slippages:
-                plot_scatter(
-                    impact_estimates,
-                    slippages,
-                    os.path.join(self.output_dir, "impact_vs_slippage.png"),
-                    xlabel="Impact Estimate",
-                    ylabel="Realized Slippage (bp)",
-                    title="Impact vs Slippage",
-                )
-            if risk_series:
-                with open(os.path.join(self.output_dir, "risk_series.jsonl"), "w") as f:
-                    for rec in risk_series:
-                        f.write(json.dumps(rec) + "\n")
-
-        return metrics
+            if self.output_dir:
+                os.makedirs(self.output_dir, exist_ok=True)
+                save_summary_json(summary, os.path.join(self.output_dir, "summary.json"))
+                # Also write metrics.csv for easy ingestion
+                with open(os.path.join(self.output_dir, "metrics.csv"), "w") as f:
+                    f.write("metric,value\n")
+                    for k, v in summary.items():
+                        f.write(f"{k},{v}\n")
+                if equity_curve:
+                    with open(os.path.join(self.output_dir, "equity.csv"), "w") as f:
+                        f.write("equity\n")
+                        for v in equity_curve:
+                            f.write(f"{v}\n")
+                    plot_equity(equity_curve, drawdowns, os.path.join(self.output_dir, "equity.png"))
+                if risk_diag_avg:
+                    plot_risk_diagnostics(risk_diag_avg, os.path.join(self.output_dir, "risk_diag.png"))
+                # Additional plots
+                if kelly_fs or kelly_drawdowns:
+                    plot_series(
+                        {"kelly_f": kelly_fs, "kelly_drawdown": kelly_drawdowns},
+                        os.path.join(self.output_dir, "kelly.png"),
+                        "Kelly & Drawdown",
+                    )
+                if risk_series:
+                    with open(os.path.join(self.output_dir, "risk_series.jsonl"), "w") as f:
+                        for rec in risk_series:
+                            f.write(json.dumps(rec) + "\n")
+            return metrics
+        finally:
+            try:
+                await self.fetcher.close()
+            except Exception:
+                pass
 
     def _expected_returns(self, ts: datetime) -> Dict[str, float]:
         """Read pre-computed expected returns for the current bar."""
@@ -316,7 +338,7 @@ class WalkForwardBacktester:
             expected[sym] = float(np.exp(log_ret) - 1.0)
         return expected
 
-    def _load_prediction_feed(self, paths: List[str]) -> Dict[int, Dict[str, float]]:
+    def _load_prediction_feed(self, paths: List[str], start: datetime, end: datetime) -> Dict[int, Dict[str, float]]:
         """Load Layer A predictions into an in-memory lookup keyed by timestamp."""
         if not paths:
             raise ValueError("predictions_paths is required for Layer B backtest.")
@@ -338,6 +360,10 @@ class WalkForwardBacktester:
         df_all["symbol"] = df_all["symbol"].astype(str).str.upper()
         df_all = df_all.dropna(subset=["timestamp_ms", "symbol", "y_pred_logret"])
         df_all.sort_values("timestamp_ms", inplace=True)
+        # Filter to backtest window to reduce noise/memory
+        start_ms = int(start.timestamp() * 1000)
+        end_ms = int(end.timestamp() * 1000)
+        df_all = df_all[(df_all["timestamp_ms"] >= start_ms) & (df_all["timestamp_ms"] <= end_ms)]
         pred_map: Dict[int, Dict[str, float]] = {}
         for row in df_all.itertuples(index=False):
             ts_ms = int(row.timestamp_ms)
@@ -345,6 +371,28 @@ class WalkForwardBacktester:
             pred_map.setdefault(ts_ms, {})[sym] = float(row.y_pred_logret)
         self._pred_df = df_all
         return pred_map
+
+    def _validate_predictions(self, start: datetime, end: datetime) -> None:
+        """Sanity checks on prediction coverage and symbols."""
+        if self._pred_df is None or self._pred_df.empty:
+            raise ValueError("No predictions loaded for Layer B backtest.")
+        start_ms = int(start.timestamp() * 1000)
+        end_ms = int(end.timestamp() * 1000)
+        min_ts = int(self._pred_df["timestamp_ms"].min())
+        max_ts = int(self._pred_df["timestamp_ms"].max())
+        if min_ts > start_ms or max_ts < end_ms:
+            logger.warning(
+                "Prediction window [%s, %s] does not fully cover backtest window [%s, %s].",
+                pd.to_datetime(min_ts, unit="ms", utc=True).isoformat(),
+                pd.to_datetime(max_ts, unit="ms", utc=True).isoformat(),
+                start.isoformat(),
+                end.isoformat(),
+            )
+        # Warn on symbols with no predictions
+        preds_symbols = set(self._pred_df["symbol"].unique())
+        missing = [s for s in self.symbols if s.upper() not in preds_symbols]
+        if missing:
+            logger.warning("No predictions found for symbols: %s", missing)
 
     async def _price_lookup(self, symbol: str) -> Optional[float]:
         """Async adapter around DataEngine latest price for SimBroker fills."""
@@ -392,13 +440,14 @@ class WalkForwardBacktester:
         return float(bal["total"]["USDT"])
 
     @staticmethod
-    def _sharpe(returns: List[float]) -> float:
+    def _sharpe(returns: List[float], bars_per_day: float) -> float:
         if not returns:
             return 0.0
         arr = np.array(returns, dtype=float)
         if np.std(arr, ddof=1) == 0:
             return 0.0
-        return float(np.mean(arr) / np.std(arr, ddof=1) * np.sqrt(252 * 24 * 12))
+        annual_factor = np.sqrt(max(1.0, bars_per_day * 252))
+        return float(np.mean(arr) / np.std(arr, ddof=1) * annual_factor)
 
     @staticmethod
     def _max_drawdown(equity: List[float]) -> float:
@@ -414,6 +463,16 @@ class WalkForwardBacktester:
         return float(max_dd)
 
     @staticmethod
+    def _volatility(returns: List[float], bars_per_day: float) -> float:
+        if not returns:
+            return 0.0
+        arr = np.array(returns, dtype=float)
+        if arr.size < 2:
+            return 0.0
+        annual_factor = np.sqrt(max(1.0, bars_per_day * 252))
+        return float(np.std(arr, ddof=1) * annual_factor)
+
+    @staticmethod
     def _avg_diag(diags: List[Dict[str, Any]]) -> Dict[str, float]:
         if not diags:
             return {}
@@ -424,6 +483,30 @@ class WalkForwardBacktester:
             if vals:
                 out[k] = float(np.mean(vals))
         return out
+
+    @staticmethod
+    def _bars_per_day(timeframe: str) -> float:
+        try:
+            if timeframe.endswith("h"):
+                hours = int(timeframe[:-1])
+                return max(1.0, 24.0 / hours)
+            if timeframe.endswith("d"):
+                days = int(timeframe[:-1])
+                return max(1.0, 1.0 / days)
+        except Exception:
+            pass
+        return 1.0
+
+    @staticmethod
+    def _avg_win_loss(returns: List[float]) -> tuple[float, float]:
+        if not returns:
+            return 0.0, 0.0
+        arr = np.array(returns, dtype=float)
+        wins = arr[arr > 0]
+        losses = arr[arr < 0]
+        avg_win = float(np.mean(wins)) if wins.size else 0.0
+        avg_loss = float(np.mean(np.abs(losses))) if losses.size else 0.0
+        return avg_win, avg_loss
 
 
 def _lookback_start(start: datetime, timeframe: str) -> datetime:
