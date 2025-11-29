@@ -1,0 +1,14 @@
+{
+  "symbol": "SOLUSDT",
+  "timeframe": "8h",
+  "lookback": 64,
+  "retrain_days": 30,
+  "artifact_dir": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-29_trial01/layerA_artifacts/SOLUSDT",
+  "predictions_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-29_trial01/layerA_artifacts/SOLUSDT/predictions.csv",
+  "metrics_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-29_trial01/layerA_artifacts/SOLUSDT/metrics.jsonl",
+  "summary_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-29_trial01/layerA_artifacts/SOLUSDT/summary.json",
+  "samples": 5629,
+  "train_start": "2020-09-14 00:00:00+00:00",
+  "test_start": "2025-11-01 00:00:00+00:00",
+  "test_end": "2025-11-02 00:00:00+00:00"
+}

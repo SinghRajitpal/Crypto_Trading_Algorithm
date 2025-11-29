@@ -9,55 +9,6 @@ from utils.logging_config import get_logger
 logger = get_logger(__name__)
 
 
-class BarValidator:
-    """Validates bars before they are ingested by downstream models."""
-
-    def __init__(self, max_abs_return: float, min_volume: float) -> None:
-        self.max_abs_return = max_abs_return
-        self.min_volume = min_volume
-
-    def is_valid(
-        self,
-        symbol: str,
-        bar: Dict[str, float],
-        prev_close: Optional[float],
-    ) -> bool:
-        open_ = bar.get("open")
-        high = bar.get("high")
-        low = bar.get("low")
-        close = bar.get("close")
-        volume = bar.get("volume")
-
-        if None in (open_, high, low, close):
-            logger.debug(f"[BarValidator] Rejecting {symbol}: incomplete OHLC data")
-            return False
-
-        if low > min(open_, close) or high < max(open_, close) or low > high:
-            logger.debug(
-                f"[BarValidator] Rejecting {symbol}: OHLC inconsistency "
-                f"(open={open_}, high={high}, low={low}, close={close})"
-            )
-            return False
-
-        if close is None or close <= 0:
-            logger.debug(f"[BarValidator] Rejecting {symbol}: invalid close {close}")
-            return False
-
-        if volume is None or volume < self.min_volume:
-            logger.debug(f"[BarValidator] Rejecting {symbol}: volume {volume}")
-            return False
-
-        if prev_close and prev_close > 0:
-            simple_return = abs((close - prev_close) / prev_close)
-            if simple_return > self.max_abs_return:
-                logger.warning(
-                    f"[BarValidator] Rejecting {symbol}: return {simple_return:.2%} exceeds threshold"
-                )
-                return False
-
-        return True
-
-
 class UniverseSelector:
     """Maintains the tradable universe using market-cap ranks and volume filters."""
 

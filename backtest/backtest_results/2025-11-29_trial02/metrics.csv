@@ -1,0 +1,19 @@
+metric,value
+pnl,-7.7577541626124
+cum_return_pct,-0.07757754162612818
+sharpe,-22.152261871187157
+volatility,0.008432334466157848
+max_drawdown,0.0007411620191692399
+avg_drawdown,0.0002914632162036469
+turnover,0.019069284491576268
+turnover_sum,0.07627713796630507
+winrate,0.0
+avg_win,0.0
+avg_loss,0.0002470837053965156
+fees,0.0
+ras_sharpe,-0.0002470837053965156
+ras_sharpe_lower,-1.5684476351047674
+risk_diag_avg,{'vol_qlike_avg': -8.798427766219538, 'cov_turnover_fro': 8.179679841535044e-06, 'vol_mse_avg': 1.4803693693451191e-08, 'last_mahalanobis_d2': 0.382710185868469, 'malv_mean': -4.528037017628201, 'symbols': 5.0}
+cov_loss_avg,{'cov_port_qlike': -7.247388786805517, 'cov_port_mse': 2.3454450209934767e-08}
+benchmark_sharpe,14.933735715583346
+ras_ic_lower,nan

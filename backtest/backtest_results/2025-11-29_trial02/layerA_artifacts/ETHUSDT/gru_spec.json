@@ -1,0 +1,14 @@
+{
+  "symbol": "ETHUSDT",
+  "timeframe": "8h",
+  "lookback": 64,
+  "retrain_days": 30,
+  "artifact_dir": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-29_trial02/layerA_artifacts/ETHUSDT",
+  "predictions_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-29_trial02/layerA_artifacts/ETHUSDT/predictions.csv",
+  "metrics_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-29_trial02/layerA_artifacts/ETHUSDT/metrics.jsonl",
+  "summary_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-29_trial02/layerA_artifacts/ETHUSDT/summary.json",
+  "samples": 6502,
+  "train_start": "2019-11-28 00:00:00+00:00",
+  "test_start": "2025-11-01 00:00:00+00:00",
+  "test_end": "2025-11-02 00:00:00+00:00"
+}

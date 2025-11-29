@@ -1,7 +1,7 @@
 import asyncio
 from data.data_fetcher import DataFetcher
 from data.return_manager import ReturnManager
-from data.universe_selector import UniverseSelector, BarValidator
+from data.universe_selector import UniverseSelector
 from data.universe_data import UniverseDataFetcher
 import numpy as np
 import sys
@@ -57,10 +57,6 @@ class DataEngine:
         self.running = False
 
         # Rolling data helpers
-        self.bar_validator = BarValidator(
-            max_abs_return=config.BAR_RETURN_ABS_THRESHOLD,
-            min_volume=config.MIN_BAR_VOLUME,
-        )
         self.return_manager = ReturnManager(
             regression_window=required_candles,
             risk_window=config.RISK_WINDOW,
@@ -159,9 +155,6 @@ class DataEngine:
         bar = self.extract_ohlcv(candle)
         prev_close = self.return_manager.get_last_close(symbol)
 
-        if not self.bar_validator.is_valid(symbol, bar, prev_close):
-            return None
-
         self.return_manager.update(symbol, bar)
         self.universe_selector.record_bar_metrics(
             symbol, bar["timestamp"], bar["close"], bar["volume"]
@@ -178,9 +171,6 @@ class DataEngine:
             return None
         bar = self.extract_ohlcv(candle)
         prev_close = self.return_manager.get_last_close(symbol)
-
-        if not self.bar_validator.is_valid(symbol, bar, prev_close):
-            return None
 
         self.return_manager.update(symbol, bar)
         self.universe_selector.record_bar_metrics(
@@ -237,6 +227,31 @@ class DataEngine:
         return self.return_manager.get_feature_series(
             symbol, length or config.REGRESSION_WINDOW
         )
+
+    async def backfill_history(self, timeframe: Optional[str] = None, symbols: Optional[List[str]] = None) -> None:
+        """Load historical candles into ReturnManager to satisfy lookback before live loop starts."""
+        timeframe = timeframe or self.primary_timeframe
+        target_symbols = symbols or [sym for sym, tf in self.data_fetcher.symbol_timeframes if tf == timeframe]
+        for sym in target_symbols:
+            try:
+                # Populate data_processor with historical candles
+                await self.data_fetcher._load_history(sym, timeframe)  # pylint: disable=protected-access
+                candles = self.data_fetcher.get_candles(sym, timeframe)
+                if not candles:
+                    continue
+                # Ingest into ReturnManager
+                self.return_manager.load_from_candles(sym, candles)
+                # Record volume for universe selector
+                for candle in candles:
+                    if len(candle) < 6:
+                        continue
+                    ts_ms, _, _, _, close, volume = candle[:6]
+                    self.universe_selector.record_bar_metrics(sym, int(ts_ms), float(close), float(volume))
+                # Refresh universe snapshot after backfill
+                latest_ts = int(candles[-1][0]) if candles else int(time.time() * 1000)
+                self.universe_selector.refresh_if_needed(latest_ts)
+            except Exception as exc:
+                logger.warning("Backfill failed for %s: %s", sym, exc)
 
     def get_feature_matrix(
         self, symbol: str, length: Optional[int] = None

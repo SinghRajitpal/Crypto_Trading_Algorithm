@@ -46,8 +46,8 @@ class BinanceClient:
     async def get_account_metrics(self) -> Dict[str, float]:
         if not self.client:
             raise RuntimeError("Client not initialized")
-        balances = await self.client.futures_account_balance()
-        positions = await self.client.futures_position_information()
+        balances = await self._futures_balance_v2()
+        positions = await self._positions_v2()
         total_wallet = 0.0
         for bal in balances:
             if bal.get("asset") == "USDT":
@@ -64,6 +64,24 @@ class BinanceClient:
             "exposure_percentage": exposure_pct,
             "position_count": sum(1 for pos in positions if abs(float(pos.get("positionAmt", 0.0))) > 0),
         }
+
+    async def _futures_balance_v2(self):
+        """Call balance with v2 endpoint, fallback to default on failure."""
+        try:
+            # Some versions accept version=2
+            return await self.client.futures_account_balance(version=2)
+        except Exception:
+            try:
+                return await self.client._request_futures_api("get", "balance", True, version=2)
+            except Exception:
+                return await self.client.futures_account_balance()
+
+    async def _positions_v2(self):
+        """Call positions with v2 endpoint, fallback to default."""
+        try:
+            return await self.client.futures_position_information(version=2)
+        except Exception:
+            return await self.client.futures_position_information()
 
     async def create_order(self, symbol: str, order_type: str, side: str, amount: float, price=None, params=None):
         if not self.client:
@@ -97,7 +115,8 @@ class BinanceClient:
     async def close(self) -> None:
         if self.client:
             await self.client.close_connection()
-
+            self.client = None
+        
     def _format_symbol(self, symbol: str) -> str:
         return symbol.replace("/", "")
 

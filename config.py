@@ -83,6 +83,19 @@ GRU_DEVICE = "mps"  # Try Apple Metal first, fallback to cpu
 GRU_RETRAIN_DAYS = 30
 GRU_MIN_TRAIN_SAMPLES = 200
 
+# Manifest-driven Layer A GRU integration
+LAYERA_MANIFEST_PATH = "backtest/backtest_results/2025-11-29_trial02/layerA_artifacts/layerA_manifest.json"  # e.g., "backtest/backtest_results/2025-11-28_trial01/layerA_artifacts/layerA_manifest.json"
+LAYERA_TIMEFRAME = GRU_TIMEFRAME
+LAYERA_LOOKBACK = GRU_LOOKBACK
+LAYERA_RETRAIN_DAYS = GRU_RETRAIN_DAYS
+LAYERA_MIN_TRAIN_SAMPLES = GRU_MIN_TRAIN_SAMPLES
+# Forecast behavior
+FORECAST_FALLBACK = "legacy_gru"  # "none" or "legacy_gru"
+FORECAST_LATENCY_WARN_MS = 500.0
+FORECAST_SIGMA_WARN = None  # optional cap on sigma for filtering, set to float to enable
+FORECAST_DIVERGENCE_WARN = 0.02  # abs(pred - realized) threshold for warning
+FORECAST_LOG_PATH = None  # optional per-bar forecast log CSV in live/demo
+
 # Risk Model Data Parameters
 RISK_WINDOW = 180  # Bars used for covariance estimation
 EWMA_LAMBDA = 0.94  # Decay for EWMA volatility calculations

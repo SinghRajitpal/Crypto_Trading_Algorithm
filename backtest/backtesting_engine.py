@@ -102,6 +102,8 @@ class WalkForwardBacktester:
             kelly_fs: List[float] = []
             kelly_drawdowns: List[float] = []
             risk_series: List[Dict[str, Any]] = []
+            impact_estimates: List[float] = []
+            slippages: List[float] = []
 
             for ts in clock:
                 if ts < self.start or ts > self.end:

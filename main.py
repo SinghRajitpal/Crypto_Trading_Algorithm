@@ -7,6 +7,7 @@ from binance_exchange import BinanceClient
 from data.data_engine import DataEngine
 from algorithm.algo_engine import AlgoEngine
 from algorithm.strategies.gru_forecast import GRUForecastStrategy
+from algorithm.strategies.layera_forecast import LayerAForecastStrategy
 from execution.execution_engine import ProductionExecutionEngine
 from execution.alerts import check_thresholds
 from utils.logging_config import get_logger, console_log
@@ -26,18 +27,44 @@ class TradingAlgorithm:
             binance_client=self.binance_client,
             max_candles=config.RISK_WINDOW + config.REGRESSION_WINDOW + 20,
         )
-        # Use GRU forecaster by default; fall back to provided directory if set
-        model_dir = gru_model_dir or config.GRU_MODEL_DIR
-        if not model_dir or not os.path.isdir(model_dir):
-            raise FileNotFoundError(f"GRU model directory not found: {model_dir}")
-        self.data_engine.primary_timeframe = config.GRU_TIMEFRAME
-        self.data_engine.data_fetcher.symbol_timeframes = [(sym, config.GRU_TIMEFRAME) for sym in config.DEFAULT_UNIVERSE]
-        self.strategy = GRUForecastStrategy(
-            self.data_engine,
-            model_dir=model_dir,
-            symbols=config.DEFAULT_UNIVERSE,
-            timeframe=config.GRU_TIMEFRAME,
-        )
+
+        # Choose forecasting strategy: manifest-driven Layer A or legacy single-dir GRU
+        manifest_path = getattr(config, "LAYERA_MANIFEST_PATH", None)
+        timeframe = config.LAYERA_TIMEFRAME if manifest_path else config.GRU_TIMEFRAME
+        self.data_engine.primary_timeframe = timeframe
+        self.data_engine.data_fetcher.symbol_timeframes = [(sym, timeframe) for sym in config.DEFAULT_UNIVERSE]
+
+        if manifest_path:
+            try:
+                self.strategy = LayerAForecastStrategy(
+                    self.data_engine,
+                    manifest_path=manifest_path,
+                    symbols=config.DEFAULT_UNIVERSE,
+                    timeframe=timeframe,
+                )
+                logger.info("Using Layer A manifest strategy: %s", manifest_path)
+            except Exception as exc:
+                if config.FORECAST_FALLBACK == "legacy_gru":
+                    logger.warning("Layer A manifest load failed (%s); falling back to legacy GRU.", exc)
+                    manifest_path = None
+                    timeframe = config.GRU_TIMEFRAME
+                    self.data_engine.primary_timeframe = timeframe
+                    self.data_engine.data_fetcher.symbol_timeframes = [
+                        (sym, timeframe) for sym in config.DEFAULT_UNIVERSE
+                    ]
+                else:
+                    raise
+
+        if not manifest_path:
+            model_dir = gru_model_dir or config.GRU_MODEL_DIR
+            if not model_dir or not os.path.isdir(model_dir):
+                raise FileNotFoundError(f"GRU model directory not found: {model_dir}")
+            self.strategy = GRUForecastStrategy(
+                self.data_engine,
+                model_dir=model_dir,
+                symbols=config.DEFAULT_UNIVERSE,
+                timeframe=timeframe,
+            )
         self.algo_engine = AlgoEngine(self.data_engine)
         self.execution_engine = ProductionExecutionEngine(
             binance_client=self.binance_client
@@ -83,6 +110,15 @@ class TradingAlgorithm:
         metrics = await self._refresh_account_metrics(force=True)
         nav = metrics.get("total_wallet_balance", 0.0)
         self.execution_engine.update_total_capital(nav)
+
+        logger.info("Backfilling historical data to satisfy lookback")
+        try:
+            await self.data_engine.backfill_history(
+                timeframe=self.data_engine.primary_timeframe,
+                symbols=config.DEFAULT_UNIVERSE,
+            )
+        except Exception as exc:
+            logger.warning("Backfill failed: %s", exc)
 
         logger.info("Starting data collection tasks")
         self.data_task = asyncio.create_task(self.data_engine.run())
@@ -193,6 +229,7 @@ class TradingAlgorithm:
                 )
             check_thresholds(result)
             # Persist monitoring record
+            fd = forecast.diagnostics or {}
             record = {
                 "timestamp": forecast.timestamp,
                 "risk_diag": risk_diag,
@@ -209,6 +246,13 @@ class TradingAlgorithm:
                 "forecast_port_var": result.get("forecast_port_var"),
                 "realized_port_var": result.get("realized_port_var"),
                 "data_quality": self.data_engine.data_quality_report(symbols),
+                # Forecast diagnostics
+                "forecast_latency_ms_avg": fd.get("latency_ms_avg"),
+                "forecast_latency_ms_max": fd.get("latency_ms_max"),
+                "forecast_sigma_avg": fd.get("sigma_avg"),
+                "forecast_sigma_max": fd.get("sigma_max"),
+                "forecast_coverage": fd.get("coverage"),
+                "forecast_model_version": fd.get("model_version"),
             }
             try:
                 self.monitor_store.append(record)
