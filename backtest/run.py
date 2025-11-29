@@ -80,12 +80,20 @@ async def main():
                 "Pass --predictions with comma-separated paths to predictions.csv files "
                 "or point --output to a prior Layer A artifacts directory."
             )
+        layer_b_dir = os.path.join(output_dir, "layerB_artifacts")
+        benchmark_dir = os.path.join(output_dir, "benchmark_artifacts")
         backtester = WalkForwardBacktester(
-            symbols, start, end, predictions_paths=predictions_paths, initial_capital=10_000.0, output_dir=output_dir
+            symbols,
+            start,
+            end,
+            predictions_paths=predictions_paths,
+            initial_capital=10_000.0,
+            output_dir=layer_b_dir,
+            benchmark_dir=benchmark_dir,
         )
         metrics = await backtester.run()
-        os.makedirs(output_dir, exist_ok=True)
-        with open(os.path.join(output_dir, "metrics.txt"), "w") as f:
+        os.makedirs(layer_b_dir, exist_ok=True)
+        with open(os.path.join(layer_b_dir, "metrics.txt"), "w") as f:
             f.write(str(metrics))
 
 

@@ -75,3 +75,28 @@ def plot_scatter(x: List[float], y: List[float], path: str, xlabel: str, ylabel:
 def save_summary_json(summary: Dict[str, float], path: str) -> None:
     with open(path, "w") as f:
         json.dump(summary, f, indent=2)
+
+
+def plot_equity_comparison(
+    strategy_equity: List[float],
+    benchmark_equity: List[float],
+    path: str,
+) -> None:
+    """Plot strategy vs benchmark equity on the same axes."""
+    if not strategy_equity or not benchmark_equity:
+        return
+    # Align lengths to avoid length mismatch during plotting
+    n = min(len(strategy_equity), len(benchmark_equity))
+    if n == 0:
+        return
+    plt.figure(figsize=(9, 4.5))
+    plt.plot(strategy_equity[:n], label="Strategy", color="#1f77b4", linewidth=1.4)
+    plt.plot(benchmark_equity[:n], label="Benchmark", color="#2ca02c", linewidth=1.2, alpha=0.9)
+    plt.title("Strategy vs Benchmark Equity", fontsize=12)
+    plt.xlabel("Bars", fontsize=11)
+    plt.ylabel("Equity (USD)", fontsize=11)
+    plt.legend(loc="upper left")
+    plt.grid(alpha=0.2)
+    plt.tight_layout()
+    plt.savefig(path)
+    plt.close()

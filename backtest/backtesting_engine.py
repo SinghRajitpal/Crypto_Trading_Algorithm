@@ -21,9 +21,9 @@ from execution.execution_engine import ExecutionEngine
 from utils.logging_config import console_log, get_logger
 from backtest.visualization import (
     plot_equity,
+    plot_equity_comparison,
     plot_risk_diagnostics,
     plot_series,
-    plot_scatter,
     save_summary_json,
 )
 
@@ -46,6 +46,14 @@ class BacktestMetrics:
     fees: float
     ras_sharpe: float = float("nan")
     ras_sharpe_lower: float = float("nan")
+    benchmark_sharpe: float = float("nan")
+    benchmark_cum_return_pct: float = float("nan")
+    benchmark_pnl: float = float("nan")
+    benchmark_volatility: float = float("nan")
+    benchmark_max_drawdown: float = float("nan")
+    benchmark_avg_drawdown: float = float("nan")
+    benchmark_avg_win: float = float("nan")
+    benchmark_avg_loss: float = float("nan")
 
 
 class WalkForwardBacktester:
@@ -59,6 +67,8 @@ class WalkForwardBacktester:
         predictions_paths: List[str],
         initial_capital: float = 10_000.0,
         output_dir: Optional[str] = None,
+        benchmark_symbol: Optional[str] = None,
+        benchmark_dir: Optional[str] = None,
     ) -> None:
         self.symbols = symbols
         self.start = start
@@ -66,6 +76,8 @@ class WalkForwardBacktester:
         self.predictions_paths = predictions_paths
         self.initial_capital = initial_capital
         self.output_dir = output_dir
+        self.benchmark_symbol = benchmark_symbol or getattr(config, "BENCHMARK_SYMBOL", None)
+        self.benchmark_dir = benchmark_dir
         self.timeframe = config.GRU_TIMEFRAME
         self._pred_map: Dict[int, Dict[str, float]] = {}
         self._pred_df: Optional[pd.DataFrame] = None
@@ -82,7 +94,7 @@ class WalkForwardBacktester:
 
     async def run(self) -> BacktestMetrics:
         try:
-            ohlcv_data = await self._load_history()
+            ohlcv_data, benchmark_df = await self._load_history(self.benchmark_symbol)
             await self._warmup(ohlcv_data)
             self._pred_map = self._load_prediction_feed(self.predictions_paths, self.start, self.end)
             self._validate_predictions(self.start, self.end)
@@ -98,11 +110,16 @@ class WalkForwardBacktester:
             cov_losses: List[Dict[str, Any]] = []
             drawdowns: List[float] = []
             peak = self.initial_capital
-            benchmark_prices: List[float] = []
             kelly_fs: List[float] = []
             kelly_drawdowns: List[float] = []
             risk_series: List[Dict[str, Any]] = []
             slippages: List[float] = []
+            benchmark_equity_curve: List[float] = []
+            benchmark_returns: List[float] = []
+            benchmark_drawdowns: List[float] = []
+            benchmark_units: Optional[float] = None
+            benchmark_peak = self.initial_capital
+            benchmark_last_price: Optional[float] = None
 
             for ts in clock:
                 if ts < self.start or ts > self.end:
@@ -211,12 +228,31 @@ class WalkForwardBacktester:
                 peak = max(peak, nav_new)
                 dd = (peak - nav_new) / peak if peak > 0 else 0.0
                 drawdowns.append(dd)
-                # Benchmark: use first symbol close
-                bench_sym = self.symbols[0] if self.symbols else None
-                if bench_sym:
-                    px = self.data_engine.get_latest_price(bench_sym, self.timeframe)
-                    if px:
-                        benchmark_prices.append(px)
+                # Benchmark: buy-and-hold BTC (or configured symbol)
+                bench_price = None
+                if self.benchmark_symbol:
+                    if self.benchmark_symbol in self.symbols:
+                        bench_price = self.data_engine.get_latest_price(self.benchmark_symbol, self.timeframe)
+                    elif benchmark_df is not None and ts in benchmark_df.index:
+                        bench_price = float(benchmark_df.loc[ts]["close"])
+                    if bench_price is None and benchmark_last_price is not None:
+                        bench_price = benchmark_last_price
+
+                if bench_price is not None and bench_price > 0:
+                    benchmark_last_price = bench_price
+                    if benchmark_units is None:
+                        benchmark_units = self.initial_capital / bench_price
+                    bench_nav = benchmark_units * bench_price if benchmark_units is not None else None
+                    if bench_nav is not None:
+                        benchmark_equity_curve.append(bench_nav)
+                        benchmark_peak = max(benchmark_peak, bench_nav)
+                        bench_dd = (benchmark_peak - bench_nav) / benchmark_peak if benchmark_peak > 0 else 0.0
+                        benchmark_drawdowns.append(bench_dd)
+                        if len(benchmark_equity_curve) > 1:
+                            bench_prev = benchmark_equity_curve[-2]
+                            if bench_prev != 0:
+                                benchmark_returns.append((bench_nav - bench_prev) / bench_prev)
+
                 if len(equity_curve) > 1:
                     r = (equity_curve[-1] - equity_curve[-2]) / equity_curve[-2]
                     returns.append(r)
@@ -239,10 +275,15 @@ class WalkForwardBacktester:
             cov_loss_avg = self._avg_diag(cov_losses)
             avg_win, avg_loss = self._avg_win_loss(returns)
             fees_total = float(np.sum(fees_list)) if fees_list else 0.0
-            benchmark_sharpe = float("nan")
-            if len(benchmark_prices) > 1:
-                bench_rets = np.diff(np.array(benchmark_prices)) / np.array(benchmark_prices[:-1])
-                benchmark_sharpe = self._sharpe(list(bench_rets), bars_per_day)
+            benchmark_pnl = benchmark_equity_curve[-1] - self.initial_capital if benchmark_equity_curve else 0.0
+            benchmark_cum_return_pct = (
+                (benchmark_equity_curve[-1] / self.initial_capital - 1) * 100 if benchmark_equity_curve else 0.0
+            )
+            benchmark_sharpe = self._sharpe(benchmark_returns, bars_per_day)
+            benchmark_vol = self._volatility(benchmark_returns, bars_per_day)
+            benchmark_max_dd = self._max_drawdown(benchmark_equity_curve)
+            benchmark_avg_dd = float(np.mean(benchmark_drawdowns)) if benchmark_drawdowns else 0.0
+            benchmark_avg_win, benchmark_avg_loss = self._avg_win_loss(benchmark_returns)
             if returns:
                 strat_returns = np.array(returns, dtype=float).reshape(1, -1)
                 ras_emp, ras_lower = ras_sharpe(strat_returns)
@@ -267,6 +308,14 @@ class WalkForwardBacktester:
                 fees=fees_total,
                 ras_sharpe=ras_sharpe_emp,
                 ras_sharpe_lower=ras_sharpe_lower,
+                benchmark_sharpe=benchmark_sharpe,
+                benchmark_cum_return_pct=benchmark_cum_return_pct,
+                benchmark_pnl=benchmark_pnl,
+                benchmark_volatility=benchmark_vol,
+                benchmark_max_drawdown=benchmark_max_dd,
+                benchmark_avg_drawdown=benchmark_avg_dd,
+                benchmark_avg_win=benchmark_avg_win,
+                benchmark_avg_loss=benchmark_avg_loss,
             )
             summary = {
                 "pnl": pnl,
@@ -288,6 +337,17 @@ class WalkForwardBacktester:
                 "benchmark_sharpe": benchmark_sharpe,
                 "ras_ic_lower": float("nan"),
             }
+            benchmark_summary = {
+                "pnl": benchmark_pnl,
+                "cum_return_pct": benchmark_cum_return_pct,
+                "sharpe": benchmark_sharpe,
+                "volatility": benchmark_vol,
+                "max_drawdown": benchmark_max_dd,
+                "avg_drawdown": benchmark_avg_dd,
+                "avg_win": benchmark_avg_win,
+                "avg_loss": benchmark_avg_loss,
+            }
+            summary.update({f"benchmark_{k}": v for k, v in benchmark_summary.items()})
             self._metrics = summary
 
             if self.output_dir:
@@ -297,7 +357,7 @@ class WalkForwardBacktester:
                 with open(os.path.join(self.output_dir, "metrics.csv"), "w") as f:
                     f.write("metric,value\n")
                     for k, v in summary.items():
-                        f.write(f"{k},{v}\n")
+                            f.write(f"{k},{v}\n")
                 if equity_curve:
                     with open(os.path.join(self.output_dir, "equity.csv"), "w") as f:
                         f.write("equity\n")
@@ -317,6 +377,21 @@ class WalkForwardBacktester:
                     with open(os.path.join(self.output_dir, "risk_series.jsonl"), "w") as f:
                         for rec in risk_series:
                             f.write(json.dumps(rec) + "\n")
+                if self.benchmark_dir and benchmark_equity_curve:
+                    os.makedirs(self.benchmark_dir, exist_ok=True)
+                    save_summary_json(benchmark_summary, os.path.join(self.benchmark_dir, "summary.json"))
+                    with open(os.path.join(self.benchmark_dir, "metrics.csv"), "w") as f:
+                        f.write("metric,value\n")
+                        for k, v in benchmark_summary.items():
+                            f.write(f"{k},{v}\n")
+                    with open(os.path.join(self.benchmark_dir, "equity.csv"), "w") as f:
+                        f.write("equity\n")
+                        for v in benchmark_equity_curve:
+                            f.write(f"{v}\n")
+                    plot_equity(benchmark_equity_curve, benchmark_drawdowns, os.path.join(self.benchmark_dir, "equity.png"))
+                    plot_equity_comparison(
+                        equity_curve, benchmark_equity_curve, os.path.join(self.benchmark_dir, "equity_comparison.png")
+                    )
             return metrics
         finally:
             try:
@@ -419,7 +494,7 @@ class WalkForwardBacktester:
             price_map = {s: self.data_engine.get_latest_price(s, self.timeframe) for s in tracked_syms}
             self.broker.update_last_prices(price_map)
 
-    async def _load_history(self) -> Dict[str, Any]:
+    async def _load_history(self, benchmark_symbol: Optional[str] = None) -> tuple[Dict[str, Any], Optional[pd.DataFrame]]:
         console_log(f"Loading historical data for {len(self.symbols)} assets")
         lookback_start = _lookback_start(self.start, self.timeframe)
         tasks = [
@@ -427,7 +502,16 @@ class WalkForwardBacktester:
             for sym in self.symbols
         ]
         dfs = await asyncio.gather(*tasks)
-        return {sym: df for sym, df in zip(self.symbols, dfs)}
+        data_map = {sym: df for sym, df in zip(self.symbols, dfs)}
+        benchmark_df: Optional[pd.DataFrame] = None
+        if benchmark_symbol:
+            if benchmark_symbol in data_map:
+                benchmark_df = data_map[benchmark_symbol]
+            else:
+                benchmark_df = await self.fetcher.download_ohlcv(
+                    benchmark_symbol, self.timeframe, lookback_start, self.end, force=False
+                )
+        return data_map, benchmark_df
 
     async def _nav(self) -> float:
         # Prefer full equity (cash + margin + unrealized PnL) if supported by broker

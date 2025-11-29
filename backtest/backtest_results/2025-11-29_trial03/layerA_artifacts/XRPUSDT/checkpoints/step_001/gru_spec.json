@@ -1,0 +1,17 @@
+{
+  "timeframe": "8h",
+  "lookback": 64,
+  "input_size": 2,
+  "hidden_size": 64,
+  "num_layers": 1,
+  "dropout": 0.0,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0,
+  "batch_size": 32,
+  "epochs": 14,
+  "huber_delta": 1.0,
+  "grad_clip": 1.0,
+  "train_start": "2020-01-28 00:00:00+00:00",
+  "train_end": "2025-01-30 16:00:00+00:00",
+  "val_loss": 0.24433555358222553
+}
