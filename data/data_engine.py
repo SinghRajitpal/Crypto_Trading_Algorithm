@@ -406,7 +406,7 @@ if __name__ == "__main__":
     from binance_exchange import BinanceClient
     
     # Create a standalone instance
-    client = BinanceClient(testnet=True)
+    client = BinanceClient(demo=True)
     data_engine = DataEngine(binance_client=client, max_candles=100)
     
     # Run this to collect some data first

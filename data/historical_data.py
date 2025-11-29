@@ -40,19 +40,19 @@ class HistoricalDataFetcher:
         data_dir: str = os.path.join(os.path.dirname(__file__), "cache"),
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
-        testnet: bool = True,
+        demo: bool = True,
     ) -> None:
         self.data_dir = data_dir
         os.makedirs(self.data_dir, exist_ok=True)
         self.api_key = api_key
         self.api_secret = api_secret
-        self.testnet = testnet
+        self.demo = demo
         self.client: Optional[AsyncClient] = None
 
     async def _ensure_client(self) -> AsyncClient:
         if self.client:
             return self.client
-        self.client = await AsyncClient.create(self.api_key, self.api_secret, testnet=self.testnet)
+        self.client = await AsyncClient.create(self.api_key, self.api_secret, testnet=False, demo=self.demo)
         return self.client
 
     async def close(self) -> None:

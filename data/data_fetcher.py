@@ -15,8 +15,8 @@ logger = get_logger(__name__)
 class DataFetcher:
     """Data Fetcher using python-binance websockets for futures klines."""
 
-    def __init__(self, binance_client=None, max_candles=1000, testnet=True, symbol_timeframes=None):
-        self.binance = binance_client if binance_client else BinanceClient(testnet=testnet)
+    def __init__(self, binance_client=None, max_candles=1000, demo=True, symbol_timeframes=None):
+        self.binance = binance_client if binance_client else BinanceClient(demo=demo)
         self.symbol_timeframes = symbol_timeframes or config.symbols
         self.data_processor = DataProcessor(max_candles=max_candles)
         self.should_close_client = binance_client is None

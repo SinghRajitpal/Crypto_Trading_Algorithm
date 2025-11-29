@@ -11,18 +11,19 @@ logger = get_logger(__name__)
 
 
 class BinanceClient:
-    """Async client using python-binance for futures (demo/testnet supported)."""
+    """Async client using python-binance for futures (demo supported)."""
 
-    def __init__(self, testnet: bool = True) -> None:
-        self.testnet = testnet
+    def __init__(self, demo: bool = True) -> None:
+        self.demo = demo
         self.client: AsyncClient | None = None
         self.socket_manager: BinanceSocketManager | None = None
         self._exchange_info: Dict[str, Any] | None = None
 
     async def setup_account_config(self) -> None:
-        api_key = config.binance_futures_testnet.get("testnet_api_key") if self.testnet else config.binance_futures.get("api_key")
-        api_secret = config.binance_futures_testnet.get("testnet_api_secret") if self.testnet else config.binance_futures.get("api_secret")
-        self.client = await AsyncClient.create(api_key, api_secret, testnet=self.testnet)
+        api_key = config.binance_futures_demo.get("demo_api_key") if self.demo else config.binance_futures.get("api_key")
+        api_secret = config.binance_futures_demo.get("demo_api_secret") if self.demo else config.binance_futures.get("api_secret")
+        # Use demo mode (Binance futures demo endpoint)
+        self.client = await AsyncClient.create(api_key, api_secret, testnet=False, demo=self.demo)
         self.socket_manager = BinanceSocketManager(self.client, user_timeout=60_000)
         await self._set_one_way_mode()
         await self._ensure_exchange_info()

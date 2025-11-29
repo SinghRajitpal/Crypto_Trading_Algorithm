@@ -21,8 +21,9 @@ logger = get_logger(__name__)
 class TradingAlgorithm:
     """Coordinates data, forecasting, and execution for the mean–variance strategy."""
 
-    def __init__(self, testnet: bool = True, gru_model_dir: Optional[str] = None) -> None:
-        self.binance_client = BinanceClient(testnet=testnet)
+    def __init__(self, demo: bool = True, gru_model_dir: Optional[str] = None) -> None:
+        # demo controls futures demo trading endpoint
+        self.binance_client = BinanceClient(demo=demo)
         self.data_engine = DataEngine(
             binance_client=self.binance_client,
             max_candles=config.RISK_WINDOW + config.REGRESSION_WINDOW + 20,
@@ -321,7 +322,7 @@ class TradingAlgorithm:
 
 
 async def main():
-    system = TradingAlgorithm(testnet=True)
+    system = TradingAlgorithm(demo=True)
     try:
         await system.start()
     except KeyboardInterrupt:

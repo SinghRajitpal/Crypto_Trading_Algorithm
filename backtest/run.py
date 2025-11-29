@@ -91,7 +91,7 @@ async def main():
 
 async def _seed_data_engine(data_engine: DataEngine, symbols, start: datetime, end: datetime) -> None:
     """Load historical OHLCV into the data engine so Layer A can fit GRU."""
-    fetcher = HistoricalDataFetcher(testnet=False)
+    fetcher = HistoricalDataFetcher(demo=False)
     try:
         lookback_start = _lookback_start(start, config.GRU_TIMEFRAME)
         ohlcv_data = await asyncio.gather(

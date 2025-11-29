@@ -120,7 +120,7 @@ class GRULayerTrainer:
         output_dir: str,
     ) -> GRULayerResult:
         os.makedirs(output_dir, exist_ok=True)
-        fetcher = HistoricalDataFetcher(testnet=False)
+        fetcher = HistoricalDataFetcher(demo=False)
         try:
             lookback_start = _lookback_start(start, self.timeframe)
             try:

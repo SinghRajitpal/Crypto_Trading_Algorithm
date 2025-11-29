@@ -75,7 +75,7 @@ class WalkForwardBacktester:
         self.data_engine.primary_timeframe = self.timeframe
         self.data_engine.data_fetcher.symbol_timeframes = [(s, self.timeframe) for s in symbols]
         self.execution_engine = ExecutionEngine(binance_client=self.broker, total_capital=initial_capital)
-        self.fetcher = HistoricalDataFetcher(testnet=False)
+        self.fetcher = HistoricalDataFetcher(demo=False)
         self._metrics: Dict[str, Any] = {}
         # Use latest processed price for simulated fills
         self.broker.set_price_callback(self._price_lookup)
