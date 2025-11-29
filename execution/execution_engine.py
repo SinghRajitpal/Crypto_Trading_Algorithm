@@ -10,8 +10,7 @@ from execution.risk_model import RiskModel
 from execution.optimizer import MeanVarianceOptimizer
 from execution.trade_generator import TradeGenerator
 from execution.executor import OrderExecutor
-from execution.kelly import compute_kelly_scaler, apply_fractional_kelly
-from execution.impact_model import aggregate_impact, propagator_cost
+from execution.kelly import compute_kelly_scaler, fractional_kelly_scaler, max_constraint_scaler
 from utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -31,6 +30,7 @@ class ProductionExecutionEngine:
         self._nav_high_watermark: float = 0.0
         self._last_drawdown: float = 0.0
         self._pnl_history: list = []
+        self._fee_rate = getattr(config, "FEE_RATE", 0.0)
 
     def update_total_capital(self, total_capital: float) -> None:
         self.total_capital = total_capital
@@ -77,13 +77,11 @@ class ProductionExecutionEngine:
         self._last_drawdown = drawdown
         # Track pnl return for vol-aware Kelly dampening
         if self._pnl_history:
-            port_ret = (nav - self._pnl_history[-1]) / self._pnl_history[-1] if self._pnl_history[-1] else 0.0
             self._pnl_history.append(nav)
         else:
             self._pnl_history.append(nav)
         realized_vol = self._realized_volatility()
-        kelly_weights = apply_fractional_kelly(
-            target_weights,
+        kelly_scaler = fractional_kelly_scaler(
             f_star,
             drawdown,
             lam_base=config.KELLY_FRACTION_BASE,
@@ -91,6 +89,17 @@ class ProductionExecutionEngine:
             lambdas=config.DRAWDOWN_LAMBDAS,
             vol=realized_vol,
         )
+        constraint_scaler = max_constraint_scaler(
+            target_weights,
+            config.WEIGHT_MIN,
+            config.WEIGHT_MAX,
+            config.MAX_GROSS_EXPOSURE,
+            max_net=config.MAX_NET_EXPOSURE,
+        )
+        final_scaler = min(kelly_scaler, constraint_scaler)
+        kelly_weights = {s: w * final_scaler for s, w in target_weights.items()}
+        kelly_weights = self._net_and_bound_clamp(kelly_weights)
+        kelly_weights = self._apply_cost_budget(kelly_weights, prev_weights, nav)
         portfolio_turnover = float(
             sum(abs(kelly_weights.get(s, 0.0) - prev_weights.get(s, 0.0)) for s in set(kelly_weights) | set(prev_weights))
         )
@@ -121,14 +130,9 @@ class ProductionExecutionEngine:
             len(orders),
             total_notional,
         )
-
-        # Apply impact-aware slippage per order (basis points)
+        # Apply configured slippage per order (basis points)
         for order in orders:
-            notional = abs(order.notional)
-            if notional > 0 and config.IMPACT_DELTA > 0:
-                kappa = config.IMPACT_KAPPA_OVERRIDES.get(order.symbol, config.IMPACT_KAPPA_DEFAULT)
-                impact_bp = kappa * (notional ** (config.IMPACT_DELTA - 1)) * 10000.0
-                order.slippage_bp = max(0.0, float(impact_bp))
+            order.slippage_bp = self._slippage_bps(order.symbol)
 
         execution = await self.order_executor.execute_orders(orders)
         success = all(item["status"] == "success" for item in execution)
@@ -145,34 +149,6 @@ class ProductionExecutionEngine:
                     item.get("reason"),
                 )
 
-        impact_cost_est = self._estimate_impact_cost(kelly_weights, prev_weights, prices, nav)
-        concave_impact_cost = aggregate_impact(
-            kelly_weights,
-            prev_weights,
-            prices,
-            nav,
-            config.IMPACT_KAPPA_OVERRIDES,
-            config.IMPACT_KAPPA_DEFAULT,
-            delta=config.IMPACT_DELTA,
-        )
-        # Propagator impact approximation
-        propagator_cost_est = None
-        try:
-            trade_sizes = {
-                sym: kelly_weights.get(sym, 0.0) - prev_weights.get(sym, 0.0)
-                for sym in forecast.universe
-            }
-            propagator_cost_est = propagator_cost(
-                trade_sizes,
-                prices,
-                nav,
-                config.IMPACT_KAPPA_OVERRIDES,
-                config.IMPACT_KAPPA_DEFAULT,
-                delta=config.IMPACT_DELTA,
-                decay=config.IMPACT_PROPAGATOR_DECAY,
-            )
-        except Exception:
-            propagator_cost_est = None
         turnover_sigma = None
         if hasattr(self.risk_model, "_cov_prev") and self.risk_model._cov_prev is not None:
             alt_weights = self.optimizer.optimize(
@@ -193,6 +169,7 @@ class ProductionExecutionEngine:
             latest_r = returns_matrix[-1]
             w_vec = np.array([kelly_weights.get(sym, 0.0) for sym in forecast.universe], dtype=float)
             realized_port_var = float((latest_r @ w_vec) ** 2)
+        cost_estimates = self._expected_costs(kelly_weights, prev_weights, nav)
 
         result = {
             "status": "completed" if success else "partial",
@@ -203,22 +180,22 @@ class ProductionExecutionEngine:
             "kelly_drawdown": drawdown,
             "kelly_mu": mu_p,
             "kelly_var": var_p,
+            "kelly_scaler_raw": kelly_scaler,
+            "kelly_scaler_constraints": constraint_scaler,
+            "kelly_scaler_final": final_scaler,
             "turnover": portfolio_turnover,
-            "impact_cost_est": impact_cost_est,
-            "impact_cost_concave": concave_impact_cost,
             "turnover_sigma": turnover_sigma,
             "forecast_port_var": forecast_port_var,
             "realized_port_var": realized_port_var,
+            "expected_cost": cost_estimates.get("total_cost"),
+            "expected_cost_bp": cost_estimates.get("total_cost_bp"),
+            "expected_fee": cost_estimates.get("fee_cost"),
+            "expected_slippage": cost_estimates.get("slippage_cost"),
         }
-        # Slippage vs expected impact (placeholder; requires fill prices)
+        # Slippage diagnostics
         realized_slippage = self._compute_realized_slippage(execution, prices, nav)
         if realized_slippage is not None:
             result["realized_slippage_bp"] = realized_slippage
-            if impact_cost_est and nav > 0:
-                impact_bp = (impact_cost_est / nav) * 10000.0
-                if impact_bp > 1e-8:
-                    # Ratio of realized slippage bp to estimated impact bp
-                    result["impact_vs_slippage"] = realized_slippage / impact_bp
         if returns_matrix is not None:
             result["risk_diag"] = self.risk_model.diagnostics()
             result["risk_cov_loss"] = self.risk_model.covariance_loss_metrics(
@@ -232,28 +209,6 @@ class ProductionExecutionEngine:
         except Exception as exc:
             logger.warning("Symbol filter lookup failed for %s: %s", symbol, exc)
             return None
-
-    def _estimate_impact_cost(
-        self,
-        target_weights: Dict[str, float],
-        prev_weights: Dict[str, float],
-        prices: Dict[str, float],
-        nav: float,
-    ) -> float:
-        """Estimate temporary impact cost using concave power-law impact."""
-        cost = 0.0
-        for sym, tgt in target_weights.items():
-            prev = prev_weights.get(sym, 0.0)
-            delta_w = tgt - prev
-            price = prices.get(sym)
-            if price is None or price <= 0:
-                continue
-            kappa = config.IMPACT_KAPPA_OVERRIDES.get(sym, config.IMPACT_KAPPA_DEFAULT)
-            delta = config.IMPACT_DELTA
-            notional = abs(delta_w * nav)
-            if kappa > 0 and delta > 0:
-                cost += kappa * (notional ** delta)
-        return float(cost)
 
     @staticmethod
     def _compute_realized_slippage(execution: Any, prices: Dict[str, float], nav: float) -> Optional[float]:
@@ -281,6 +236,66 @@ class ProductionExecutionEngine:
             return None
         # Basis points weighted by notional
         return float((total_slip / total_notional) * 10000)
+
+    def _slippage_bps(self, symbol: str) -> float:
+        return float(config.SLIPPAGE_BPS_OVERRIDES.get(symbol, config.SLIPPAGE_BPS_DEFAULT))
+
+    def _expected_costs(self, target_weights: Dict[str, float], prev_weights: Dict[str, float], nav: float) -> Dict[str, float]:
+        """Estimate expected fee + slippage cost for moving from prev to target weights."""
+        fee_rate = max(self._fee_rate, 0.0)
+        total_fee = 0.0
+        total_slip = 0.0
+        symbols = set(target_weights) | set(prev_weights)
+        for sym in symbols:
+            delta_w = target_weights.get(sym, 0.0) - prev_weights.get(sym, 0.0)
+            notional = abs(delta_w * nav)
+            if notional <= 0:
+                continue
+            bps = self._slippage_bps(sym)
+            total_slip += notional * (bps / 10000.0)
+            total_fee += notional * fee_rate
+        total_cost = total_fee + total_slip
+        cost_bp = (total_cost / nav * 10000.0) if nav > 0 else None
+        return {
+            "total_cost": float(total_cost),
+            "total_cost_bp": float(cost_bp) if cost_bp is not None else None,
+            "fee_cost": float(total_fee),
+            "slippage_cost": float(total_slip),
+        }
+
+    def _apply_cost_budget(self, target_weights: Dict[str, float], prev_weights: Dict[str, float], nav: float) -> Dict[str, float]:
+        """Scale weight changes if expected cost exceeds configured budget (in bp of NAV)."""
+        budget_bp = config.COST_BUDGET_BP
+        if budget_bp is None or budget_bp <= 0 or nav <= 0:
+            return target_weights
+        costs = self._expected_costs(target_weights, prev_weights, nav)
+        cost_bp = costs.get("total_cost_bp")
+        if cost_bp is None or cost_bp <= budget_bp:
+            return target_weights
+        scale = max(0.0, min(1.0, budget_bp / cost_bp))
+        scaled = {}
+        symbols = set(target_weights) | set(prev_weights)
+        for sym in symbols:
+            prev = prev_weights.get(sym, 0.0)
+            tgt = target_weights.get(sym, 0.0)
+            scaled[sym] = prev + (tgt - prev) * scale
+        return self._net_and_bound_clamp(scaled)
+
+    def _net_and_bound_clamp(self, weights: Dict[str, float]) -> Dict[str, float]:
+        """Apply lightweight net-exposure clamp and per-asset bounds."""
+        if not weights:
+            return {}
+        vals = list(weights.values())
+        net = sum(vals)
+        adj_weights = dict(weights)
+        if abs(net) > config.MAX_NET_EXPOSURE and len(weights) > 0:
+            adjustment = net - np.sign(net) * config.MAX_NET_EXPOSURE
+            delta = adjustment / len(weights)
+            for k in adj_weights:
+                adj_weights[k] -= delta
+        for k, v in adj_weights.items():
+            adj_weights[k] = float(np.clip(v, config.WEIGHT_MIN, config.WEIGHT_MAX))
+        return adj_weights
 
     def _realized_volatility(self) -> float:
         """Compute simple realized volatility of NAV changes."""

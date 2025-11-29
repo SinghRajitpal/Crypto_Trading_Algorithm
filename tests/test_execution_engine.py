@@ -92,8 +92,7 @@ def test_process_forecast_skips_when_risk_not_ready(monkeypatch):
 
 
 def test_process_forecast_completes_and_updates_weights(monkeypatch):
-    # Stronger impact to keep impact_vs_slippage finite in the test harness
-    monkeypatch.setattr(config, "IMPACT_KAPPA_DEFAULT", 10.0)
+    monkeypatch.setattr(config, "SLIPPAGE_BPS_DEFAULT", 5.0)
     symbols = ["A", "B"]
     cov = np.eye(2)
     target_weights = {"A": 0.2, "B": -0.1}
@@ -114,11 +113,10 @@ def test_process_forecast_completes_and_updates_weights(monkeypatch):
     assert "risk_cov_loss" in result and "cov_port_mse" in result["risk_cov_loss"]
     # Turnover computed vs Kelly-scaled weights (should be positive)
     assert result["turnover"] > 0
-    assert result["impact_cost_est"] > 0
-    assert result["impact_cost_concave"] > 0
-    # Realized slippage and impact ratio finite
+    assert result["expected_cost"] > 0
+    assert result["expected_slippage"] > 0
+    # Realized slippage reported
     assert result.get("realized_slippage_bp") is not None
-    assert abs(result["impact_vs_slippage"]) < 1e8  # sanity bound
 
 
 def test_process_forecast_skips_when_no_rebalance():
@@ -135,13 +133,12 @@ def test_process_forecast_skips_when_no_rebalance():
     assert "portfolio already aligned" in result["reason"]
 
 
-def test_impact_overrides_increase_cost(monkeypatch):
+def test_slippage_overrides_increase_expected_cost(monkeypatch):
     symbols = ["A", "B"]
     cov = np.eye(2)
     target_weights = {"A": 0.2, "B": 0.0}
     engine = _make_engine(cov, target_weights, orders=[])
-    prices = {"A": 100.0, "B": 50.0}
-    base_cost = engine._estimate_impact_cost(target_weights, {}, prices, nav=1000.0)
-    monkeypatch.setattr(config, "IMPACT_KAPPA_OVERRIDES", {"A": 10.0})
-    higher_cost = engine._estimate_impact_cost(target_weights, {}, prices, nav=1000.0)
-    assert higher_cost >= base_cost
+    base_cost = engine._expected_costs(target_weights, {}, nav=1000.0)
+    monkeypatch.setattr(config, "SLIPPAGE_BPS_OVERRIDES", {"A": 20.0})
+    higher_cost = engine._expected_costs(target_weights, {}, nav=1000.0)
+    assert higher_cost["total_cost"] >= base_cost["total_cost"]

@@ -43,26 +43,26 @@ def test_turnover_penalty_keeps_weights_close_to_prev():
     assert dist_high < dist_low  # higher penalty should stay closer to prev weights
 
 
-def test_impact_kappa_overrides_penalize_specific_assets():
+def test_slippage_overrides_penalize_specific_assets():
     symbols = ["A", "B"]
     mu = {"A": 0.04, "B": 0.04}
     cov = np.eye(2) * 0.01
     prev = {"A": 0.1, "B": -0.1}
-    base = MeanVarianceOptimizer(turnover_lambda=1.0, impact_kappa_default=0.0)
-    with_kappa = MeanVarianceOptimizer(
+    base = MeanVarianceOptimizer(turnover_lambda=1.0, slippage_bps_default=0.0)
+    with_slip = MeanVarianceOptimizer(
         turnover_lambda=1.0,
-        impact_kappa_default=0.0,
-        impact_kappa_overrides={"A": 5.0, "B": 0.0},
+        slippage_bps_default=0.0,
+        slippage_bps_overrides={"A": 50.0, "B": 0.0},
     )
     w_base = base.optimize(mu, cov, symbols, prev_weights=prev)
-    w_kappa = with_kappa.optimize(mu, cov, symbols, prev_weights=prev)
-    # High kappa on A should reduce movement vs baseline; B should be similar or unchanged
+    w_slip = with_slip.optimize(mu, cov, symbols, prev_weights=prev)
+    # High slippage on A should reduce movement vs baseline; B should be similar or unchanged
     delta_a_base = abs(w_base["A"] - prev["A"])
-    delta_a_kappa = abs(w_kappa["A"] - prev["A"])
+    delta_a_slip = abs(w_slip["A"] - prev["A"])
     delta_b_base = abs(w_base["B"] - prev["B"])
-    delta_b_kappa = abs(w_kappa["B"] - prev["B"])
-    assert delta_a_kappa <= delta_a_base + 1e-9
-    assert delta_b_kappa == pytest.approx(delta_b_base)
+    delta_b_slip = abs(w_slip["B"] - prev["B"])
+    assert delta_a_slip <= delta_a_base + 1e-9
+    assert delta_b_slip == pytest.approx(delta_b_base)
 
 
 def test_turnover_horizon_scaling():
@@ -84,13 +84,13 @@ def test_covariance_alignment_error():
         opt.optimize({"A": 0.01}, np.eye(2), ["A"])
 
 
-def test_positive_impact_kappa_default_reduces_rebalance_size():
+def test_positive_slippage_default_reduces_rebalance_size():
     symbols = ["A", "B"]
     mu = {"A": 0.04, "B": 0.03}
     cov = np.eye(2) * 0.01
     prev = {"A": 0.1, "B": -0.1}
-    opt_zero = MeanVarianceOptimizer(turnover_lambda=0.5, impact_kappa_default=0.0)
-    opt_high = MeanVarianceOptimizer(turnover_lambda=0.5, impact_kappa_default=10.0)
+    opt_zero = MeanVarianceOptimizer(turnover_lambda=0.5, slippage_bps_default=0.0)
+    opt_high = MeanVarianceOptimizer(turnover_lambda=0.5, slippage_bps_default=50.0)
     w_zero = opt_zero.optimize(mu, cov, symbols, prev_weights=prev)
     w_high = opt_high.optimize(mu, cov, symbols, prev_weights=prev)
     # With high kappa_default, movement from prev weights should be smaller

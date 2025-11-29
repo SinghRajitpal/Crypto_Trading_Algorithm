@@ -93,11 +93,12 @@ MIN_ORDER_NOTIONAL = 5.0
 CONTRACT_MULTIPLIER_PER_ASSET = {}
 TURNOVER_PENALTY_LAMBDA = 0.1
 
-# Impact / Execution Cost Parameters
-IMPACT_KAPPA_DEFAULT = 0.01
-IMPACT_KAPPA_OVERRIDES = {}
-IMPACT_DELTA = 0.5
-IMPACT_PROPAGATOR_DECAY = 0.5
+# Execution Cost Parameters (simplified slippage + fees)
+FEE_RATE = 0.0004  # per-side taker fee as fraction of notional
+SLIPPAGE_BPS_DEFAULT = 3.0
+SLIPPAGE_BPS_OVERRIDES = {}
+# Optional per-bar cost budget (basis points of NAV). None disables the budget guard.
+COST_BUDGET_BP = None
 
 # Kelly Overlay Parameters
 KELLY_FRACTION_BASE = 0.5

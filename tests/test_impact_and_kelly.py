@@ -1,20 +1,9 @@
-from execution.impact_model import aggregate_impact, propagator_cost
-from execution.kelly import apply_fractional_kelly
-import config
+from execution.kelly import (
+    apply_fractional_kelly,
+    fractional_kelly_scaler,
+    max_constraint_scaler,
+)
 from execution.execution_engine import ProductionExecutionEngine
-
-
-def test_impact_monotonic():
-    prices = {"A": 100}
-    target = {"A": 0.1}
-    prev = {"A": 0.0}
-    nav = 1000
-    cost_small = aggregate_impact(target, prev, prices, nav, {}, 0.1, delta=0.5)
-    target["A"] = 0.2
-    cost_large = aggregate_impact(target, prev, prices, nav, {}, 0.1, delta=0.5)
-    assert cost_large >= cost_small
-    prop_cost = propagator_cost({"A": 0.2}, prices, nav, {}, 0.1, delta=0.5, decay=0.5)
-    assert prop_cost >= 0
 
 
 def test_kelly_dampening():
@@ -25,23 +14,21 @@ def test_kelly_dampening():
     assert abs(w_high_vol["A"]) <= abs(w_low_vol["A"])
 
 
-def test_propagator_decay_reduces_later_trade_costs():
-    prices = {"A": 50, "B": 20}
-    nav = 10000
-    trades = {"A": 0.1, "B": 0.05}  # sequential
-    cost_slow_decay = propagator_cost(trades, prices, nav, {}, 0.1, delta=0.5, decay=0.1)
-    cost_fast_decay = propagator_cost(trades, prices, nav, {}, 0.1, delta=0.5, decay=2.0)
-    assert cost_fast_decay < cost_slow_decay
-
-
-def test_impact_kappa_overrides_change_costs():
-    prices = {"A": 100}
-    target = {"A": 0.2}
-    prev = {"A": 0.0}
-    nav = 1000
-    cost_low = aggregate_impact(target, prev, prices, nav, {}, 0.01, delta=0.5)
-    cost_high = aggregate_impact(target, prev, prices, nav, {"A": 0.1}, 0.01, delta=0.5)
-    assert cost_high > cost_low
+def test_constraint_scaler_caps_kelly():
+    # Direction already at per-asset bound; constraint scaler should cap leverage
+    direction = {"A": 0.3, "B": -0.2}
+    s_kelly = fractional_kelly_scaler(
+        f_star=1.5, drawdown=0.0, lam_base=1.0, thresholds=[], lambdas=[], vol=0.0
+    )
+    s_constraints = max_constraint_scaler(
+        direction, weight_min=-0.3, weight_max=0.3, max_gross=1.2, max_net=0.25
+    )
+    s_final = min(s_kelly, s_constraints)
+    scaled = {k: v * s_final for k, v in direction.items()}
+    assert s_kelly > 1.0
+    assert s_constraints == 1.0  # per-name cap binds
+    assert all(abs(w) <= 0.3 + 1e-9 for w in scaled.values())
+    assert sum(abs(w) for w in scaled.values()) <= 1.2 + 1e-9
 
 
 def test_realized_slippage_basis_points():

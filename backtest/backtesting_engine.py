@@ -102,7 +102,6 @@ class WalkForwardBacktester:
             kelly_fs: List[float] = []
             kelly_drawdowns: List[float] = []
             risk_series: List[Dict[str, Any]] = []
-            impact_estimates: List[float] = []
             slippages: List[float] = []
 
             for ts in clock:
@@ -181,30 +180,29 @@ class WalkForwardBacktester:
                             result.get("turnover", 0.0),
                         )
                         bar_turnover = result.get("turnover", 0.0) or 0.0
-                        bar_fees = result.get("fees", 0.0) or 0.0
+                        bar_fees = result.get("expected_fee", 0.0) or 0.0
                         trades += len(result.get("orders", []))
                         if result.get("risk_diag"):
                             risk_diags.append(result.get("risk_diag"))
                         if result.get("risk_cov_loss"):
                             cov_losses.append(result.get("risk_cov_loss"))
-                        # Capture time-series risk/impact
+                        # Capture time-series risk/costs
                         risk_series.append(
                             {
                                 "ts": forecast.timestamp,
                                 "risk_diag": result.get("risk_diag"),
                                 "risk_cov_loss": result.get("risk_cov_loss"),
                                 "turnover": result.get("turnover"),
-                                "impact_est": result.get("impact_cost_est"),
-                                "impact_concave": result.get("impact_cost_concave"),
-                                "impact_propagator": result.get("impact_cost_propagator"),
+                                "expected_cost": result.get("expected_cost"),
+                                "expected_cost_bp": result.get("expected_cost_bp"),
+                                "expected_fee": result.get("expected_fee"),
+                                "expected_slippage": result.get("expected_slippage"),
                             }
                         )
                         if result.get("kelly_f") is not None:
                             kelly_fs.append(result.get("kelly_f"))
                         if result.get("kelly_drawdown") is not None:
                             kelly_drawdowns.append(result.get("kelly_drawdown"))
-                        if result.get("impact_cost_est") is not None:
-                            impact_estimates.append(result.get("impact_cost_est"))
                         if result.get("realized_slippage_bp") is not None:
                             slippages.append(result.get("realized_slippage_bp"))
 

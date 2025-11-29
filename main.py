@@ -207,18 +207,17 @@ class TradingAlgorithm:
                 if risk_cov_loss.get("cov_port_mse") and risk_cov_loss.get("cov_port_mse") > config.MONITOR_COV_MSE_WARN:
                     logger.warning("Covariance MSE above threshold: %.4f", risk_cov_loss.get("cov_port_mse"))
             logger.info(
-                "Execution summary | turnover=%.4f | impact_est=%.2f | impact_concave=%.2f | kelly_f=%.3f | drawdown=%.3f",
+                "Execution summary | turnover=%.4f | expected_cost_bp=%s | expected_cost=%.2f | kelly_f=%.3f | drawdown=%.3f",
                 result.get("turnover", 0.0),
-                result.get("impact_cost_est", 0.0),
-                result.get("impact_cost_concave", 0.0),
+                result.get("expected_cost_bp"),
+                result.get("expected_cost", 0.0),
                 result.get("kelly_f", 0.0),
                 result.get("kelly_drawdown", 0.0),
             )
             if "realized_slippage_bp" in result:
                 logger.info(
-                    "Slippage vs impact | realized_bp=%.3f | impact_vs_slippage=%.3f",
+                    "Realized slippage | realized_bp=%.3f",
                     result.get("realized_slippage_bp"),
-                    result.get("impact_vs_slippage", float("nan")),
                 )
             if result.get("turnover_sigma") is not None:
                 logger.info("Turnover attribution | sigma_component=%.4f", result.get("turnover_sigma"))
@@ -237,13 +236,13 @@ class TradingAlgorithm:
                 "risk_cov_loss": risk_cov_loss,
                 "turnover": result.get("turnover"),
                 "turnover_sigma": result.get("turnover_sigma"),
-                "impact_est": result.get("impact_cost_est"),
-                "impact_concave": result.get("impact_cost_concave"),
-                "impact_propagator": result.get("impact_cost_propagator"),
+                "expected_cost": result.get("expected_cost"),
+                "expected_cost_bp": result.get("expected_cost_bp"),
+                "expected_fee": result.get("expected_fee"),
+                "expected_slippage": result.get("expected_slippage"),
                 "kelly_f": result.get("kelly_f"),
                 "drawdown": result.get("kelly_drawdown"),
                 "slippage_bp": result.get("realized_slippage_bp"),
-                "impact_vs_slippage": result.get("impact_vs_slippage"),
                 "forecast_port_var": result.get("forecast_port_var"),
                 "realized_port_var": result.get("realized_port_var"),
                 "data_quality": self.data_engine.data_quality_report(symbols),

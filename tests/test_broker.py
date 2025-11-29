@@ -19,12 +19,11 @@ def test_open_close_position_updates_cash_and_margin():
     broker.set_price_callback(price)
     broker.set_bar_timestamp("2024-01-01T00:00:00")
 
-    res_open = run(broker.open_position("A", side="buy", amount=1.0, price=price_map["A"], leverage=10))
+    res_open = run(broker.open_position("A", side="buy", amount=1.0, price=price_map["A"], leverage=10, slippage_bp=0.0))
     assert res_open["status"] == "success"
     bal_after_open = run(broker.get_balance())
     fee_open = price_map["A"] * TAKER_FEE
-    impact_cost = config.IMPACT_KAPPA_DEFAULT * (price_map["A"] ** config.IMPACT_DELTA)
-    expected_cash = 10000.0 - (price_map["A"] / 10) - fee_open - impact_cost
+    expected_cash = 10000.0 - (price_map["A"] / 10) - fee_open
     assert math.isclose(bal_after_open["total"]["USDT"], expected_cash, rel_tol=1e-6)
 
     # Close at higher price; cash should increase by pnl minus fee and margin released
@@ -34,8 +33,7 @@ def test_open_close_position_updates_cash_and_margin():
     bal_final = run(broker.get_balance())
     pnl = (price_map["A_close"] - 100.0) * 1.0
     fee_close = price_map["A_close"] * TAKER_FEE
-    impact_cost_close = config.IMPACT_KAPPA_DEFAULT * (price_map["A_close"] ** config.IMPACT_DELTA)
-    expected_final_cash = expected_cash + pnl - fee_close - impact_cost_close + (100.0 / 10)
+    expected_final_cash = expected_cash + pnl - fee_close + (100.0 / 10)
     assert math.isclose(bal_final["total"]["USDT"], expected_final_cash, rel_tol=1e-6)
     assert not run(broker.get_open_positions("A"))
 
@@ -48,7 +46,7 @@ def test_equity_includes_margin_and_unrealized_pnl():
         return price_map.get(sym, 0.0)
 
     broker.set_price_callback(price)
-    run(broker.open_position("A", side="buy", amount=2.0, price=50.0, leverage=5))
+    run(broker.open_position("A", side="buy", amount=2.0, price=50.0, leverage=5, slippage_bp=0.0))
     # Move price up; equity should reflect margin + unrealized PnL
     price_map["A"] = 60.0
     equity = run(broker.equity())

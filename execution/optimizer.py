@@ -21,8 +21,8 @@ class MeanVarianceOptimizer:
         max_net: float = config.MAX_NET_EXPOSURE,
         max_gross: float = config.MAX_GROSS_EXPOSURE,
         turnover_lambda: float = config.TURNOVER_PENALTY_LAMBDA,
-        impact_kappa_default: float = config.IMPACT_KAPPA_DEFAULT,
-        impact_kappa_overrides: Optional[Dict[str, float]] = None,
+        slippage_bps_default: float = config.SLIPPAGE_BPS_DEFAULT,
+        slippage_bps_overrides: Optional[Dict[str, float]] = None,
         turnover_horizon: int = 1,
     ) -> None:
         self.risk_aversion = max(risk_aversion, 1e-6)
@@ -31,8 +31,8 @@ class MeanVarianceOptimizer:
         self.max_net = max_net
         self.max_gross = max_gross
         self.turnover_lambda = max(turnover_lambda, 0.0)
-        self.impact_kappa_default = max(impact_kappa_default, 0.0)
-        self.impact_kappa_overrides = impact_kappa_overrides or {}
+        self.slippage_bps_default = max(slippage_bps_default, 0.0)
+        self.slippage_bps_overrides = slippage_bps_overrides or {}
         self.turnover_horizon = max(1, turnover_horizon)
 
     def optimize(
@@ -48,25 +48,23 @@ class MeanVarianceOptimizer:
         mu = np.array([expected_returns.get(symbol, 0.0) for symbol in symbols], dtype=float)
         cov = covariance.copy()
 
-        # Turnover/impact penalty: penalize (w - w_prev)^2 with per-asset impact kappa.
-        # Map to closed-form: argmax mu'w - (γ/2) w'Σw - λ ||w - w_prev||^2_kappa
-        # Solution: w = (γΣ + 2λK)^(-1) (mu + 2λK w_prev), K=diag(kappa_scale)
-        kappa_scale = np.ones(len(symbols), dtype=float)
+        # Turnover penalty: penalize (w - w_prev)^2 with per-asset weights derived from slippage (bps).
+        # Map to closed-form: argmax mu'w - (γ/2) w'Σw - λ ||w - w_prev||^2_slip
+        # Solution: w = (γΣ + 2λK)^(-1) (mu + 2λK w_prev), K=diag(slippage_scale)
+        slippage_scale = np.ones(len(symbols), dtype=float)
         if prev_weights and self.turnover_lambda > 0:
-            kappas = np.array(
-                [
-                    self.impact_kappa_overrides.get(symbol, self.impact_kappa_default)
-                    for symbol in symbols
-                ],
+            slippage_bps = np.array(
+                [self.slippage_bps_overrides.get(symbol, self.slippage_bps_default) for symbol in symbols],
                 dtype=float,
             )
+            # Normalize bps to a small, positive scaling factor to weight expensive-to-trade assets higher.
+            slippage_scale = 1.0 + np.maximum(slippage_bps, 0.0) / 10000.0
             w_prev_vec = np.array([prev_weights.get(symbol, 0.0) for symbol in symbols], dtype=float)
-            kappa_scale = 1.0 + kappas
-            mu = mu + (2 * self.turnover_lambda / self.turnover_horizon) * (kappa_scale * w_prev_vec)
+            mu = mu + (2 * self.turnover_lambda / self.turnover_horizon) * (slippage_scale * w_prev_vec)
 
         # Regularize covariance for numerical stability
         cov += np.eye(len(symbols)) * 1e-6
-        K = np.diag(kappa_scale)
+        K = np.diag(slippage_scale)
         cov_eff = self.risk_aversion * cov + 2 * self.turnover_lambda * K
 
         try:

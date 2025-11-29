@@ -28,15 +28,26 @@ class OrderExecutor:
                         order_type="market",
                         side=instruction.side,
                         amount=instruction.quantity,
+                        slippage_bp=getattr(instruction, "slippage_bp", 0.0),
                     )
                 except TypeError:
                     # Some clients (e.g., SimBroker) accept 'type' instead of 'order_type'
-                    response = await self.binance_client.create_order(
-                        symbol=instruction.symbol,
-                        type="market",
-                        side=instruction.side,
-                        amount=instruction.quantity,
-                    )
+                    try:
+                        response = await self.binance_client.create_order(
+                            symbol=instruction.symbol,
+                            type="market",
+                            side=instruction.side,
+                            amount=instruction.quantity,
+                            slippage_bp=getattr(instruction, "slippage_bp", 0.0),
+                        )
+                    except TypeError:
+                        # Fall back to a call without slippage if the client does not support it
+                        response = await self.binance_client.create_order(
+                            symbol=instruction.symbol,
+                            order_type="market",
+                            side=instruction.side,
+                            amount=instruction.quantity,
+                        )
                 results.append(
                     {
                         "status": "success",

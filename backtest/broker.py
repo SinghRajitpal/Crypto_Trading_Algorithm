@@ -20,8 +20,7 @@ import config
 from execution.optimizer import MeanVarianceOptimizer
 
 # Constants - More realistic Binance Futures fees and costs
-
-TAKER_FEE = 0.0004  # 0.04% per side (standard Binance futures taker fee)
+TAKER_FEE = getattr(config, "FEE_RATE", 0.0004)  # per-side taker fee
 MAKER_FEE = 0.0002  # 0.02% per side (maker fee, not currently used)
 FUNDING_MULTIPLIER = 1.0  # Applied to funding rates (can increase for more conservative backtesting)
 
@@ -87,14 +86,6 @@ class SimBroker:
             self._last_prices[symbol] = price
         return price
 
-    def _impact_cost(self, symbol: str, notional: float) -> float:
-        """Temporary impact cost using the configured concave power-law."""
-        kappa = config.IMPACT_KAPPA_OVERRIDES.get(symbol, config.IMPACT_KAPPA_DEFAULT)
-        delta = config.IMPACT_DELTA
-        if kappa <= 0 or delta <= 0:
-            return 0.0
-        return kappa * (abs(notional) ** delta)
-
     # Balance / positions
 
     async def get_balance(self):
@@ -128,7 +119,7 @@ class SimBroker:
         take_profit: Optional[float] = None,
         leverage: Optional[int] = None,
         margin_type: Optional[str] = None,
-        slippage_bp: float = 0.0,  # slippage in basis points (1 bp = 0.01%)
+        slippage_bp: Optional[float] = None,  # slippage in basis points (1 bp = 0.01%)
     ):
         """Net positions: adjust existing position, realize PnL on reductions, update margin."""
         if amount <= 0:
@@ -154,14 +145,16 @@ class SimBroker:
             return {"status": "error", "error": "Order notional below minimum"}
 
         # Apply slippage: positive for worse fills (default 0)
-        if slippage_bp:
-            px *= 1 + (slippage_bp / 10000.0) * (1 if side == "buy" else -1)
+        effective_slip = slippage_bp
+        if effective_slip is None:
+            effective_slip = config.SLIPPAGE_BPS_OVERRIDES.get(symbol, config.SLIPPAGE_BPS_DEFAULT)
+        if effective_slip:
+            px *= 1 + (effective_slip / 10000.0) * (1 if side == "buy" else -1)
 
         trade_sign = 1 if side.lower() == "buy" else -1
         trade_contracts = trade_sign * amount
         notional = abs(trade_contracts) * px
         fee = notional * TAKER_FEE
-        impact_cost = self._impact_cost(symbol, notional)
         lev_eff = leverage or (self._positions.get(symbol, {}).get("leverage") if self._positions.get(symbol) else 1)
 
         prev = self._positions.get(symbol)
@@ -202,7 +195,7 @@ class SimBroker:
 
         if new_contracts == 0:
             margin_release = prev_margin
-            self._cash += margin_release + realized_pnl - fee - impact_cost
+            self._cash += margin_release + realized_pnl - fee
             self._positions.pop(symbol, None)
         else:
             # Weighted average entry when adding to same direction
@@ -218,7 +211,7 @@ class SimBroker:
             if margin_new > equity_now * 2:  # crude leverage cap of 2x equity
                 return {"status": "error", "error": "Insufficient equity for margin"}
             margin_release = prev_margin
-            self._cash += -fee - impact_cost + realized_pnl + margin_release - margin_new
+            self._cash += -fee + realized_pnl + margin_release - margin_new
 
             self._positions[symbol] = {
                 "symbol": symbol,
@@ -245,7 +238,7 @@ class SimBroker:
                 "leverage": lev_eff,
                 "margin": self._positions[symbol]["margin"] if symbol in self._positions else 0.0,
                 "fee": fee,
-                "impact_cost": impact_cost,
+                "slippage_bp": effective_slip,
             }
         )
 
@@ -257,7 +250,7 @@ class SimBroker:
             "fill_price": px,
         }
 
-    async def close_position(self, symbol: str, side: Optional[str] = None, slippage_bp: float = 3.0):
+    async def close_position(self, symbol: str, side: Optional[str] = None, slippage_bp: Optional[float] = None):
         """Close position with slippage support."""
         pos = self._positions.get(symbol)
         if not pos:
@@ -272,14 +265,16 @@ class SimBroker:
         # Apply slippage: unfavorable for closing positions
         # Long positions close with sells (worse = lower price)
         # Short positions close with buys (worse = higher price)
-        if slippage_bp > 0:
+        effective_slip = slippage_bp
+        if effective_slip is None:
+            effective_slip = config.SLIPPAGE_BPS_OVERRIDES.get(symbol, config.SLIPPAGE_BPS_DEFAULT)
+        if effective_slip and effective_slip > 0:
             is_long = contracts > 0
-            slippage_factor = slippage_bp / 10000.0
+            slippage_factor = effective_slip / 10000.0
             px *= 1 - slippage_factor if is_long else 1 + slippage_factor
         
         notional = abs(contracts) * px
         fee = notional * TAKER_FEE
-        impact_cost = self._impact_cost(symbol, notional)
         pnl = (px - pos["entryPrice"]) * contracts  # long +ve, short -ve
 
         # ------------------------------------------------------------------
@@ -288,7 +283,7 @@ class SimBroker:
 
         margin_released = pos.get("margin", notional / max(pos.get("leverage", 1), 1))
 
-        self._cash += margin_released + pnl - fee - impact_cost
+        self._cash += margin_released + pnl - fee
 
         self._trade_log.append(
             {
@@ -302,7 +297,7 @@ class SimBroker:
                 "leverage": pos.get("leverage", 1),
                 "margin": margin_released,
                 "fee": fee,
-                "impact_cost": impact_cost,
+                "slippage_bp": effective_slip,
                 "pnl": pnl,
             }
         )
