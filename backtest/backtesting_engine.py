@@ -88,6 +88,7 @@ class WalkForwardBacktester:
         self.data_engine.data_fetcher.symbol_timeframes = [(s, self.timeframe) for s in symbols]
         self.execution_engine = ExecutionEngine(binance_client=self.broker, total_capital=initial_capital)
         self.fetcher = HistoricalDataFetcher(demo=False)
+        self._funding_cache: Dict[str, pd.Series] = {}
         self._metrics: Dict[str, Any] = {}
         # Use latest processed price for simulated fills
         self.broker.set_price_callback(self._price_lookup)
@@ -95,6 +96,7 @@ class WalkForwardBacktester:
     async def run(self) -> BacktestMetrics:
         try:
             ohlcv_data, benchmark_df = await self._load_history(self.benchmark_symbol)
+            await self._load_funding_history()
             await self._warmup(ohlcv_data)
             self._pred_map = self._load_prediction_feed(self.predictions_paths, self.start, self.end)
             self._validate_predictions(self.start, self.end)
@@ -127,15 +129,19 @@ class WalkForwardBacktester:
 
                 # Align simulated broker timestamps with bar time
                 self.broker.set_bar_timestamp(ts)
-
                 for sym in self.symbols:
                     df = ohlcv_data.get(sym)
                     if df is not None and ts in df.index:
                         candle = df.loc[ts]
                         bar = [int(ts.timestamp() * 1000)] + candle.tolist()
+                        funding_val = None
+                        fund_series = self._funding_cache.get(sym)
+                        if fund_series is not None and ts in fund_series.index:
+                            funding_val = float(fund_series.loc[ts])
                         await self.data_engine.data_fetcher.data_processor.update_tracked_candles(
                             sym, self.timeframe, bar
                         )
+                        self.data_engine.set_latest_funding(sym, funding_val or 0.0)
 
                 self.data_engine.process_all_latest_bars(self.timeframe)
 
@@ -513,6 +519,34 @@ class WalkForwardBacktester:
                 )
         return data_map, benchmark_df
 
+    async def _load_funding_history(self) -> None:
+        """Preload funding rates for symbols to feed FeatureEngineer during backtest."""
+        # Use earliest available OHLC timestamp per symbol as funding start
+        lookbacks: Dict[str, pd.Timestamp] = {}
+        for sym in self.symbols:
+            try:
+                df = await self.fetcher.download_ohlcv(
+                    sym,
+                    self.timeframe,
+                    start=None,
+                    end=None,
+                    force=False,
+                    cache_only=True,
+                )
+                if df is not None and not df.empty:
+                    lookbacks[sym] = df.index.min()
+            except Exception:
+                continue
+
+        for sym in self.symbols:
+            start_ts = lookbacks.get(sym)
+            try:
+                series = await self.fetcher.fetch_funding_rate(sym, start=start_ts, end=self.end, force=False)
+                if series is not None and not series.empty:
+                    self._funding_cache[sym] = series
+            except Exception:
+                continue
+
     async def _nav(self) -> float:
         # Prefer full equity (cash + margin + unrealized PnL) if supported by broker
         if hasattr(self.broker, "equity"):
@@ -530,7 +564,7 @@ class WalkForwardBacktester:
         arr = np.array(returns, dtype=float)
         if np.std(arr, ddof=1) == 0:
             return 0.0
-        annual_factor = np.sqrt(max(1.0, bars_per_day * 252))
+        annual_factor = np.sqrt(max(1.0, bars_per_day * 365))
         return float(np.mean(arr) / np.std(arr, ddof=1) * annual_factor)
 
     @staticmethod
@@ -553,7 +587,7 @@ class WalkForwardBacktester:
         arr = np.array(returns, dtype=float)
         if arr.size < 2:
             return 0.0
-        annual_factor = np.sqrt(max(1.0, bars_per_day * 252))
+        annual_factor = np.sqrt(max(1.0, bars_per_day * 365))
         return float(np.std(arr, ddof=1) * annual_factor)
 
     @staticmethod

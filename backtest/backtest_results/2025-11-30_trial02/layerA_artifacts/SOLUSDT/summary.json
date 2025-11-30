@@ -1,0 +1,15 @@
+{
+  "symbol": "SOLUSDT",
+  "timeframe": "8h",
+  "lookback": 64,
+  "retrain_days": 30,
+  "predictions": 93,
+  "steps": 2,
+  "count": 93,
+  "mse": 0.0008165996491372372,
+  "rmse": 0.028576207745907033,
+  "mae": 0.02142746112894209,
+  "ic_pearson": -0.10384009087528953,
+  "ic_spearman": -0.03471994270538031,
+  "sign_accuracy": 0.5268817204301075
+}

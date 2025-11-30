@@ -121,8 +121,8 @@ class GRULayerTrainer:
     ) -> GRULayerResult:
         os.makedirs(output_dir, exist_ok=True)
         fetcher = HistoricalDataFetcher(demo=False)
+        lookback_start = _lookback_start(start, self.timeframe)
         try:
-            lookback_start = _lookback_start(start, self.timeframe)
             try:
                 df = await fetcher.download_ohlcv(
                     self.symbol,
@@ -143,15 +143,61 @@ class GRULayerTrainer:
                     cache_only=False,
                 )
         finally:
-            await fetcher.close()
+            # do not close yet; funding fetch below uses the same client
+            pass
 
         if df is None or df.empty:
             raise ValueError("No historical data available for GRU training.")
 
         df = df.sort_index()
-        X, y, ts = build_sequences_with_index(df, lookback=self.lookback)
+        try:
+            funding_start = df.index.min()
+            funding_series = await fetcher.fetch_funding_rate(
+                self.symbol,
+                start=funding_start,
+                end=end,
+                force=False,
+            )
+            funding_series = funding_series.reindex(df.index).fillna(0.0)
+        except Exception:
+            funding_series = None
+        finally:
+            await fetcher.close()
+
+        X, y, ts = build_sequences_with_index(
+            df,
+            lookback=self.lookback,
+            funding=funding_series,
+        )
         if X.size == 0 or y.size == 0:
             raise ValueError("Insufficient data to build GRU training sequences.")
+
+        # Feature stats logging for diagnostics
+        try:
+            feat_names = list(config.GRU_FEATURE_SCHEMA)
+            flat = X.reshape(-1, X.shape[-1])
+            stats = {}
+            for i, name in enumerate(feat_names):
+                col = flat[:, i]
+                stats[name] = {
+                    "mean": float(np.nanmean(col)),
+                    "std": float(np.nanstd(col)),
+                    "min": float(np.nanmin(col)),
+                    "max": float(np.nanmax(col)),
+                }
+            for name, s in stats.items():
+                logger.info(
+                    "Feature stats | %s | mean=%.4f std=%.4f min=%.4f max=%.4f",
+                    name,
+                    s["mean"],
+                    s["std"],
+                    s["min"],
+                    s["max"],
+                )
+                if s["std"] == 0 or np.isnan(s["std"]):
+                    logger.warning("Degenerate feature detected (std=0 or NaN): %s", name)
+        except Exception as exc:
+            logger.warning("Feature stats logging failed: %s", exc)
 
         artifacts = self._walk_forward(X, y, ts, start, end, output_dir)
         predictions_path = os.path.join(output_dir, "predictions.csv")
@@ -304,13 +350,15 @@ class GRULayerTrainer:
     def _init_forecaster(self) -> GRUForecasterTorch:
         return GRUForecasterTorch(
             lookback=self.lookback,
-            input_size=2,
+            input_size=len(config.GRU_FEATURE_SCHEMA),
             hidden_size=config.GRU_HIDDEN_SIZE,
             num_layers=config.GRU_NUM_LAYERS,
             dropout=config.GRU_DROPOUT,
             learning_rate=config.GRU_LR,
             weight_decay=0.0,
-            huber_delta=config.GRU_HUBER_DELTA,
+            optimizer=config.GRU_OPTIMIZER,
+            loss=config.GRU_LOSS,
+            bidirectional=config.GRU_BIDIRECTIONAL,
             grad_clip=config.GRU_GRAD_CLIP,
             batch_size=config.GRU_BATCH_SIZE,
             epochs=config.GRU_EPOCHS,
@@ -318,6 +366,7 @@ class GRULayerTrainer:
             validation_split=config.GRU_VALIDATION_SPLIT,
             verbose=config.GRU_TRAIN_VERBOSE,
             device=config.GRU_DEVICE,
+            feature_schema=list(config.GRU_FEATURE_SCHEMA),
         )
 
     def _generate_plots(self, artifacts: Dict[str, Any], output_dir: str) -> None:

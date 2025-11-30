@@ -33,10 +33,27 @@ class GRUForecastStrategy:
         for sym in universe:
             if self.data_engine.get_missing_bars(sym, self.timeframe):
                 continue
+            if hasattr(self.data_engine, "feature_ready") and not self.data_engine.feature_ready(sym, self.lookback):
+                logger.debug("Features not ready for %s | lookback=%d", sym, self.lookback)
+                continue
             window = self._build_window(sym)
             if window is None:
+                logger.debug("No feature window for %s | lookback=%d", sym, self.lookback)
                 continue
             try:
+                if not np.all(np.isfinite(window)):
+                    logger.warning("Non-finite values in feature window for %s; skipping", sym)
+                    continue
+                if getattr(self.forecaster, "feature_schema", None):
+                    expected = len(self.forecaster.feature_schema)
+                    if window.shape[1] != expected:
+                        logger.warning(
+                            "Feature window width mismatch for %s | expected=%d got=%d",
+                            sym,
+                            expected,
+                            window.shape[1],
+                        )
+                        continue
                 mu = self.forecaster.predict_simple_return(window)
                 expected_returns[sym] = mu
             except Exception as exc:
@@ -59,21 +76,19 @@ class GRUForecastStrategy:
         )
 
     def _build_window(self, symbol: str):
-        """Construct the latest window of log-return/log-volume features."""
-        lr_hist = self.data_engine.return_manager.log_return_history.get(symbol, [])
-        vol_hist = self.data_engine.return_manager.volume_history.get(symbol, [])
-        if len(lr_hist) < self.lookback or len(vol_hist) < self.lookback:
+        """Construct the latest window of pre-computed features."""
+        window = self.data_engine.get_feature_window(symbol, self.lookback)
+        if window is None:
             return None
-        log_returns = np.array([v for _, v in lr_hist], dtype=float)
-        volumes = np.array([v for _, v in vol_hist], dtype=float)
-        # Align volume length to log return length if needed
-        volumes = volumes[-len(log_returns) :]
-        lr_slice = log_returns[-self.lookback :]
-        vol_slice = volumes[-self.lookback :]
-        if lr_slice.shape[0] < self.lookback or vol_slice.shape[0] < self.lookback:
-            return None
-        log_vol = np.log1p(vol_slice)
-        window = np.stack([lr_slice, log_vol], axis=1)
-        if not np.all(np.isfinite(window)):
-            return None
+        # Validate schema alignment if available
+        if getattr(self.forecaster, "feature_schema", None):
+            expected = len(self.forecaster.feature_schema)
+            if window.shape[1] != expected:
+                logger.warning(
+                    "Feature window width mismatch for %s | expected=%d got=%d",
+                    symbol,
+                    expected,
+                    window.shape[1],
+                )
+                return None
         return window

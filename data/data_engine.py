@@ -3,6 +3,7 @@ from data.data_fetcher import DataFetcher
 from data.return_manager import ReturnManager
 from data.universe_selector import UniverseSelector
 from data.universe_data import UniverseDataFetcher
+from data.feature_builder import FeatureEngineer, FeatureWindowStore
 import numpy as np
 import sys
 import os
@@ -63,6 +64,9 @@ class DataEngine:
             feature_mode=config.REGRESSION_FEATURE_MODE,
             track_timestamps=track_timestamps,
         )
+        self.feature_engine = FeatureEngineer()
+        self.feature_store = FeatureWindowStore(maxlen=config.GRU_LOOKBACK + 10)
+        self._live_funding: Dict[str, float] = {}
         self.universe_selector = UniverseSelector(
             max_rank=config.UNIVERSE_MAX_RANK,
             min_dollar_volume=config.UNIVERSE_MIN_DOLLAR_VOLUME,
@@ -156,6 +160,11 @@ class DataEngine:
         prev_close = self.return_manager.get_last_close(symbol)
 
         self.return_manager.update(symbol, bar)
+        aux = {
+            "funding": self._live_funding.pop(symbol, 0.0),
+        }
+        feats = self.feature_engine.update(symbol, bar, aux=aux)
+        self.feature_store.append(symbol, feats, self.feature_engine.schema)
         self.universe_selector.record_bar_metrics(
             symbol, bar["timestamp"], bar["close"], bar["volume"]
         )
@@ -173,6 +182,11 @@ class DataEngine:
         prev_close = self.return_manager.get_last_close(symbol)
 
         self.return_manager.update(symbol, bar)
+        aux = {
+            "funding": self._live_funding.pop(symbol, 0.0),
+        }
+        feats = self.feature_engine.update(symbol, bar, aux=aux)
+        self.feature_store.append(symbol, feats, self.feature_engine.schema)
         self.universe_selector.record_bar_metrics(
             symbol, bar["timestamp"], bar["close"], bar["volume"]
         )
@@ -241,6 +255,12 @@ class DataEngine:
                     continue
                 # Ingest into ReturnManager
                 self.return_manager.load_from_candles(sym, candles)
+                for candle in candles:
+                    if len(candle) < 6:
+                        continue
+                    bar = self.extract_ohlcv(candle)
+                    feats = self.feature_engine.update(sym, bar)
+                    self.feature_store.append(sym, feats, self.feature_engine.schema)
                 # Record volume for universe selector
                 for candle in candles:
                     if len(candle) < 6:
@@ -291,6 +311,20 @@ class DataEngine:
     def get_latest_return(self, symbol: str) -> Optional[float]:
         """Expose the latest validated simple return for the symbol."""
         return self.return_manager.get_latest_return(symbol)
+
+    def get_feature_window(self, symbol: str, lookback: Optional[int] = None) -> Optional[np.ndarray]:
+        """Return a ready-to-infer feature window for GRU."""
+        lookback = lookback or config.GRU_LOOKBACK
+        return self.feature_store.get_window(symbol, lookback)
+
+    def feature_ready(self, symbol: str, lookback: Optional[int] = None) -> bool:
+        """Return True if a finite feature window of the requested length exists."""
+        return self.get_feature_window(symbol, lookback) is not None
+
+    def set_latest_funding(self, symbol: str, value: float) -> None:
+        """Inject latest funding rate for next feature update (per symbol)."""
+        self._live_funding[symbol.upper()] = float(value)
+
 
     def dispose(self) -> None:
         """Release stored state to help long-running batch jobs."""

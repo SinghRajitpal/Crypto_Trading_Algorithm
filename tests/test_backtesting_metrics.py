@@ -17,7 +17,7 @@ def test_sharpe_and_volatility():
     arr = np.array(rets)
     mean = arr.mean()
     std = arr.std(ddof=1)
-    ann = np.sqrt(bars_per_day * 252)
+    ann = np.sqrt(bars_per_day * 365)
     expected_sharpe = mean / std * ann
     expected_vol = std * ann
     assert np.isclose(sharpe, expected_sharpe)

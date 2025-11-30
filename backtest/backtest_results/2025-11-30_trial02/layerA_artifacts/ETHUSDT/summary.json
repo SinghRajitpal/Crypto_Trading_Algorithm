@@ -1,0 +1,15 @@
+{
+  "symbol": "ETHUSDT",
+  "timeframe": "8h",
+  "lookback": 64,
+  "retrain_days": 30,
+  "predictions": 93,
+  "steps": 2,
+  "count": 93,
+  "mse": 0.000427969613073329,
+  "rmse": 0.020687426448771463,
+  "mae": 0.015375882896201863,
+  "ic_pearson": 0.12778774090459413,
+  "ic_spearman": 0.058204768583450195,
+  "sign_accuracy": 0.46236559139784944
+}

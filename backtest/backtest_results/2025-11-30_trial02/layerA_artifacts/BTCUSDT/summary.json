@@ -1,0 +1,15 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "8h",
+  "lookback": 64,
+  "retrain_days": 30,
+  "predictions": 93,
+  "steps": 2,
+  "count": 93,
+  "mse": 0.00021636672700881167,
+  "rmse": 0.014709409471790894,
+  "mae": 0.010860819116326543,
+  "ic_pearson": 0.07667135441717442,
+  "ic_spearman": 0.11136641699740381,
+  "sign_accuracy": 0.5591397849462365
+}

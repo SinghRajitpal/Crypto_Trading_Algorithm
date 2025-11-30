@@ -1,0 +1,37 @@
+{
+  "pnl": -1509.6881657217218,
+  "cum_return_pct": -15.09688165721722,
+  "sharpe": -3.9289394326424287,
+  "volatility": 0.4627942716477423,
+  "max_drawdown": 0.24082993755349855,
+  "avg_drawdown": 0.10485437687177877,
+  "turnover": 0.12060097960923667,
+  "turnover_sum": 11.336492083268247,
+  "winrate": 0.11730205278592376,
+  "avg_win": 0.008471411257168378,
+  "avg_loss": 0.009649192835560486,
+  "fees": 41.032672750782716,
+  "ras_sharpe": -0.001660539418335933,
+  "ras_sharpe_lower": -0.2833176730909749,
+  "risk_diag_avg": {
+    "symbols": 5.0,
+    "last_mahalanobis_d2": 3.2845146591987513,
+    "vol_mse_avg": 6.709581619364052e-07,
+    "malv_mean": -2.5331960893512067,
+    "vol_qlike_avg": -7.288283165378272,
+    "cov_turnover_fro": 0.0014969178146849744
+  },
+  "cov_loss_avg": {
+    "cov_port_qlike": -6.607322321405653,
+    "cov_port_mse": 1.891773741631154e-08
+  },
+  "benchmark_sharpe": 2.319476067089157,
+  "ras_ic_lower": NaN,
+  "benchmark_pnl": 903.9330263386892,
+  "benchmark_cum_return_pct": 9.039330263386901,
+  "benchmark_volatility": 0.49072055757299293,
+  "benchmark_max_drawdown": 0.09871560494967711,
+  "benchmark_avg_drawdown": 0.03305075768398224,
+  "benchmark_avg_win": 0.011272995899864252,
+  "benchmark_avg_loss": 0.010859988717172812
+}

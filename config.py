@@ -39,7 +39,7 @@ BAR_RETURN_ABS_THRESHOLD = 0.25
 MIN_BAR_VOLUME = 1.0
 OUTLIER_SIGMA_THRESHOLD = 8.0
 
-# Regression / Forecast Parameters
+# Regression / Forecast Parameters (legacy regression pipeline)
 REGRESSION_WINDOW = 120
 REGRESSION_FEATURE_MODE = "log_price"
 LOG_RETURN_LAGS = [1, 3, 6, 12]
@@ -56,22 +56,45 @@ REGRESSION_EMBARGO_BARS = 10
 
 GRU_TIMEFRAME = "8h"
 GRU_LOOKBACK = 64
-GRU_FEATURES = ["log_return", "log_volume"]
+GRU_FEATURE_SCHEMA = [
+    "log_return",
+    "log_volume",
+    "tsmom_fast_vol_z",
+    "tsmom_med_vol_z",
+    "rsi12_innov_z",
+    "atrpct_innov_z",
+    "funding_z",
+    "ofi_z",  # fallback to obvtilt_z if OFI unavailable
+]
 GRU_HIDDEN_SIZE = 64
-GRU_NUM_LAYERS = 1
-GRU_DROPOUT = 0.0
+GRU_NUM_LAYERS = 2
+GRU_DROPOUT = 0.2
 GRU_BATCH_SIZE = 32
 GRU_LR = 1e-3
-GRU_EPOCHS = 50
-GRU_EARLY_STOP_PATIENCE = 5
+GRU_EPOCHS = 100
+GRU_EARLY_STOP_PATIENCE = 8
 GRU_GRAD_CLIP = 1.0
 GRU_VALIDATION_SPLIT = 0.2
-GRU_HUBER_DELTA = 1.0
+GRU_LOSS = "mse"  # options: mse, huber
+GRU_OPTIMIZER = "adam"
+GRU_BIDIRECTIONAL = False
 GRU_MODEL_DIR = "backtest/backtest_results/gru_artifacts"
 GRU_TRAIN_VERBOSE = 1
 GRU_DEVICE = "mps"
 GRU_RETRAIN_DAYS = 30
 GRU_MIN_TRAIN_SAMPLES = 200
+
+# Feature engineering knobs for GRU pipeline
+FEATURE_WINSOR_PCT = 0.01
+FEATURE_Z_WARMUP = 200
+FEATURE_ADV_WINDOW = 60
+FEATURE_FALLBACK_OBV = True
+FEATURE_ATR_WINDOW = 14
+FEATURE_ATR_EMA = 20
+FEATURE_RSI_WINDOW = 12
+FEATURE_RSI_EMA = 20
+FEATURE_TSMOM_FAST_K = 3
+FEATURE_TSMOM_MED_K = 15
 
 # Risk Model Data Parameters
 RISK_WINDOW = 180

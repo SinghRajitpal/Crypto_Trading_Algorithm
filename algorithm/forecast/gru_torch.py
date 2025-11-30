@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
 
 import numpy as np
 import torch
@@ -71,15 +71,19 @@ class GRUSpec:
     hidden_size: int
     num_layers: int
     dropout: float
+    bidirectional: bool
     learning_rate: float
     weight_decay: float
+    optimizer: str
+    loss: str
     batch_size: int
     epochs: int
-    huber_delta: float
+    huber_delta: Optional[float]
     grad_clip: float
     train_start: Optional[str] = None
     train_end: Optional[str] = None
     val_loss: Optional[float] = None
+    feature_schema: Optional[List[str]] = None
 
     def to_json(self, path: str) -> None:
         with open(path, "w") as f:
@@ -91,11 +95,21 @@ class GRUSpec:
             data = json.load(f)
         if "weight_decay" not in data:
             data["weight_decay"] = 0.0
+        if "loss" not in data:
+            data["loss"] = "mse"
+        if "optimizer" not in data:
+            data["optimizer"] = "adam"
+        if "bidirectional" not in data:
+            data["bidirectional"] = False
+        if "huber_delta" not in data:
+            data["huber_delta"] = None
+        if "feature_schema" not in data:
+            data["feature_schema"] = None
         return cls(**data)
 
 
 class _GRUModel(nn.Module):
-    def __init__(self, input_size: int, hidden_size: int, num_layers: int, dropout: float):
+    def __init__(self, input_size: int, hidden_size: int, num_layers: int, dropout: float, bidirectional: bool):
         super().__init__()
         self.gru = nn.GRU(
             input_size=input_size,
@@ -103,8 +117,10 @@ class _GRUModel(nn.Module):
             num_layers=num_layers,
             batch_first=True,
             dropout=dropout if num_layers > 1 else 0.0,
+            bidirectional=bidirectional,
         )
-        self.head = nn.Linear(hidden_size, 1)
+        hidden_out = hidden_size * (2 if bidirectional else 1)
+        self.head = nn.Linear(hidden_out, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out, _ = self.gru(x)
@@ -120,9 +136,12 @@ class GRUForecasterTorch:
         hidden_size: int = 64,
         num_layers: int = 1,
         dropout: float = 0.0,
+        bidirectional: bool = False,
         learning_rate: float = 1e-3,
         weight_decay: float = 0.0,
-        huber_delta: float = 1.0,
+        optimizer: str = "adam",
+        loss: str = "mse",
+        huber_delta: Optional[float] = None,
         grad_clip: float = 1.0,
         batch_size: int = 32,
         epochs: int = 50,
@@ -130,14 +149,18 @@ class GRUForecasterTorch:
         validation_split: float = 0.2,
         device: Optional[str] = None,
         verbose: int = 1,
+        feature_schema: Optional[List[str]] = None,
     ) -> None:
         self.lookback = lookback
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout = dropout
+        self.bidirectional = bidirectional
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
+        self.optimizer = (optimizer or "adam").lower()
+        self.loss = (loss or "mse").lower()
         self.huber_delta = huber_delta
         self.grad_clip = grad_clip
         self.batch_size = batch_size
@@ -146,6 +169,7 @@ class GRUForecasterTorch:
         self.validation_split = validation_split
         self.verbose = verbose
         self.device = self._resolve_device(device)
+        self.feature_schema = feature_schema
 
         self.model: Optional[_GRUModel] = None
         self.scaler: Optional[SequenceStandardizer] = None
@@ -192,9 +216,28 @@ class GRUForecasterTorch:
         train_loader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True, drop_last=False)
         val_loader = DataLoader(val_ds, batch_size=self.batch_size, shuffle=False, drop_last=False)
 
-        self.model = _GRUModel(self.input_size, self.hidden_size, self.num_layers, self.dropout).to(self.device)
+        self.model = _GRUModel(
+            self.input_size,
+            self.hidden_size,
+            self.num_layers,
+            self.dropout,
+            self.bidirectional,
+        ).to(self.device)
+
+        if self.optimizer != "adam":
+            raise ValueError(f"Unsupported optimizer: {self.optimizer}")
         opt = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        loss_fn = nn.SmoothL1Loss(beta=self.huber_delta)
+
+        loss_name = (self.loss or "mse").lower()
+        if loss_name in ("mse", "l2"):
+            loss_fn = nn.MSELoss()
+            huber_used = None
+        elif loss_name in ("huber", "smooth_l1", "smoothl1"):
+            delta = self.huber_delta if self.huber_delta is not None else 1.0
+            loss_fn = nn.SmoothL1Loss(beta=delta)
+            huber_used = delta
+        else:
+            raise ValueError(f"Unsupported loss: {self.loss}")
 
         best_state = None
         best_val = float("inf")
@@ -255,13 +298,17 @@ class GRUForecasterTorch:
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
             dropout=self.dropout,
+            bidirectional=self.bidirectional,
             learning_rate=self.learning_rate,
             weight_decay=self.weight_decay,
+            optimizer=self.optimizer,
+            loss=loss_name,
             batch_size=self.batch_size,
             epochs=len(history["val_loss"]),
-            huber_delta=self.huber_delta,
+            huber_delta=huber_used,
             grad_clip=self.grad_clip,
             val_loss=best_val,
+            feature_schema=self.feature_schema,
         )
         return history, spec
 
@@ -316,6 +363,7 @@ class GRUForecasterTorch:
                 "hidden_size": self.hidden_size,
                 "num_layers": self.num_layers,
                 "dropout": self.dropout,
+                "bidirectional": self.bidirectional,
             },
             model_path,
         )
@@ -344,13 +392,17 @@ class GRUForecasterTorch:
             hidden_size=state.get("hidden_size", 64),
             num_layers=state.get("num_layers", 1),
             dropout=state.get("dropout", 0.0),
+            bidirectional=state.get("bidirectional", getattr(spec, "bidirectional", False) if spec else False),
             learning_rate=getattr(spec, "learning_rate", 1e-3) if spec else 1e-3,
             weight_decay=getattr(spec, "weight_decay", 0.0) if spec else 0.0,
-            huber_delta=getattr(spec, "huber_delta", 1.0) if spec else 1.0,
+            optimizer=getattr(spec, "optimizer", "adam") if spec else "adam",
+            loss=getattr(spec, "loss", "mse") if spec else "mse",
+            huber_delta=getattr(spec, "huber_delta", None) if spec else None,
             grad_clip=getattr(spec, "grad_clip", 1.0) if spec else 1.0,
             batch_size=getattr(spec, "batch_size", 32) if spec else 32,
             epochs=getattr(spec, "epochs", 1) if spec else 1,
             device=device or config.GRU_DEVICE,
+            feature_schema=getattr(spec, "feature_schema", None) if spec else None,
         )
         forecaster.scaler = scaler
         forecaster.model = _GRUModel(
@@ -358,7 +410,14 @@ class GRUForecasterTorch:
             forecaster.hidden_size,
             forecaster.num_layers,
             forecaster.dropout,
+            forecaster.bidirectional,
         ).to(forecaster.device)
         forecaster.model.load_state_dict(state["state_dict"])
         forecaster.model.eval()
+        if forecaster.feature_schema and len(forecaster.feature_schema) != forecaster.input_size:
+            logger.warning(
+                "Feature schema length (%d) does not match input_size (%d); proceeding but please verify.",
+                len(forecaster.feature_schema),
+                forecaster.input_size,
+            )
         return forecaster

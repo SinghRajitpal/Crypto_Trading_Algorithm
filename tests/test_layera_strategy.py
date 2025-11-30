@@ -30,6 +30,9 @@ class StubDataEngine:
         self._missing = {s: [] for s in symbols}
         self._candles = {s: None for s in symbols}
         self._universe = symbols
+        self._lookback = lookback
+        self._schema_len = len(getattr(config, "GRU_FEATURE_SCHEMA", [])) or 2
+        self._window = None
 
     def process_all_latest_bars(self, timeframe):
         return
@@ -42,6 +45,12 @@ class StubDataEngine:
 
     def get_latest_candle(self, symbol, timeframe):
         return self._candles.get(symbol)
+
+    def get_feature_window(self, symbol, lookback):
+        if self._window is None:
+            # Build a dummy finite window of the correct shape
+            self._window = np.ones((lookback, self._schema_len), dtype=float)
+        return self._window
 
 
 @pytest.fixture

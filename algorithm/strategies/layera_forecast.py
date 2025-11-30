@@ -49,11 +49,28 @@ class LayerAForecastStrategy:
                 continue
             if self.data_engine.get_missing_bars(sym_u, self.timeframe):
                 continue
+            if hasattr(self.data_engine, "feature_ready") and not self.data_engine.feature_ready(sym_u, model.lookback):
+                logger.debug("Features not ready for %s | lookback=%d", sym_u, model.lookback)
+                continue
             window = self._build_window(sym_u, model.lookback)
             if window is None:
+                logger.debug("No feature window for %s | lookback=%d", sym_u, model.lookback)
                 continue
             ready += 1
             try:
+                if not np.all(np.isfinite(window)):
+                    logger.warning("Non-finite values in feature window for %s; skipping", sym_u)
+                    continue
+                if getattr(model.forecaster, "feature_schema", None):
+                    expected = len(model.forecaster.feature_schema)
+                    if window.shape[1] != expected:
+                        logger.warning(
+                            "Feature window width mismatch for %s | expected=%d got=%d",
+                            sym_u,
+                            expected,
+                            window.shape[1],
+                        )
+                        continue
                 mu_log, sigma, latency_ms = model.predict(window)
                 mu_simple = float(np.exp(mu_log) - 1.0)
                 # Optional sigma filtering
@@ -100,21 +117,21 @@ class LayerAForecastStrategy:
         )
 
     def _build_window(self, symbol: str, lookback: int):
-        """Construct the latest window of log-return/log-volume features."""
-        lr_hist = self.data_engine.return_manager.log_return_history.get(symbol, [])
-        vol_hist = self.data_engine.return_manager.volume_history.get(symbol, [])
-        if len(lr_hist) < lookback or len(vol_hist) < lookback:
+        """Construct the latest window of pre-computed features."""
+        if not hasattr(self.data_engine, "get_feature_window"):
             return None
-        log_returns = np.array([v for _, v in lr_hist], dtype=float)
-        volumes = np.array([v for _, v in vol_hist], dtype=float)
-        volumes = volumes[-len(log_returns) :]
-        lr_slice = log_returns[-lookback:]
-        vol_slice = volumes[-lookback:]
-        if lr_slice.shape[0] < lookback or vol_slice.shape[0] < lookback:
+        window = self.data_engine.get_feature_window(symbol, lookback)
+        if window is None:
             return None
-        log_vol = np.log1p(vol_slice)
-        window = np.stack([lr_slice, log_vol], axis=1)
-        if not np.all(np.isfinite(window)):
-            return None
+        model = self.models.get(symbol)
+        if model and getattr(model.forecaster, "feature_schema", None):
+            expected = len(model.forecaster.feature_schema)
+            if window.shape[1] != expected:
+                logger.warning(
+                    "Feature window width mismatch for %s | expected=%d got=%d",
+                    symbol,
+                    expected,
+                    window.shape[1],
+                )
+                return None
         return window
-

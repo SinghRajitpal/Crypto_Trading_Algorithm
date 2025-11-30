@@ -1,0 +1,14 @@
+{
+  "symbol": "BNBUSDT",
+  "timeframe": "8h",
+  "lookback": 64,
+  "retrain_days": 30,
+  "artifact_dir": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-30_trial03/layerA_artifacts/BNBUSDT",
+  "predictions_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-30_trial03/layerA_artifacts/BNBUSDT/predictions.csv",
+  "metrics_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-30_trial03/layerA_artifacts/BNBUSDT/metrics.jsonl",
+  "summary_path": "/Users/singhs/Documents/Coding/Crypto Trading Algorithm/backtest/backtest_results/2025-11-30_trial03/layerA_artifacts/BNBUSDT/summary.json",
+  "samples": 6080,
+  "train_start": "2020-02-10 08:00:00+00:00",
+  "test_start": "2025-01-01 00:00:00+00:00",
+  "test_end": "2025-02-01 00:00:00+00:00"
+}

@@ -1,0 +1,30 @@
+{
+  "timeframe": "8h",
+  "lookback": 64,
+  "input_size": 8,
+  "hidden_size": 64,
+  "num_layers": 2,
+  "dropout": 0.2,
+  "bidirectional": false,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0,
+  "optimizer": "adam",
+  "loss": "mse",
+  "batch_size": 32,
+  "epochs": 10,
+  "huber_delta": null,
+  "grad_clip": 1.0,
+  "train_start": "2020-04-03 08:00:00+00:00",
+  "train_end": "2025-01-30 16:00:00+00:00",
+  "val_loss": 0.690940921263331,
+  "feature_schema": [
+    "log_return",
+    "log_volume",
+    "tsmom_fast_vol_z",
+    "tsmom_med_vol_z",
+    "rsi12_innov_z",
+    "atrpct_innov_z",
+    "funding_z",
+    "ofi_z"
+  ]
+}
