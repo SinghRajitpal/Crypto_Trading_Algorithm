@@ -1,6 +1,6 @@
 # Usage Guide
 
-This is a guide which provided step by step instructions on how to use this code. Also, when running this code for the first time, it takes a lot of time to import the libraries and the data but after the first run, it runs quicker.
+This is a guide which provided step by step instructions on how to use this code. Also, when running this code for the first time, it takes a lot of time to import the libraries and the data but after the first run, it runs quicker. For now I have kept my demo api keys but please change it to yours to see the demo exchange.
 
 ## 1) One-Time Setup
 1. Install Python 3.11+.
@@ -95,7 +95,7 @@ Layer A artifacts feed Layer B automatically; a manifest is emitted for live/dem
 - Headless plot issues: metrics/CSVs still write even if plot rendering fails.
 
 
-## 8) End-to-End Example (Layer A → Layer B → Demo) (recommended for you Mr.Ignazio):
+## End-to-End Example (Layer A → Layer B → Demo) (recommended for you Mr.Ignazio):
 
 Use one output directory to keep artifacts together; then point live/demo at the produced manifest.
 
