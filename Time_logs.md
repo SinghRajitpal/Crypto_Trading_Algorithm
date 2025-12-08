@@ -112,6 +112,7 @@ And to validate the performance, a walk-forward system for backtesting is used a
 
 Hence, we need to do quite a bit of infrastructure change.
 
+
 3. Data
 - implemented fetching historical data and funding rates
 - structure stayed similar
@@ -132,7 +133,7 @@ Hence, we need to do quite a bit of infrastructure change.
 
 6. Deeplearning models
 - Revised the course machine learning specializaion on coursera and reading studies and papers on how to forecast more accurately and it seems that recurrent neural networks are best for sequential data. From them multiple studies have shown GRU has performed well.
-- Implemented a GRU model based on those studies
+- Implemented a GRU model based on those studies and replaced previous placeholder
 - adapted the forecasting system to support this and changed the config file to support those parameter changes
 
 7. Binance Testnet
@@ -158,8 +159,36 @@ And when satisfied with results the saved model can be reused in live/testnet ag
 To integrate this backtesting system with the live workflow, the data, forecasting, execution, main, config to use saved model for predictions. No retraining yet.
 
 9. Testnet depreciation
-Binance depreciated their testnet and introduced a demo mock trading exchange. It is essentially the same thing but the api has changed. The wrapper ccxt currently in use has not updated for the new update. Hence following problems observed:
-- No connection to new demo mock exchange
-- 
+Binance depreciated their testnet and introduced a demo mock trading exchange. It is essentially the same thing but the api has changed. The wrapper ccxt currently in use has not updated for the new update. A different wrapper called python-binance supports the new demo mode but several issues arise with current setup:
+- entire data layer has to be updated with new library (historical and live data)
+- so forecasting, execution and backtesting layer have to be updated
+- new demo mode has to be learned as it is still a bit different
+- relative new mode so updates are coming in
+
+10. Limitations and Error fixing:
+- When running backtests, macbook crashed. Reason is cache.
+- All historical data got saved in memory which is huge. So solution is use data instances in the runs so that memory is autmatically cleared up. Very simple fix brought down memory from 24gb usage to 6gb usage.
+- In-built GPU does not allow for extensive backtesting because walk-forward takes a lot of computational power. Solutions for this is to buy a GPU but have not done that so far
+
+11. Probekapitel
+- Probekapitel written when reading about risk models for MVO
+- it is too sophisticaed and professional systems needed for that (more risk to overfitting), hence EWMA
+- read the feedback and thank you for that
+
+12. The paper
+- First outlined the structure
+- Writing theory chapter and implementation chapter
+- Running constrained backtest and writing analysis chapter
+- Writing outlook, limitations and future work such as sentiment analysis and dedicated GPU
+- Writing Introduction and explaining link of this thesis. Trying to hook reader
+
+13. Revision
+- looking through paper for any logical mistakes
+- making sure sources are referred correctly and language is academic
+- discuss about Format with Mr.Ignazio
+
+
+Submission of paper on 05.12.2025. 
+
 
 
