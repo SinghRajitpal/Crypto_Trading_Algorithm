@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide gives copy-paste steps to set up, configure, and run the live/demo trading loop and the Layer A / Layer B backtests.
+This is a guide which provided step by step instructions on how to use this code. Also, when running this code for the first time, it takes a lot of time to import the libraries and the data but after the first run, it runs quicker.
 
 ## 1) One-Time Setup
 1. Install Python 3.11+.
@@ -14,7 +14,7 @@ This guide gives copy-paste steps to set up, configure, and run the live/demo tr
 
 
 ## 2) Configure Binance Demo Keys
-1. In Binance, switch Futures to Demo/Testnet and create demo API keys with futures trading enabled.
+1. In Binance, switch Futures to Demo/Testnet and create demo API keys.
 2. Open `config.py` and set:
    - `binance_futures_demo["demo_api_key"] = "<your_demo_key>"`
    - `binance_futures_demo["demo_api_secret"] = "<your_demo_secret>"`
@@ -29,13 +29,13 @@ This guide gives copy-paste steps to set up, configure, and run the live/demo tr
 
 ## 4) Live / Demo Trading (simple)
 1. Ensure `config.py` has your demo keys.
-2. If you have a Layer A manifest, set `LAYERA_MANIFEST_PATH` to its path. Otherwise the system falls back to `GRU_MODEL_DIR` when `FORECAST_FALLBACK` allows.
+2. If you have a another model to use, set `LAYERA_MANIFEST_PATH` to its path. Otherwise the system falls back to `GRU_MODEL_DIR` when `FORECAST_FALLBACK` allows.
 3. Check universe/timeframe in `config.py`: `DEFAULT_UNIVERSE`, `PRIMARY_TIMEFRAME` (and `GRU_TIMEFRAME`).
 4. Run demo trading from the repo root:  
    `python main.py`
 5. Stop with Ctrl+C.
 6. Outputs: console logs, `logs/monitoring.jsonl`, cached data under `data/cache`.
-7. For real trading (not demo): instantiate `TradingAlgorithm(demo=False)` in `main.py` and fill `binance_futures` with real keys. Double-check risk/exposure settings before doing this.
+7. For real trading (not demo): instantiate `TradingAlgorithm(demo=False)` in `main.py` and fill `binance_futures` with real keys. Double-check risk/exposure settings before doing this (not recommended as this is not a stable version for live trading).
 
 
 ## 5) Backtesting Workflows
