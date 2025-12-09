@@ -10,6 +10,7 @@ from data.gru_sequence_builder import build_sequences_with_index, _compute_featu
 def _load_cached_ohlcv(symbol: str, timeframe: str) -> pd.DataFrame:
     cache_path = os.path.join(os.path.dirname(__file__), "..", "data", "cache", f"{symbol}-{timeframe}.parquet")
     df = pd.read_parquet(cache_path)
+    df = df.head(500)
     if "timestamp" in df.columns:
         df.set_index("timestamp", inplace=True)
     df.index = pd.to_datetime(df.index, utc=True)
@@ -21,7 +22,9 @@ def _load_cached_funding(symbol: str) -> pd.Series:
     if not os.path.exists(cache_path):
         return None
     s = pd.read_csv(cache_path, parse_dates=["timestamp"], index_col="timestamp")["rate"]
-    s.index = pd.to_datetime(s.index, utc=True)
+    s = s.head(500)
+    s.index = pd.to_datetime(s.index, utc=True, errors="coerce", format="mixed")
+    s = s[s.index.notnull()]
     return s
 
 

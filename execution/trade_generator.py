@@ -41,6 +41,7 @@ class TradeGenerator:
         prices: Dict[str, float],
         precision_provider: Optional[Callable[[str], Optional[Dict[str, float]]]] = None,
     ) -> List[OrderInstruction]:
+        """Produce exchange-ready orders, skipping changes below min notional/qty."""
         orders: List[OrderInstruction] = []
         symbols = set(current_weights.keys()) | set(target_weights.keys())
 

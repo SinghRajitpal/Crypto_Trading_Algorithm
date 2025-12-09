@@ -44,8 +44,8 @@ def test_backfill_populates_lookback(monkeypatch):
     asyncio.run(engine.backfill_history(timeframe="8h", symbols=["BTCUSDT"]))
 
     lr_hist = engine.return_manager.log_return_history["BTCUSDT"]
-    vol_hist = engine.return_manager.volume_history["BTCUSDT"]
+    ret_hist = engine.return_manager.return_history["BTCUSDT"]
     assert len(lr_hist) >= lookback
-    assert len(vol_hist) >= lookback
+    assert len(ret_hist) >= lookback
     # Latest timestamp should match the last candle
     assert lr_hist[-1][0] == candles[-1][0]

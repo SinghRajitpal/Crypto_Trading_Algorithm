@@ -20,18 +20,7 @@ from utils.logging_config import get_logger, console_log
 logger = get_logger(__name__)
 
 class DataEngine:
-    """Data Engine for collecting and providing market data.
-    
-    This class is responsible for:
-    1. Fetching market data from exchanges
-    2. Processing and storing the data in a standardized format
-    3. Providing access to the data for analysis
-    
-    Attributes:
-        binance_client: Binance client instance for market data.
-        data_fetcher: Market data fetcher instance.
-        running: Boolean indicating if the engine is running.
-    """
+    """Collects market data, builds features, manages universe selection, and serves rolling windows."""
     
     def __init__(self, binance_client, max_candles: int = 100, track_timestamps: bool = True):
         """Initialize the data engine.
@@ -46,8 +35,8 @@ class DataEngine:
         self.primary_timeframe = config.PRIMARY_TIMEFRAME
         self.default_symbols = [symbol for symbol, _ in config.symbols]
 
-        # Ensure we always keep enough candles for regression/risk windows
-        required_candles = max(max_candles, config.RISK_WINDOW + 50)
+        # Ensure we always keep enough candles for risk and feature lookbacks
+        required_candles = max(max_candles, config.RISK_WINDOW + 50, config.GRU_LOOKBACK + 50)
         
         # Setup data fetcher with the client
         self.data_fetcher = DataFetcher(
@@ -59,9 +48,7 @@ class DataEngine:
 
         # Rolling data helpers
         self.return_manager = ReturnManager(
-            regression_window=required_candles,
             risk_window=config.RISK_WINDOW,
-            feature_mode=config.REGRESSION_FEATURE_MODE,
             track_timestamps=track_timestamps,
         )
         self.feature_engine = FeatureEngineer()
@@ -78,10 +65,7 @@ class DataEngine:
         logger.info(f"DataEngine initialized with max_candles={required_candles}")
         
     async def run(self):
-        """Run the data engine to continuously collect market data.
-        
-        This method starts the data fetcher and keeps it running until stopped.
-        """
+        """Run the data fetcher loop until cancelled."""
         if self.running:
             logger.warning("DataEngine already running")
             return
@@ -103,27 +87,11 @@ class DataEngine:
             self.running = False
     
     def get_candles(self, symbol: str, timeframe: str) -> List[List[float]]:
-        """Get OHLCV candle data for a specific symbol and timeframe.
-        
-        Args:
-            symbol: Trading pair symbol.
-            timeframe: Timeframe for the data.
-            
-        Returns:
-            List of OHLCV candles.
-        """
+        """Return OHLCV candles for a symbol/timeframe pair."""
         return self.data_fetcher.get_candles(symbol, timeframe)
     
     def get_latest_candle(self, symbol: str, timeframe: str) -> Optional[List[float]]:
-        """Get the latest OHLCV candle for a specific symbol and timeframe.
-        
-        Args:
-            symbol: Trading pair symbol.
-            timeframe: Timeframe for the data.
-            
-        Returns:
-            The latest OHLCV candle or None if no data available.
-        """
+        """Return the most recent candle or None."""
         candles = self.get_candles(symbol, timeframe)
         if candles and len(candles) > 0:
             return candles[-1]
@@ -132,15 +100,7 @@ class DataEngine:
     def get_latest_price(
         self, symbol: str, timeframe: Optional[str] = None
     ) -> Optional[float]:
-        """Get the latest price for a specific symbol.
-        
-        Args:
-            symbol: Trading pair symbol.
-            timeframe: Timeframe for the data (default: "1m").
-            
-        Returns:
-            The latest close price or None if no data available.
-        """
+        """Return the latest close price for the symbol/timeframe, if present."""
         timeframe = timeframe or self.primary_timeframe
         latest_candle = self.get_latest_candle(symbol, timeframe)
         if latest_candle and len(latest_candle) >= 5:
@@ -171,30 +131,8 @@ class DataEngine:
         self.universe_selector.refresh_if_needed(bar["timestamp"])
         return bar
 
-    def process_bar_on_grid(
-        self, symbol: str, candle: List[float], timeframe: Optional[str] = None
-    ) -> Optional[Dict[str, float]]:
-        """Process an arbitrary candle ensuring alignment to global bar grid."""
-        timeframe = timeframe or self.primary_timeframe
-        if timeframe != config.BAR_GRID_TIMEFRAME:
-            return None
-        bar = self.extract_ohlcv(candle)
-        prev_close = self.return_manager.get_last_close(symbol)
-
-        self.return_manager.update(symbol, bar)
-        aux = {
-            "funding": self._live_funding.pop(symbol, 0.0),
-        }
-        feats = self.feature_engine.update(symbol, bar, aux=aux)
-        self.feature_store.append(symbol, feats, self.feature_engine.schema)
-        self.universe_selector.record_bar_metrics(
-            symbol, bar["timestamp"], bar["close"], bar["volume"]
-        )
-        self.universe_selector.refresh_if_needed(bar["timestamp"])
-        return bar
-
     def process_all_latest_bars(self, timeframe: Optional[str] = None) -> None:
-        """Convenience helper to ingest the most recent bar for every configured symbol."""
+        """Ingest the most recent bar for every configured symbol at the timeframe."""
         timeframe = timeframe or self.primary_timeframe
         for symbol, tf in self.data_fetcher.symbol_timeframes:
             if tf != timeframe:
@@ -234,14 +172,6 @@ class DataEngine:
             target_symbols, window or config.RISK_WINDOW
         )
 
-    def get_feature_series(
-        self, symbol: str, length: Optional[int] = None
-    ) -> List[float]:
-        """Return the feature vector used by the regression forecaster."""
-        return self.return_manager.get_feature_series(
-            symbol, length or config.REGRESSION_WINDOW
-        )
-
     async def backfill_history(self, timeframe: Optional[str] = None, symbols: Optional[List[str]] = None) -> None:
         """Load historical candles into ReturnManager to satisfy lookback before live loop starts."""
         timeframe = timeframe or self.primary_timeframe
@@ -273,14 +203,6 @@ class DataEngine:
             except Exception as exc:
                 logger.warning("Backfill failed for %s: %s", sym, exc)
 
-    def get_feature_matrix(
-        self, symbol: str, length: Optional[int] = None
-    ):
-        """Return standardized-ready feature matrix (X, y, ts, columns) for legacy linear models."""
-        return self.return_manager.get_feature_matrix(
-            symbol, length or config.REGRESSION_MAX_BARS
-        )
-
     def get_missing_bars(self, symbol: str, timeframe: Optional[str] = None):
         """Expose missing bar timestamps detected by DataProcessor."""
         timeframe = timeframe or self.primary_timeframe
@@ -292,8 +214,7 @@ class DataEngine:
         target_symbols = symbols or self.get_active_universe()
         for sym in target_symbols:
             missing = len(self.get_missing_bars(sym, self.primary_timeframe))
-            outliers = len(self.return_manager.flag_outliers(sym))
-            report[sym] = {"missing_bars": missing, "outliers": outliers}
+            report[sym] = {"missing_bars": missing, "outliers": 0}
         return report
     
     def get_return_series(
@@ -373,67 +294,6 @@ class DataEngine:
             return 0.0
             
         return (candle[4] - candle[1]) / candle[1] * 100  # (close - open) / open * 100
-    
-    def _bootstrap_return_history(self, symbol: str, timeframe: Optional[str] = None) -> None:
-        """Populate return history for a symbol using stored candles."""
-        timeframe = timeframe or self.primary_timeframe
-        candles = self.get_candles(symbol, timeframe)
-        if not candles:
-            return
-
-        history_window = max(config.RISK_WINDOW, config.REGRESSION_WINDOW) + 10
-        subset = candles[-(history_window + 1):]
-        self.return_manager.load_from_candles(symbol, subset)
-    
-    def initialize_portfolio_volatilities(self, symbols: List[str]) -> Dict[str, float]:
-        """Initialize volatility data for portfolio allocation using return history.
-        
-        This method converts existing return history (or bootstrapped history) 
-        into simple standard deviations for each asset.
-        
-        Args:
-            symbols: List of symbols to calculate volatilities for.
-            
-        Returns:
-            Dictionary mapping symbols to their volatility values.
-        """
-        volatilities = {}
-        
-        # Default volatilities as fallback (based on crypto market characteristics)
-        default_volatilities = {
-            'BTCUSDT': 0.015,   # 1.5% - typically lower volatility
-            'ETHUSDT': 0.025,   # 2.5% - medium volatility  
-            'XRPUSDT': 0.035,   # 3.5% - higher volatility
-            'BNBUSDT': 0.018,   # 1.8% - lower volatility
-            'SOLUSDT': 0.030    # 3.0% - higher volatility
-        }
-        logger.info("Calculating return-based volatilities for portfolio initialization...")
-        
-        for symbol in symbols:
-            try:
-                returns = self.return_manager.get_return_series(symbol, config.RISK_WINDOW)
-                if len(returns) < 2:
-                    self._bootstrap_return_history(symbol)
-                    returns = self.return_manager.get_return_series(symbol, config.RISK_WINDOW)
-                
-                if returns and len(returns) >= 2:
-                    vol = float(np.std(np.array(returns), ddof=1))
-                    vol = max(0.001, min(vol, 0.25))  # Bound to reasonable limits
-                    volatilities[symbol] = vol
-                    logger.info(f"{symbol}: Return volatility = {vol:.4f} ({vol*100:.2f}%)")
-                    continue
-                
-                default_vol = default_volatilities.get(symbol, 0.02)
-                volatilities[symbol] = default_vol
-                logger.warning(f"{symbol}: Using default volatility = {default_vol:.4f} ({default_vol*100:.2f}%) [insufficient data]")
-                
-            except Exception as e:
-                logger.error(f"Error calculating volatility for {symbol}: {e}")
-                default_vol = default_volatilities.get(symbol, 0.02)
-                volatilities[symbol] = default_vol
-                logger.warning(f"{symbol}: Using default volatility = {default_vol:.4f} ({default_vol*100:.2f}%) [error fallback]")
-        
-        return volatilities
 
 
 if __name__ == "__main__":

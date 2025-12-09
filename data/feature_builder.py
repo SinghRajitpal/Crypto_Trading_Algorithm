@@ -167,6 +167,7 @@ class FeatureEngineer:
         return feats
 
     def _winsor_z(self, sym: str, feature: str, value: float) -> float:
+        # Winsorize to clamp extremes, then z-score against clipped history
         hist = self._raw_hist[sym][feature]
         hist.append(value)
         arr_all = np.array(hist, dtype=float)
@@ -321,10 +322,12 @@ class FeatureWindowStore:
         self._store: Dict[str, Deque[List[float]]] = defaultdict(lambda: deque(maxlen=maxlen))
 
     def append(self, symbol: str, feature_vec: Dict[str, float], schema: Iterable[str]) -> None:
+        """Append a feature vector in schema order to the rolling window."""
         ordered = [feature_vec.get(name, float("nan")) for name in schema]
         self._store[symbol.upper()].append(ordered)
 
     def get_window(self, symbol: str, lookback: int) -> Optional[np.ndarray]:
+        """Return the latest finite window if it meets lookback and shape requirements."""
         sym = symbol.upper()
         window = self._store.get(sym)
         if not window or len(window) < lookback:

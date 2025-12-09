@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 
 
 class MeanVarianceOptimizer:
-    """Single-period mean–variance optimizer with basic constraints and optional turnover penalty."""
+    """Single-period mean–variance optimizer with exposure bounds and optional turnover/slippage penalty."""
 
     def __init__(
         self,
@@ -42,6 +42,7 @@ class MeanVarianceOptimizer:
         symbols: List[str],
         prev_weights: Optional[Dict[str, float]] = None,
     ) -> Dict[str, float]:
+        """Return target weights that balance expected return vs. risk, respecting bounds/turnover penalty."""
         if covariance.shape[0] != len(symbols):
             raise ValueError("Covariance matrix must align with symbol list")
 
@@ -62,8 +63,6 @@ class MeanVarianceOptimizer:
             w_prev_vec = np.array([prev_weights.get(symbol, 0.0) for symbol in symbols], dtype=float)
             mu = mu + (2 * self.turnover_lambda / self.turnover_horizon) * (slippage_scale * w_prev_vec)
 
-        # Regularize covariance for numerical stability
-        cov += np.eye(len(symbols)) * 1e-6
         K = np.diag(slippage_scale)
         cov_eff = self.risk_aversion * cov + 2 * self.turnover_lambda * K
 

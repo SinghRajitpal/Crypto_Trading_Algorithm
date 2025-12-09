@@ -26,18 +26,16 @@ def _manual_garch(returns: np.ndarray, omega: float, alpha: float, beta: float) 
     return max(min(var, 1e2), 1e-10)
 
 
-def test_risk_model_shrinkage_and_symbol_alignment():
+def test_risk_model_cov_and_symbol_alignment():
     symbols = ["BTC", "ETH", "SOL"]
     rng = np.random.default_rng(42)
     returns = rng.normal(scale=0.01, size=(300, 3))
     rm = RiskModel()
     rm.update(symbols, returns)
 
-    # Expect shrinkage blend of sample covariance and diagonal target
+    # Expect pure sample covariance (no shrinkage)
     window = min(config.RISK_COV_WINDOW, returns.shape[0])
-    sample_cov = np.cov(returns[-window:].T, ddof=1)
-    target = np.diag(np.diag(sample_cov))
-    expected = config.COVARIANCE_SHRINKAGE * sample_cov + (1 - config.COVARIANCE_SHRINKAGE) * target
+    expected = np.cov(returns[-window:].T, ddof=1)
 
     # get_covariance must reorder rows/cols to requested symbol order
     requested = list(reversed(symbols))

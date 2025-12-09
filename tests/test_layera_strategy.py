@@ -25,7 +25,6 @@ class StubDataEngine:
     def __init__(self, lookback: int, symbols):
         self.return_manager = SimpleNamespace(
             log_return_history={s: [] for s in symbols},
-            volume_history={s: [] for s in symbols},
         )
         self._missing = {s: [] for s in symbols}
         self._candles = {s: None for s in symbols}
@@ -136,9 +135,7 @@ def test_layera_strategy_produces_forecast(monkeypatch, manifest_file):
     engine = StubDataEngine(lookback, symbols)
     ts_base = 1_700_000_000_000
     lr = [(ts_base + i * 1000, 0.001) for i in range(lookback)]
-    vol = [(ts_base + i * 1000, 1000.0) for i in range(lookback)]
     engine.return_manager.log_return_history["BNBUSDT"].extend(lr)
-    engine.return_manager.volume_history["BNBUSDT"].extend(vol)
     engine._candles["BNBUSDT"] = [ts_base + (lookback - 1) * 1000, 0, 0, 0, 0, 0]
 
     strategy = LayerAForecastStrategy(

@@ -19,14 +19,14 @@ logger = get_logger(__name__)
 
 
 class TradingAlgorithm:
-    """Coordinates data, forecasting, and execution for the mean–variance strategy."""
+    """Coordinates data ingest, forecasting, and execution for the mean–variance strategy."""
 
     def __init__(self, demo: bool = True, gru_model_dir: Optional[str] = None) -> None:
         # demo controls futures demo trading endpoint
         self.binance_client = BinanceClient(demo=demo)
         self.data_engine = DataEngine(
             binance_client=self.binance_client,
-            max_candles=config.RISK_WINDOW + config.REGRESSION_WINDOW + 20,
+            max_candles=config.RISK_WINDOW + config.GRU_LOOKBACK + 20,
         )
 
         # Choose forecasting strategy: manifest-driven Layer A or legacy single-dir GRU
@@ -78,6 +78,7 @@ class TradingAlgorithm:
         self.monitor_store = MonitoringStore(config.MONITOR_LOG_PATH)
 
     async def start(self) -> None:
+        """Start the live/demo loop and keep processing forecasts until stopped."""
         if self.running:
             logger.warning("Trading system already running")
             return
@@ -106,6 +107,7 @@ class TradingAlgorithm:
             await self.stop()
 
     async def _bootstrap(self) -> None:
+        """Initialize account, backfill data, and start background data tasks."""
         await self.binance_client.setup_account_config()
         logger.info("Fetching initial account metrics")
         metrics = await self._refresh_account_metrics(force=True)
@@ -128,6 +130,7 @@ class TradingAlgorithm:
         await asyncio.sleep(5)  # allow initial history to load
 
     async def _process_forecast(self, forecast) -> None:
+        """Run risk/optimizer/execution for a single forecast and log diagnostics."""
         returns_matrix, symbols = self.data_engine.get_return_matrix(
             forecast.universe, config.RISK_WINDOW
         )
@@ -273,6 +276,7 @@ class TradingAlgorithm:
         return prices
 
     async def _refresh_account_metrics(self, force: bool = False) -> Dict[str, float]:
+        """Pull account metrics with a small cache to avoid hammering the API."""
         now = time.time()
         if not force and now - self._last_nav_refresh < 10:
             return {"total_wallet_balance": self._nav_cache}
@@ -288,6 +292,7 @@ class TradingAlgorithm:
         return metrics
 
     async def stop(self) -> None:
+        """Stop running tasks and close the exchange client."""
         if not self.running:
             return
         logger.info("Stopping trading system")
@@ -309,6 +314,7 @@ class TradingAlgorithm:
                 pass
 
     async def _universe_refresh_loop(self) -> None:
+        """Periodic universe refresh based on market-cap snapshots."""
         interval = max(1, int(config.UNIVERSE_REFRESH_HOURS * 3600))
         while self.running:
             try:

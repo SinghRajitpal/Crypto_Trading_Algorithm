@@ -94,6 +94,7 @@ class WalkForwardBacktester:
         self.broker.set_price_callback(self._price_lookup)
 
     async def run(self) -> BacktestMetrics:
+        """Execute the walk-forward simulation, consuming Layer A predictions."""
         try:
             ohlcv_data, benchmark_df = await self._load_history(self.benchmark_symbol)
             await self._load_funding_history()

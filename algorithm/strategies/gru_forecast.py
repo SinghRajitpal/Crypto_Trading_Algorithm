@@ -27,6 +27,7 @@ class GRUForecastStrategy:
         self.symbols = symbols
 
     async def calculate_forecast(self) -> ForecastResult | None:
+        """Build per-symbol feature windows, run GRU inference, and return a forecast."""
         self.data_engine.process_all_latest_bars(self.timeframe)
         universe = self.symbols or self.data_engine.get_active_universe()
         expected_returns = {}

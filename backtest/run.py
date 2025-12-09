@@ -15,10 +15,10 @@ if str(ROOT) not in sys.path:
 import config
 from backtest.gru_layer import GRULayerTrainer, GRULayerResult
 from data.data_engine import DataEngine
-from data.historical_data import HistoricalDataFetcher
 
 
 async def main():
+    """Parse CLI args and run Layer A training, Layer B backtest, or both."""
     parser = argparse.ArgumentParser(description="Run Layer A GRU training and/or Layer B GRU backtest.")
     parser.add_argument("--symbols", default=None, help="Comma-separated symbols (default: config.DEFAULT_UNIVERSE)")
     parser.add_argument("--start", required=True, help="Start date YYYY-MM-DD")
@@ -95,31 +95,6 @@ async def main():
         os.makedirs(layer_b_dir, exist_ok=True)
         with open(os.path.join(layer_b_dir, "metrics.txt"), "w") as f:
             f.write(str(metrics))
-
-
-async def _seed_data_engine(data_engine: DataEngine, symbols, start: datetime, end: datetime) -> None:
-    """Load historical OHLCV into the data engine so Layer A can fit GRU."""
-    fetcher = HistoricalDataFetcher(demo=False)
-    try:
-        lookback_start = _lookback_start(start, config.GRU_TIMEFRAME)
-        ohlcv_data = await asyncio.gather(
-            *[fetcher.download_ohlcv(sym, config.GRU_TIMEFRAME, lookback_start, end, force=False) for sym in symbols]
-        )
-    finally:
-        # Ensure the aiohttp/binance client is closed to avoid unclosed-session warnings.
-        await fetcher.close()
-
-    data_map = {sym: df for sym, df in zip(symbols, ohlcv_data) if df is not None}
-    clock = sorted({ts for df in data_map.values() for ts in df.index})
-    for ts in clock:
-        for sym, df in data_map.items():
-            if ts in df.index:
-                candle = df.loc[ts]
-                bar = [int(ts.timestamp() * 1000)] + candle.tolist()
-                await data_engine.data_fetcher.data_processor.update_tracked_candles(
-                    sym, config.GRU_TIMEFRAME, bar
-                )
-        data_engine.process_all_latest_bars(config.GRU_TIMEFRAME)
 
 
 def _lookback_start(start: datetime, timeframe: str) -> datetime:

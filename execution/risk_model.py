@@ -11,17 +11,15 @@ logger = get_logger(__name__)
 
 
 class RiskModel:
-    """Maintains per-asset volatilities and covariance matrix for the optimizer."""
+    """Maintains per-asset vol estimates and sample covariance (no shrinkage) for the optimizer."""
 
     def __init__(
         self,
         decay: float = config.EWMA_LAMBDA,
-        shrinkage: float = config.COVARIANCE_SHRINKAGE,
         use_garch: bool = config.RISK_USE_GARCH,
         garch_params: Optional[Dict[str, float]] = None,
     ) -> None:
         self.decay = decay
-        self.shrinkage = shrinkage
         self.use_garch = use_garch
         self.garch_params = garch_params or config.GARCH_PARAMS
         self._ewma_state: Dict[str, float] = {}
@@ -36,7 +34,7 @@ class RiskModel:
         self._vol_loss_qlike: Dict[str, List[float]] = {}
 
     def update(self, symbols: List[str], returns_matrix: np.ndarray) -> None:
-        """Refresh covariance estimates given recent returns."""
+        """Refresh covariance estimates and volatility diagnostics given recent returns."""
         if returns_matrix.size == 0 or not symbols:
             logger.debug("RiskModel update skipped due to empty input")
             return
@@ -66,17 +64,14 @@ class RiskModel:
             qlike = np.log(max(forecast_var, 1e-12)) + realized_var / max(forecast_var, 1e-12)
             self._record_vol_loss(symbol, mse, qlike)
 
-        # Sample covariance over the provided window
+        # Sample covariance over the provided window (no shrinkage/blend)
         window = min(config.RISK_COV_WINDOW, returns_matrix.shape[0])
         if window > 1:
-            sample_cov = np.cov(returns_matrix[-window:].T, ddof=1)
-            sample_cov = np.atleast_2d(sample_cov)
+            cov_new = np.cov(returns_matrix[-window:].T, ddof=1)
+            cov_new = np.atleast_2d(cov_new)
         else:
-            sample_cov = np.diag([self._select_variance(s) for s in symbols])
+            cov_new = np.diag([self._select_variance(s) for s in symbols])
 
-        # Shrink towards diagonal target
-        target = np.diag(np.diag(sample_cov))
-        cov_new = self.shrinkage * sample_cov + (1 - self.shrinkage) * target
         self._cov_prev = self._covariance
         self._covariance = cov_new
 

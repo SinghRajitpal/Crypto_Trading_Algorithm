@@ -33,6 +33,7 @@ class LayerAForecastStrategy:
         self.model_version = os.path.basename(os.path.dirname(manifest_path)) or manifest_path
 
     async def calculate_forecast(self) -> ForecastResult | None:
+        """Serve forecasts from manifest-loaded GRU models after gating readiness/missing bars."""
         # Ingest the latest bars into rolling windows
         self.data_engine.process_all_latest_bars(self.timeframe)
         universe = self.symbols or self.data_engine.get_active_universe()

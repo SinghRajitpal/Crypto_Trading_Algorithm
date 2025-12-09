@@ -1,3 +1,4 @@
+# Centralized knobs for live/demo trading and backtesting.
 # GRU-based trading configuration for Binance USD-M futures (8h timeframe).
 
 from utils.logging_config import get_logger, console_log
@@ -33,26 +34,6 @@ UNIVERSE_MIN_DOLLAR_VOLUME = 20_000_000
 UNIVERSE_LOOKBACK_DAYS = 30
 UNIVERSE_REFRESH_HOURS = 24
 BAR_GRID_TIMEFRAME = "1h"
-
-# Bar Validation Parameters (unused)
-BAR_RETURN_ABS_THRESHOLD = 0.25
-MIN_BAR_VOLUME = 1.0
-OUTLIER_SIGMA_THRESHOLD = 8.0
-
-# Regression / Forecast Parameters (legacy regression pipeline)
-REGRESSION_WINDOW = 120
-REGRESSION_FEATURE_MODE = "log_price"
-LOG_RETURN_LAGS = [1, 3, 6, 12]
-VOLUME_LAGS = [1, 3, 6, 12]
-MOMENTUM_WINDOWS = [3, 6, 12]
-VOL_WINDOWS = [6, 12, 24]
-RANGE_WINDOWS = [6, 12]
-TURNOVER_WINDOWS = [6, 12]
-INCLUDE_TIME_OF_DAY = True
-REGRESSION_MAX_BARS = None
-REGRESSION_MIN_TRAIN = 120
-REGRESSION_VAL_WINDOW = 500
-REGRESSION_EMBARGO_BARS = 10
 
 GRU_TIMEFRAME = "8h"
 GRU_LOOKBACK = 64
@@ -99,7 +80,6 @@ FEATURE_TSMOM_MED_K = 15
 # Risk Model Data Parameters
 RISK_WINDOW = 180
 EWMA_LAMBDA = 0.94
-COVARIANCE_SHRINKAGE = 0.6
 RISK_COV_WINDOW = 250
 RISK_USE_GARCH = True
 GARCH_PARAMS = {"omega": 1e-6, "alpha": 0.05, "beta": 0.9}
@@ -137,7 +117,7 @@ MONITOR_LOG_PATH = "logs/monitoring.jsonl"
 BENCHMARK_SYMBOL = "BTCUSDT"
 
 # Layer A manifest/forecast settings
-LAYERA_MANIFEST_PATH = "backtest/backtest_results/2025-11-29_trial02/layerA_artifacts/layerA_manifest.json"
+LAYERA_MANIFEST_PATH = "backtest/backtest_results/e2e_run/layerA_artifacts/layerA_manifest.json" #"backtest/backtest_results/2025-11-29_trial02/layerA_artifacts/layerA_manifest.json"
 LAYERA_TIMEFRAME = GRU_TIMEFRAME
 LAYERA_LOOKBACK = GRU_LOOKBACK
 LAYERA_RETRAIN_DAYS = GRU_RETRAIN_DAYS

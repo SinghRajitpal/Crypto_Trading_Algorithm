@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 
 class ProductionExecutionEngine:
-    """Execution engine consuming forecasts to produce and execute portfolio trades."""
+    """Execution engine that turns forecasts into trades via risk model, optimizer, and order executor."""
 
     def __init__(self, binance_client, total_capital: float = 0.0) -> None:
         self.binance_client = binance_client
@@ -48,6 +48,7 @@ class ProductionExecutionEngine:
         prices: Dict[str, float],
         returns_matrix: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
+        """Apply risk/optimization/Kelly overlays to a forecast and execute resulting orders."""
         prev_weights = dict(self.current_weights)
         if not forecast.expected_returns:
             return {"status": "skipped", "reason": "empty forecast"}

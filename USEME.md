@@ -29,7 +29,7 @@ This is a guide which provided step by step instructions on how to use this code
 
 ## 4) Live / Demo Trading (simple)
 1. Ensure `config.py` has your demo keys.
-2. If you have a another model to use, set `LAYERA_MANIFEST_PATH` to its path. Otherwise the system falls back to `GRU_MODEL_DIR` when `FORECAST_FALLBACK` allows.
+2. If you have a another model to use, set `LAYERA_MANIFEST_PATH` to its manifest file path. Otherwise the system falls back to `GRU_MODEL_DIR` when `FORECAST_FALLBACK` allows.
 3. Check universe/timeframe in `config.py`: `DEFAULT_UNIVERSE`, `PRIMARY_TIMEFRAME` (and `GRU_TIMEFRAME`).
 4. Run demo trading from the repo root:  
    `python main.py`
@@ -59,7 +59,7 @@ What it does: loads predictions and simulates the live portfolio stack with risk
 
 Run with explicit predictions:
 ```
-python -m backtest.run --start 2023-01-01 --end 2023-06-01 --layer B \
+python -m backtest.run --start 2023-01-01 --end 2023-01-06 --layer B \
   --output backtest/backtest_results/demo_run \
   --predictions path/to/BTCUSDT/predictions.csv,path/to/ETHUSDT/predictions.csv
 ```
@@ -74,7 +74,7 @@ Outputs (under `output/layerB_artifacts/`):
 ### C) Both Layers Sequentially
 Run both in one shot:
 ```
-python -m backtest.run --start 2023-01-01 --end 2023-06-01 \
+python -m backtest.run --start 2023-01-01 --end 2023-01-06 \
   --layer both --symbols BTCUSDT,ETHUSDT --output backtest/backtest_results/demo_run
 ```
 Layer A artifacts feed Layer B automatically; a manifest is emitted for live/demo use.
@@ -103,7 +103,7 @@ Use one output directory to keep artifacts together; then point live/demo at the
 - Config notes: ensure `GRU_TIMEFRAME`, `GRU_LOOKBACK`, `GRU_FEATURE_SCHEMA` match the data you want; keep demo keys in `config.py` (not used here).
 - Command:
   ```
-  python -m backtest.run --start 2023-01-01 --end 2023-06-01 --layer A \
+  python -m backtest.run --start 2023-01-01 --end 2023-01-06 --layer A \
     --symbols BTCUSDT,ETHUSDT --output backtest/backtest_results/e2e_run
   ```
 - Result: `backtest/backtest_results/e2e_run/layerA_artifacts/layerA_manifest.json` plus per-symbol `predictions.csv`.
@@ -112,12 +112,12 @@ Use one output directory to keep artifacts together; then point live/demo at the
 - Config notes: risk/optimizer/Kelly settings in `config.py` apply here.
 - Command (auto-discovers predictions from Step 1):
   ```
-  python -m backtest.run --start 2023-01-01 --end 2023-06-01 --layer B \
+  python -m backtest.run --start 2023-01-01 --end 2023-01-06 --layer B \
     --output backtest/backtest_results/e2e_run
   ```
   If you prefer to pass predictions explicitly:
   ```
-  python -m backtest.run --start 2023-01-01 --end 2023-06-01 --layer B \
+  python -m backtest.run --start 2023-01-01 --end 2023-01-06 --layer B \
     --output backtest/backtest_results/e2e_run \
     --predictions backtest/backtest_results/e2e_run/layerA_artifacts/BTCUSDT/predictions.csv,\backtest/backtest_results/e2e_run/layerA_artifacts/ETHUSDT/predictions.csv
   ```
