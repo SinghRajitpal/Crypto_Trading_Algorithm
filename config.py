@@ -12,8 +12,8 @@ binance_futures = {
 }
 
 binance_futures_demo = {
-    "demo_api_key": "SMhgP5bwMLcMGkpEPI6Rh8pDBy4drNOjIVclhPEi8cNdbNATh1B48UHlv1timYMg",
-    "demo_api_secret": "ykdDkx7b16Isz3IV0Y5YU6BttVaIdEXM7ToVNIcNFeBcteVnkvppzdfTKluRszYd",
+    "demo_api_key": "demo_key",
+    "demo_api_secret": "demo_secret",
 }
 
 # Symbol universe and timeframe settings
